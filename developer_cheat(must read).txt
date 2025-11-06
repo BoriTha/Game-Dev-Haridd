@@ -1,0 +1,37 @@
+Developer Cheats (Must Read)
+============================
+
+Hotkeys (during gameplay):
+
+- F1  — Toggle God Mode
+  - Prevents the player from taking damage (debug/testing).
+
+- F2  — Teleport to Boss Room
+  - Jumps directly to the last room (boss room).
+
+- F3  — Toggle Infinite Mana
+  - Keeps the player’s mana topped up every frame.
+
+- F4  — Toggle Zero Cooldown
+  - Forces all skill cooldowns to 0 every frame (skill_cd1/2/3).
+
+- F5  — Go to Room 1
+- F6  — Go to Room 2
+- F7  — Go to Room 3
+- F8  — Go to Room 4
+- F9  — Go to Room 5
+- F10 — Go to Room 6 (Boss)
+
+Notes:
+- Active cheats are shown on the HUD (top-right):
+  - GOD (God Mode), IM (Infinite Mana), ZCD (Zero Cooldown)
+- You can still pause with Esc; choosing Main Menu returns to Title.
+- Boss rooms keep doors locked until the boss is defeated.
+
+Where implemented:
+- main.py
+  - Toggle handling: Game.run() KEYDOWN branch
+  - Effects applied: Game.update() (mana/cooldowns), Player.god flag
+
+Tip:
+- If you add new skills with cooldowns, include their cooldown attributes in the zero-cooldown section in Game.update().

@@ -1,0 +1,57 @@
+Haridd - Quick Guide
+====================
+
+Controls:
+- Move: A/D
+- Jump: Space or K
+- Dash: Left Shift or J
+- Attack: L or Left Mouse
+- Up/Down + Attack for directional slashes (Down = Pogo)
+- Pause: Esc
+
+Developer Cheats:
+- F1  God Mode (toggle)
+- F2  Teleport to Boss Room
+- F3  Infinite Mana (toggle)
+- F4  Zero Cooldown (toggle)
+- F5–F10  Jump to Rooms 1–6
+
+ASCII Map Legend:
+- # wall/platform
+- . empty
+- S spawn
+- D door to next room
+- E Bug, f Frog, r Archer, w Wizard Caster, a Assassin, b Bee, B Boss, G Golem (boss)
+
+Monsters (color = rectangle fill color; darker variant indicates i-frames):
+- Bug (E)
+  - Color: RGB(180,70,160) violet; i-frames: RGB(120,40,100)
+  - Smart ground enemy: patrol/search/pursue with LOS, contact damage, affected by slow/DOT, parry reflects.
+
+- Frog (f)
+  - Color: RGB(80,200,80) green; i-frames: RGB(60,120,60)
+  - Shows "!" then longer diagonal dash toward player; touch damage.
+
+- Archer (r)
+  - Color: RGB(200,200,80) yellow; i-frames: RGB(120,120,60)
+  - "!!" telegraph then arrow (speed ~10, lifetime ~120). Sidesteps if too close.
+
+- Wizard Caster (w)
+  - Color: RGB(180,120,220) lavender; i-frames: RGB(110,80,140)
+  - "!!" telegraph; casts Bolt (fast), Missile (very fast, high dmg), Fireball (slow, AoE ~48).
+
+- Assassin (a)
+  - Color: RGB(60,60,80) dark slate; i-frames: RGB(40,40,60)
+  - Randomly chooses: "!" diagonal dash (spawns short sword hitboxes) or "!!" forward slash.
+
+- Bee (b)
+  - Color: RGB(240,180,60) amber; i-frames: RGB(140,120,50)
+  - Random "!" dash or "!!" ranged shot (visible arrow-like projectile).
+
+- Boss (B)
+  - Color: RGB(200,100,40) orange-brown; i-frames: RGB(140,80,30)
+  - Higher HP, slow pursuit, strong contact damage; doors remain locked in boss rooms until defeated.
+
+- Golem (G)
+  - Color: RGB(140,140,160) steel; i-frames: RGB(100,100,120)
+  - Patterns: "!" diagonal dash, "!!" shoot, "!!" radial stun AoE (applies stun tag, radius ~72).
