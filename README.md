@@ -25,13 +25,16 @@ py d:\game_dev\main.py
 - Dash: Left Shift or J
 - Attack: L or Left Mouse
 - Up/Down + Attack: Up/Down slash (Down = Pogo)
+- Inventory: I (opens the mid-run inventory overlay)
+- Consume slot 1 / 2 / 3: 4 / 5 / 6
 - Pause: Esc
 
 Dev cheats (for testing):
-- F1: Toggle God Mode
+- F1: Toggle God Mode (also available inside the debugger menu)
 - F2: Teleport to Boss Room
 - F3: Toggle Infinite Mana
 - F4: Toggle Zero Cooldown (skills)
+- F5: Open the debugger menu (pause overlay) that lets you toggle all cheats, show/hide enemy vision rays, and instantly refill consumables.
 
 ## Menu flow
 
@@ -50,11 +53,33 @@ Dev cheats (for testing):
 
 Each class has unique resource bars (stamina/mana) and cooldowns shown on the HUD.
 
+### Inventory & consumables
+
+- Press `I` in-game to open the inventory overlay. It shows:
+  - Player stats, gear slots, a model preview, and a list of consumables.
+  - Three consumable slots mapped to keys `4/5/6` with icons and names inside each slot.
+  - A reminder footer explaining how to close the overlay.
+- Default consumables:
+  - **Health Flask** — restores 3 HP.
+  - **Mana Vial** — restores 10 MP.
+  - **Speed Tonic** — grants a temporary “Haste” buff that speeds up attack/dash/skill cooldown recovery. A HUD label appears while it is active.
+- Consumables can also be refilled instantly from the debugger menu (F5 ➜ “Refill Consumables”).
+
+### Debugger menu
+
+Press `F5` at any time during gameplay to open the debugger overlay. From there you can:
+
+- Toggle God Mode, Infinite Mana, and Zero Cooldown without remembering individual hotkeys.
+- Jump directly to the boss room, teleport to any room via a level picker, or close the menu.
+- Enable/disable enemy vision rays to visualize their current line-of-sight target.
+- Instantly refill all consumable slots for quick testing of the hotbar interactions.
+
 ## Gameplay notes
 
 - Enemies telegraph strong attacks with `!` or `!!`.
 - Enemy projectiles are visible. Enemy friendly-fire is disabled.
 - Boss rooms lock doors until the boss is defeated (doors turn red; HUD shows a hint).
+- Enemy line-of-sight (vision) rays can be toggled on/off from the debugger menu to debug aggro behavior.
 - ASCII maps are parsed directly; each character is one tile wide.
   - `#` = solid wall/platform
   - `.` = empty space
@@ -92,7 +117,7 @@ Each enemy is drawn as a colored rectangle; during their invulnerability frames 
       - Missile: very fast, high-damage projectile.
       - Fireball: slower projectile that explodes with AoE (radius ~48).
 
-- Assassin (`a`) — melee specialist
+- Assassin (`a`) - melee specialist
    - Color: RGB(60, 60, 80) dark slate; i-frames: RGB(40, 40, 60)
    - Patterns: Randomly chooses between `!` dash (diagonal dash, spawns short sword hitboxes while dashing) and `!!` forward slash (short sword hitbox).
 
@@ -123,8 +148,9 @@ Each enemy is drawn as a colored rectangle; during their invulnerability frames 
 - Before pushing, run the game locally to verify no errors.
 - Keep rooms ASCII-aligned (each line same width). Unknown characters are treated as empty.
 - When adding enemies or skills, tag hitboxes with an `owner` and use `visual_only` for telegraphs or non-damaging areas.
-- Prefer small focused commits with clear messages (e.g., “Add wizard cold field slow”).
+- Prefer small focused commits with clear messages (e.g., "Add wizard cold field slow").
 - If you change controls or UI, update this README and the How to Play screen.
+- When you introduce new consumables or buffs, wire them through the catalog in `main.py` so the HUD and inventory automatically pick them up.
 
 ### Suggested workflow for pair dev
 

@@ -781,6 +781,8 @@ class Game:
             {'label': "Enemy Vision Rays", 'type': 'toggle',
              'getter': lambda: self.debug_enemy_rays,
              'setter': lambda v: setattr(self, 'debug_enemy_rays', v)},
+            {'label': "Teleport to Level...", 'type': 'action',
+             'action': self.debug_teleport_menu},
             {'label': "Refill Consumables", 'type': 'action',
              'action': self.add_all_consumables},
             {'label': "Close", 'type': 'action',
@@ -832,6 +834,39 @@ class Game:
             elif opt['type'] == 'action' and not opt.get('close'):
                 text = f"{text}"
             draw_text(self.screen, text, (row.x + 12, row.y + 8), (220,220,230), size=18)
+
+    def debug_teleport_menu(self):
+        idx = self.level_index
+        while True:
+            self.clock.tick(FPS)
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif ev.type == pygame.KEYDOWN:
+                    if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
+                        return
+                    elif ev.key == pygame.K_LEFT:
+                        idx = (idx - 1) % Level.ROOM_COUNT
+                    elif ev.key == pygame.K_RIGHT:
+                        idx = (idx + 1) % Level.ROOM_COUNT
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        self.goto_room(idx)
+                        return
+            self.draw()
+            self._draw_level_select_overlay(idx)
+            pygame.display.flip()
+
+    def _draw_level_select_overlay(self, idx):
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+        panel = pygame.Rect(WIDTH//2 - 200, HEIGHT//2 - 120, 400, 200)
+        pygame.draw.rect(self.screen, (30, 28, 42), panel, border_radius=12)
+        pygame.draw.rect(self.screen, (210, 200, 170), panel, width=2, border_radius=12)
+        draw_text(self.screen, "Teleport to Level", (panel.x + 24, panel.y + 16), (240,220,190), size=26, bold=True)
+        info = "Left/Right choose, Enter confirm, Esc to cancel"
+        draw_text(self.screen, info, (panel.x + 24, panel.bottom - 36), (180,180,200), size=16)
+        draw_text(self.screen, f"Room {idx+1}/{Level.ROOM_COUNT}", (panel.centerx - 80, panel.centery - 10), (220,220,240), size=32, bold=True)
 
     def pause_menu(self):
         """Blocking pause menu with Resume / Settings / Main Menu / Quit."""
