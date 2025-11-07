@@ -8,6 +8,7 @@ from level import Level, ROOM_COUNT
 from entities import Player, hitboxes, floating
 from inventory import Inventory
 from menu import Menu
+from shop import Shop
 
 
 
@@ -48,6 +49,7 @@ class Game:
         self.enemies = self.level.enemies
         self.inventory = Inventory(self)
         self.inventory._refresh_inventory_defaults()
+        self.shop = Shop(self)
 
     def switch_room(self, delta):
         # wrap using Level.ROOM_COUNT so new rooms are handled
@@ -62,6 +64,9 @@ class Game:
         self.player.rect.topleft = (sx, sy)
         self.enemies = self.level.enemies
         hitboxes.clear(); floating.clear()
+        
+        # Open shop after completing level
+        self.shop.open_shop()
 
     def goto_room(self, index):
         # go to an absolute room index (wrapped)
@@ -312,6 +317,8 @@ class Game:
                   "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo)",
                   (12, HEIGHT-28), (180,180,200), size=16)
         draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (12, 8), WHITE)
+        # Money display
+        draw_text(self.screen, f"Coins: {self.player.money}", (WIDTH-150, 8), (255, 215, 0), bold=True)
         if getattr(self.player, 'god', False):
             draw_text(self.screen, "GOD", (WIDTH-64, 8), (255,200,80), bold=True)
         # Boss room hint: lock door until boss defeated
@@ -320,6 +327,10 @@ class Game:
 
         if self.inventory.inventory_open:
             self.inventory.draw_inventory_overlay()
+        
+        # Draw shop if open
+        if self.shop.shop_open:
+            self.shop.draw(self.screen)
 
 
 
@@ -335,9 +346,10 @@ class Game:
                     continue
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_i:
-                        self.inventory.inventory_open = not self.inventory.inventory_open
-                        if not self.inventory.inventory_open:
-                            self.inventory._clear_inventory_selection()
+                        if not self.shop.shop_open:
+                            self.inventory.inventory_open = not self.inventory.inventory_open
+                            if not self.inventory.inventory_open:
+                                self.inventory._clear_inventory_selection()
                         continue
                     if ev.key == pygame.K_F5:
                         self.inventory.inventory_open = False
@@ -386,9 +398,21 @@ class Game:
                         self.goto_room(4)
                     elif ev.key == pygame.K_F10:
                         self.goto_room(5)
+                    elif ev.key == pygame.K_s and not self.inventory.inventory_open:
+                        # Toggle shop
+                        if self.shop.shop_open:
+                            self.shop.close_shop()
+                        else:
+                            self.shop.open_shop()
+                        continue
 
-            if not self.inventory.inventory_open:
+            if not self.inventory.inventory_open and not self.shop.shop_open:
                 self.update()
+            
+            # Handle shop input when open
+            if self.shop.shop_open:
+                self.shop.handle_input()
+            
             self.draw()
             pygame.display.flip()
 

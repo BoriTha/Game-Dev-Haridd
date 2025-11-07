@@ -170,6 +170,8 @@ class Player:
             'stamina_regen': float(getattr(self, '_stamina_regen', 0.0)),
             'mana_regen': float(getattr(self, '_mana_regen', 0.0)),
         }
+        # Money/currency system
+        self.money = 0
     def input(self, level, camera):
         if self.dead:
             return
@@ -807,6 +809,20 @@ class Player:
             if self.stamina_boost_timer <= 0:
                 self.stamina_boost_timer = 0
                 self.stamina_buff_mult = 1.0
+        
+        # Lucky charm timer
+        if getattr(self, 'lucky_charm_timer', 0) > 0:
+            self.lucky_charm_timer -= 1
+            if self.lucky_charm_timer <= 0:
+                self.lucky_charm_timer = 0
+        
+        # Phoenix feather revival check
+        if getattr(self, 'phoenix_feather_active', False) and getattr(self, 'dead', False):
+            # Revive player with 50% HP
+            self.dead = False
+            self.hp = max(1, self.max_hp // 2)
+            self.phoenix_feather_active = False
+            floating.append(DamageNumber(self.rect.centerx, self.rect.top - 12, "PHOENIX REVIVE!", (255, 150, 50)))
 
         self.move_and_collide(level)
 

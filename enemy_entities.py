@@ -182,6 +182,8 @@ class Enemy:
         if self.hp <= 0:
             self.alive = False
             floating.append(DamageNumber(self.rect.centerx, self.rect.centery, "KO", CYAN))
+            # Drop money for Bug (basic enemy)
+            self._drop_money(player, random.randint(5, 15))
     
     def handle_movement(self, level, player=None, speed_multiplier=1.0):
         """Handle movement using new movement system."""
@@ -346,6 +348,15 @@ class Enemy:
             draw_text(surf, enemy_type,
                      camera.to_screen((self.rect.centerx, self.rect.top - 20)),
                      (255, 255, 100), size=14, bold=True)
+    
+    def _drop_money(self, player, amount):
+        """Drop money when enemy dies"""
+        # Apply lucky charm bonus if active
+        if hasattr(player, 'lucky_charm_timer') and player.lucky_charm_timer > 0:
+            amount = int(amount * 1.5)  # 50% bonus
+        
+        player.money += amount
+        floating.append(DamageNumber(self.rect.centerx, self.rect.top - 12, f"+{amount}", (255, 215, 0)))
 
 class Bug(Enemy):
     def __init__(self, x, ground_y):
@@ -524,6 +535,8 @@ class Boss(Enemy):
         if self.hp <= 0:
             self.alive = False
             floating.append(DamageNumber(self.rect.centerx, self.rect.centery, "KO", CYAN))
+            # Drop money for Boss (boss enemy)
+            self._drop_money(player, random.randint(50, 100))
 
     def draw(self, surf, camera, show_los=False, show_nametags=False):
         # Draw debug vision cone and LOS line
@@ -630,6 +643,15 @@ class Frog(Enemy):
         
         # Handle player collision
         self.handle_player_collision(player, damage=1, knockback=(2, -6))
+    
+    def _drop_money(self, player, amount):
+        """Drop money when enemy dies"""
+        # Apply lucky charm bonus if active
+        if hasattr(player, 'lucky_charm_timer') and player.lucky_charm_timer > 0:
+            amount = int(amount * 1.5)  # 50% bonus
+        
+        player.money += amount
+        floating.append(DamageNumber(self.rect.centerx, self.rect.top - 12, f"+{amount}", (255, 215, 0)))
 
     # hit method is inherited from Enemy base class
 
@@ -1135,6 +1157,8 @@ class Bee(Enemy):
         if self.hp<=0:
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
+            # Drop money for Bee (medium enemy)
+            self._drop_money(player, random.randint(10, 25))
 
     def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.alive: return
@@ -1270,6 +1294,8 @@ class Golem(Enemy):
         if self.hp<=0:
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
+            # Drop money for Golem (boss enemy)
+            self._drop_money(player, random.randint(50, 100))
 
     def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.alive: return
