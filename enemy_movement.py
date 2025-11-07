@@ -213,16 +213,9 @@ class JumpingStrategy(MovementStrategy):
         # Apply gravity
         enemy.vy = min(enemy.vy + GRAVITY * 0.6, 15)
         
-        # Store old position for debugging
-        old_pos = (enemy.rect.x, enemy.rect.y)
-        
         # Update position
         enemy.rect.x += int(enemy.vx)
         enemy.rect.y += int(enemy.vy)
-        
-        # DEBUG: Log position changes
-        if old_pos != (enemy.rect.x, enemy.rect.y):
-            print(f"[DEBUG] Jumping: {enemy.__class__.__name__} moved from {old_pos} to ({enemy.rect.x}, {enemy.rect.y})")
         
         # Handle collisions
         for solid in level.solids:
@@ -234,7 +227,6 @@ class JumpingStrategy(MovementStrategy):
                     else:
                         enemy.rect.left = solid.right
                     enemy.vx *= -0.3
-                    print(f"[DEBUG] Jumping: {enemy.__class__.__name__} horizontal collision, vx={enemy.vx}")
                 
                 # Vertical collision
                 if enemy.vy > 0:
@@ -242,13 +234,19 @@ class JumpingStrategy(MovementStrategy):
                         enemy.rect.bottom = solid.top
                         enemy.vy = 0
                         enemy.on_ground = True
-                        print(f"[DEBUG] Jumping: {enemy.__class__.__name__} landed on ground")
+                elif enemy.vy < 0:
+                    # Hit ceiling
+                    if enemy.rect.top < solid.bottom and enemy.rect.centery > solid.centery:
+                        enemy.rect.top = solid.bottom
+                        enemy.vy = 0
+                        print(f"[DEBUG] Jumping: {enemy.__class__.__name__} hit ceiling")
         
         # Keep enemy in bounds
         if enemy.rect.top < 0:
             enemy.rect.top = 0
             enemy.vy = 0
-            print(f"[DEBUG] Jumping: {enemy.__class__.__name__} hit top boundary")
+            enemy.on_ground = False  # Reset ground state when hitting boundary
+            # Hit top boundary
         
         # Friction
         if enemy.on_ground:
@@ -422,23 +420,23 @@ class FloatingStrategy(MovementStrategy):
         else:
             enemy.vy = 0
         
-        # Horizontal movement
+        # Horizontal movement - INCREASED SPEEDS FOR VISIBILITY
         if has_los and distance < enemy.vision_range:
             # Maintain distance but face player
             if distance < 150:
                 # Too close, drift back
                 dx = epos[0] - ppos[0]
-                enemy.vx = 0.8 if dx > 0 else -0.8
+                enemy.vx = 2.0 if dx > 0 else -2.0  # Increased from 0.8
             elif distance > 250:
                 # Too far, drift closer
                 dx = ppos[0] - epos[0]
-                enemy.vx = 0.6 if dx > 0 else -0.6
+                enemy.vx = 1.5 if dx > 0 else -1.5  # Increased from 0.6
             else:
                 # Good distance, slight drift
-                enemy.vx = math.sin(pygame.time.get_ticks() * 0.001) * 0.5
+                enemy.vx = math.sin(pygame.time.get_ticks() * 0.001) * 1.2  # Increased from 0.5
         else:
-            # Gentle floating drift
-            enemy.vx = math.sin(pygame.time.get_ticks() * 0.0008) * 0.8
+            # Gentle floating drift - MORE VISIBLE
+            enemy.vx = math.sin(pygame.time.get_ticks() * 0.0008) * 2.0  # Increased from 0.8
         
         # Apply movement
         enemy.rect.x += int(enemy.vx)

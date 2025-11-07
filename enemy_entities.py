@@ -79,9 +79,7 @@ class Enemy:
     def _set_movement_strategy(self):
         """Set movement strategy based on enemy type"""
         # This will be overridden by specific enemy classes
-        pass
-        
-        # Initialize movement strategy
+        # Initialize movement strategy as fallback
         self._initialize_movement_strategy()
     
     def update_vision_cone(self, player_pos):
@@ -612,11 +610,15 @@ class Frog(Enemy):
         # Handle vertical velocity for dash
         self.vy = getattr(self, 'vy', 0) + min(GRAVITY, 10)
         self.rect.y += int(min(10, self.vy))
+        
+        # Check ground collision for Frog
+        self.on_ground = False
         for s in level.solids:
             if self.rect.colliderect(s):
                 if self.rect.bottom > s.top and self.rect.centery < s.centery:
                     self.rect.bottom = s.top
                     self.vy = 0
+                    self.on_ground = True  # Explicitly set on_ground when landing
         
         # Handle player collision
         self.handle_player_collision(player, damage=1, knockback=(2, -6))
@@ -792,8 +794,8 @@ class WizardCaster(Enemy):
             self.action = random.choices(['bolt','missile','fireball'], weights=[0.5,0.3,0.2])[0]
             self.tele_t = 16
             self.tele_text = '!!'
-        # gravity only (no movement)
-        self.handle_gravity(level)
+        # Use new movement system instead of just gravity
+        self.handle_movement(level, player)
 
     # hit method is inherited from Enemy base class
 
