@@ -314,6 +314,19 @@ class Game:
         if getattr(self.player, 'stamina_boost_timer', 0) > 0:
             secs = max(0, int(self.player.stamina_boost_timer / FPS))
             draw_text(self.screen, f"Cavern Brew {secs}s", (WIDTH-180, HEIGHT-160), (150,255,180), size=16, bold=True)
+        
+        # Display special item status effects
+        if getattr(self.player, 'lucky_charm_timer', 0) > 0:
+            secs = max(0, int(self.player.lucky_charm_timer / FPS))
+            draw_text(self.screen, f"Lucky! {secs}s", (WIDTH-180, HEIGHT-180), (255, 215, 0), size=16, bold=True)
+        
+        if getattr(self.player, 'phoenix_feather_active', False):
+            draw_text(self.screen, "Phoenix Blessing", (WIDTH-180, HEIGHT-200), (255, 150, 50), size=16, bold=True)
+        
+        # Check for TimeCrystal effect on enemies
+        time_crystal_active = any(getattr(e, 'slow_remaining', 0) > 0 for e in self.enemies if getattr(e, 'alive', False))
+        if time_crystal_active:
+            draw_text(self.screen, "Time Distorted", (WIDTH-180, HEIGHT-220), (150, 150, 255), size=16, bold=True)
 
         draw_text(self.screen,
                   "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo) | Shop F6",

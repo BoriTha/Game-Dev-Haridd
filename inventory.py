@@ -2,10 +2,11 @@ import pygame
 import random
 from config import WIDTH, HEIGHT, FPS, WHITE
 from utils import draw_text, get_font
-from items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog
+from items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog, build_consumable_catalog
 from entities import floating, DamageNumber
 
 from dataclasses import dataclass
+from typing import Optional
 
 @dataclass
 class ConsumableStack:
@@ -59,7 +60,7 @@ class Inventory:
         self.inventory_stock_mode = 'gear'
         self.inventory_regions = []
         self.inventory_drag = None
-        self.gear_slots = []  # Type: List[Optional[str]]
+        self.gear_slots: list[Optional[str]] = []
         self.consumable_slots = []
         self.armament_scroll_offset = 0
         self.consumable_scroll_offset = 0
@@ -69,64 +70,7 @@ class Inventory:
         self.consumable_hotkeys = [pygame.K_4, pygame.K_5, pygame.K_6]
         self.armament_catalog = build_armament_catalog()
         self.armament_order = list(self.armament_catalog.keys())
-        self.consumable_catalog: dict[str, Consumable] = {
-            'health': HealConsumable(
-                key='health',
-                name="Health Flask",
-                color=(215, 110, 120),
-                icon_letter="H",
-                max_stack=5,
-                amount=3,
-                effect_text="Restore 3 HP instantly.",
-                description="Distilled petals from palace gardens.",
-            ),
-            'mana': ManaConsumable(
-                key='mana',
-                name="Mana Vial",
-                color=(120, 180, 240),
-                icon_letter="M",
-                max_stack=5,
-                amount=10,
-                effect_text="Restore 10 mana.",
-                description="Clinks with crystallized star-salts.",
-            ),
-            'speed': SpeedConsumable(
-                key='speed',
-                name="Haste Draught",
-                color=(255, 200, 120),
-                icon_letter="S",
-                max_stack=3,
-                amount=0.05,
-                duration=8.0,
-                effect_text="Short burst of speed and cooldown haste.",
-                description="Citrus fizz harvested from sun-basil.",
-            ),
-            'skyroot': JumpBoostConsumable(
-                key='skyroot',
-                name="Skyroot Elixir",
-                color=(200, 220, 255),
-                icon_letter="J",
-                max_stack=3,
-                duration=12.0,
-                jump_multiplier=1.25,
-                extra_jumps=1,
-                effect_text="Higher jumps and triple-jump for 12s.",
-                description="Sap of levitating Skyroot tree.",
-                flavor="Feels like standing on stormclouds.",
-            ),
-            'stamina': StaminaBoostConsumable(
-                key='stamina',
-                name="Cavern Brew",
-                color=(120, 200, 140),
-                icon_letter="C",
-                max_stack=3,
-                duration=30.0,
-                bonus_pct=0.25,
-                effect_text="+25% stamina for 30s. Bar glows green.",
-                description="Hidden-cave tonic that stretches every breath.",
-                flavor="Thick, earthy, stubborn.",
-            ),
-        }
+        self.consumable_catalog = build_consumable_catalog()
         self.consumable_order: list[str] = []
 
     def _refresh_inventory_defaults(self):
@@ -140,7 +84,7 @@ class Inventory:
         random.shuffle(available_armaments)
         self.gear_slots = available_armaments[:3]
         while len(self.gear_slots) < 3:
-            self.gear_slots.append(None)  # Type: List[Optional[str]]
+            self.gear_slots.append(None)
         
         self.consumable_order = []
         self.consumable_storage.clear()
@@ -1268,6 +1212,8 @@ class Inventory:
         base = player._base_stats
         stats = {k: float(v) for k, v in base.items()}
         for key in self.gear_slots:
+            if key is None:
+                continue
             item = self.armament_catalog.get(key)
             if not item:
                 continue
@@ -1275,16 +1221,16 @@ class Inventory:
                 stats[mod_key] = stats.get(mod_key, 0.0) + value
         stamina_mult = getattr(player, 'stamina_buff_mult', 1.0)
         stats['max_stamina'] = stats.get('max_stamina', 0.0) * stamina_mult
-        player.max_hp = max(1, int(round(stats.get('max_hp', player.max_hp))))
+        player.max_hp = max(1, int(round(stats.get('max_hp', player.max_hp) or player.max_hp)))
         player.hp = min(player.hp, player.max_hp)
-        player.attack_damage = max(1, int(round(stats.get('attack_damage', player.attack_damage))))
+        player.attack_damage = max(1, int(round(stats.get('attack_damage', player.attack_damage) or player.attack_damage)))
         player.player_speed = stats.get('player_speed', player.player_speed)
         player.player_air_speed = stats.get('player_air_speed', player.player_air_speed)
         if hasattr(player, 'max_mana'):
-            player.max_mana = max(0.0, stats.get('max_mana', player.max_mana))
+            player.max_mana = max(0.0, stats.get('max_mana', player.max_mana) or player.max_mana)
             player.mana = min(player.mana, player.max_mana)
         if hasattr(player, 'max_stamina'):
-            player.max_stamina = max(0.0, stats.get('max_stamina', player.max_stamina))
+            player.max_stamina = max(0.0, stats.get('max_stamina', player.max_stamina) or player.max_stamina)
             player.stamina = min(player.stamina, player.max_stamina)
         if hasattr(player, '_stamina_regen'):
             player._stamina_regen = stats.get('stamina_regen', player._stamina_regen)
