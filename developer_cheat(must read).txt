@@ -6,14 +6,14 @@ Hotkeys (during gameplay):
 - F1  — Toggle God Mode
   - Prevents the player from taking damage (debug/testing).
 
-- F2  — Teleport to Boss Room
-  - Jumps directly to the last room (boss room).
+- F2  — Refill Consumables
+  - Restocks all consumable items in the inventory.
 
-- F3  — Toggle Infinite Mana
-  - Keeps the player’s mana topped up every frame.
+- F3  — Toggle Enemy Vision Rays
+  - Shows/hides enemy line-of-sight visualization for debugging.
 
-- F4  — Toggle Zero Cooldown
-  - Forces all skill cooldowns to 0 every frame (skill_cd1/2/3).
+- F4  — Open Debugger Menu
+  - Opens the comprehensive debug menu with additional options.
 
 - F5  — Go to Room 1
 - F6  — Go to Room 2

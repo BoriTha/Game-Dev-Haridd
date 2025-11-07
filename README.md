@@ -31,10 +31,10 @@ py d:\game_dev\main.py
 
 Dev cheats (for testing):
 - F1: Toggle God Mode (also available inside the debugger menu)
-- F2: Teleport to Boss Room
-- F3: Toggle Infinite Mana
-- F4: Toggle Zero Cooldown (skills)
-- F5: Open the debugger menu (pause overlay) that lets you toggle all cheats, show/hide enemy vision rays, and instantly refill consumables.
+- F2: Refill Consumables
+- F3: Toggle Enemy Vision Rays
+- F4: Open the debugger menu (pause overlay)
+- F5: Open the debugger menu (alternative key)
 
 ## Menu flow
 
@@ -67,7 +67,7 @@ Each class has unique resource bars (stamina/mana) and cooldowns shown on the HU
 
 ### Debugger menu
 
-Press `F5` at any time during gameplay to open the debugger overlay. From there you can:
+Press `F4` (or `F5`) at any time during gameplay to open the debugger overlay. From there you can:
 
 - Toggle God Mode, Infinite Mana, and Zero Cooldown without remembering individual hotkeys.
 - Jump directly to the boss room, teleport to any room via a level picker, or close the menu.

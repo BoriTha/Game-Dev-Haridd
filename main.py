@@ -142,7 +142,9 @@ class Game:
             "",
             "Dev Cheats:",
             "  F1: Toggle God Mode",
-            "  F2: Teleport to Boss Room",
+            "  F2: Refill Consumables",
+            "  F3: Toggle Enemy Vision Rays",
+            "  F4: Open Debugger Menu",
         ]
         while True:
             self.clock.tick(FPS)
@@ -504,20 +506,15 @@ class Game:
                     elif ev.key == pygame.K_F1:
                         # toggle god mode
                         self.player.god = not getattr(self.player, 'god', False)
-                        print(f"God mode {'ON' if self.player.god else 'OFF'}")
                     elif ev.key == pygame.K_F2:
-                        # teleport to boss room (last room)
-                        self.goto_room(Level.ROOM_COUNT - 1)
+                        # refill consumables
+                        self.inventory.add_all_consumables()
                     elif ev.key == pygame.K_F3:
-                        # toggle infinite mana
-                        self.cheat_infinite_mana = not self.cheat_infinite_mana
-                        state = 'ON' if self.cheat_infinite_mana else 'OFF'
-                        print(f"Cheat: Infinite Mana {state}")
+                        # toggle enemy vision rays
+                        self.debug_enemy_rays = not self.debug_enemy_rays
                     elif ev.key == pygame.K_F4:
-                        # toggle zero cooldown
-                        self.cheat_zero_cooldown = not self.cheat_zero_cooldown
-                        state = 'ON' if self.cheat_zero_cooldown else 'OFF'
-                        print(f"Cheat: Zero Cooldown {state}")
+                        # open debugger menu
+                        self.debug_menu()
                     elif ev.key == pygame.K_F6:
                         self.goto_room(1)
                     elif ev.key == pygame.K_F7:
@@ -572,17 +569,17 @@ class Game:
             {'label': "God Mode (F1)", 'type': 'toggle',
              'getter': lambda: getattr(self.player, 'god', False),
              'setter': lambda v: setattr(self.player, 'god', v)},
-            {'label': "Teleport to Boss Room (F2)", 'type': 'action',
-             'action': lambda: self.goto_room(Level.ROOM_COUNT - 1)},
-            {'label': "Infinite Mana (F3)", 'type': 'toggle',
-             'getter': lambda: self.cheat_infinite_mana,
-             'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
-            {'label': "Zero Cooldown (F4)", 'type': 'toggle',
-             'getter': lambda: self.cheat_zero_cooldown,
-             'setter': lambda v: setattr(self, 'cheat_zero_cooldown', v)},
-            {'label': "Enemy Vision Rays", 'type': 'toggle',
+            {'label': "Refill Consumables (F2)", 'type': 'action',
+             'action': self.inventory.add_all_consumables},
+            {'label': "Enemy Vision Rays (F3)", 'type': 'toggle',
              'getter': lambda: self.debug_enemy_rays,
              'setter': lambda v: setattr(self, 'debug_enemy_rays', v)},
+            {'label': "Infinite Mana", 'type': 'toggle',
+             'getter': lambda: self.cheat_infinite_mana,
+             'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
+            {'label': "Zero Cooldown", 'type': 'toggle',
+             'getter': lambda: self.cheat_zero_cooldown,
+             'setter': lambda v: setattr(self, 'cheat_zero_cooldown', v)},
             {'label': "Teleport to Level...", 'type': 'action',
              'action': self.debug_teleport_menu},
             {'label': "Refill Consumables", 'type': 'action',
