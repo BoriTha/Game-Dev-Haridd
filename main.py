@@ -87,7 +87,7 @@ class Game:
             self.player.mana = getattr(self.player, 'max_mana', self.player.mana)
         if self.cheat_zero_cooldown:
             # Force cooldowns to zero if present
-            for attr in ('skill_cd1', 'skill_cd2', 'skill_cd3'):
+            for attr in ('skill_cd1', 'skill_cd2', 'skill_cd3', 'dash_cd', 'mobility_cd'):
                 if hasattr(self.player, attr):
                     setattr(self.player, attr, 0)
 
