@@ -141,13 +141,22 @@ class Inventory:
         self.gear_slots = available_armaments[:3]
         while len(self.gear_slots) < 3:
             self.gear_slots.append(None)  # Type: List[Optional[str]]
+        
         self.consumable_order = []
         self.consumable_storage.clear()
         keys = consumable_defaults.get(cls, ['health', 'mana', None])
         slots = []
         for i in range(len(self.consumable_hotkeys)):
             key_id = keys[i] if i < len(keys) else None
-            slots.append(self._make_consumable_stack(key_id) if key_id else None)
+            if key_id:
+                # Create stack directly without discovery to avoid duplicates
+                stack = ConsumableStack(key=key_id, count=1)
+                # Add to order list for starting items
+                if key_id not in self.consumable_order:
+                    self.consumable_order.append(key_id)
+                slots.append(stack)
+            else:
+                slots.append(None)
         self.consumable_slots = slots
         self.inventory_open = False
         self.inventory_selection = None
@@ -564,7 +573,7 @@ class Inventory:
                     if equipped > 0:
                         pygame.draw.rect(self.game.screen, (120, 230, 180), cell.inflate(6, 6), width=2, border_radius=10)
                     total = self._total_available_count(key)
-                    if total > 1:
+                    if total > 0:
                         count_surface = count_font.render(str(total), True, (250, 250, 255))
                         count_rect = count_surface.get_rect(bottomright=(cell.right - 4, cell.bottom - 4))
                         self.game.screen.blit(count_surface, count_rect)
@@ -700,10 +709,12 @@ class Inventory:
                 pygame.draw.rect(self.game.screen, entry.color, rect.inflate(-8, -8), border_radius=6)
                 icon_surf = icon_font.render(entry.icon_letter, True, (20,20,28))
                 self.game.screen.blit(icon_surf, icon_surf.get_rect(center=rect.center))
-                if stack and stack.count > 1:
-                    count_font = get_font(16, bold=True)
-                    count_surf = count_font.render(str(stack.count), True, (250, 250, 255))
-                    self.game.screen.blit(count_surf, count_surf.get_rect(bottomright=(rect.right - 4, rect.bottom - 4)))
+                if stack:
+                    total_count = self._total_available_count(stack.key)
+                    if total_count > 1:
+                        count_font = get_font(16, bold=True)
+                        count_surf = count_font.render(str(total_count), True, (250, 250, 255))
+                        self.game.screen.blit(count_surf, count_surf.get_rect(bottomright=(rect.right - 4, rect.bottom - 4)))
             else:
                 key_label = self._hotkey_label(idx)
                 draw_text(self.game.screen, key_label, (rect.centerx-4, rect.centery-8), (80,90,110), size=18)
@@ -724,14 +735,26 @@ class Inventory:
         stock_surface.fill((0,0,0,0)) # Transparent background
 
         grid_padding = 10
+        count_font = get_font(16, bold=True)
 
         current_scroll_offset = 0
         if self.inventory_stock_mode == 'gear':
-            keys_to_draw = [*self.armament_order, self.UNEQUIP_GEAR_KEY]
+            # Only show gear that's not already equipped
+            available_gear = [key for key in self.armament_order if key not in self.gear_slots]
+            keys_to_draw = [*available_gear, self.UNEQUIP_GEAR_KEY]
             current_scroll_offset = self.armament_scroll_offset
             draw_text(stock_surface, "Armory Stock", (10, 10), (210, 200, 170), size=18)
         elif self.inventory_stock_mode == 'consumable':
-            keys_to_draw = [*self.consumable_order, self.UNEQUIP_CONSUMABLE_KEY]
+            # Only show consumables that have additional stock available beyond what's equipped
+            available_consumables = []
+            for key in self.consumable_order:
+                # Check if this consumable is already equipped
+                equipped_count = sum(1 for s in self.consumable_slots if s and s.key == key)
+                storage_count = self._storage_count(key)
+                # Only show if there's storage stock available (beyond what's equipped)
+                if storage_count > 0:
+                    available_consumables.append(key)
+            keys_to_draw = [*available_consumables, self.UNEQUIP_CONSUMABLE_KEY]
             current_scroll_offset = self.consumable_scroll_offset
             draw_text(stock_surface, "Consumable Stock", (10, 10), (210, 200, 170), size=18)
         else:
@@ -796,6 +819,13 @@ class Inventory:
                     pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
                     icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))
                     stock_surface.blit(icon_surface, icon_surface.get_rect(center=cell.center))
+                    
+                    # Display the count for consumables in stock
+                    total_count = self._total_available_count(key)
+                    if total_count > 0:
+                        count_surface = count_font.render(str(total_count), True, (250, 250, 255))
+                        count_rect = count_surface.get_rect(bottomright=(cell.right - 4, cell.bottom - 4))
+                        stock_surface.blit(count_surface, count_rect)
         
 
         
@@ -893,10 +923,12 @@ class Inventory:
                     self.game.screen.blit(icon_surface, icon_rect)
             else:
                 pygame.draw.rect(self.game.screen, (60, 60, 80), inner, width=2, border_radius=6)
-            if stack and stack.count > 1:
-                count_surface = count_font.render(str(stack.count), True, (250, 250, 255))
-                count_rect = count_surface.get_rect(bottomright=(rect.right - 4, rect.bottom - 4))
-                self.game.screen.blit(count_surface, count_rect)
+            if stack:
+                total_count = self._total_available_count(stack.key)
+                if total_count > 1:
+                    count_surface = count_font.render(str(total_count), True, (250, 250, 255))
+                    count_rect = count_surface.get_rect(bottomright=(rect.right - 4, rect.bottom - 4))
+                    self.game.screen.blit(count_surface, count_rect)
             name = entry.name if entry else "Empty"
             trimmed = self._shorten_text(name, name_font, slot_size + 8)
             name_surface = name_font.render(trimmed, True, (220, 220, 230))
@@ -966,7 +998,20 @@ class Inventory:
         amount = int(amount)
         if amount <= 0:
             return 0
-        self.consumable_storage[key] = self._storage_count(key) + amount
+        old_count = self._storage_count(key)
+        equipped_count = self._total_equipped_count(key)
+        new_total = equipped_count + old_count + amount
+        
+        # Check if adding this amount would exceed the total limit of 20
+        if new_total > 20:
+            # Calculate how much we can actually add
+            max_addable = max(0, 20 - equipped_count - old_count)
+            if max_addable <= 0:
+                return 0
+            amount = max_addable
+        
+        old_count = self._storage_count(key)
+        self.consumable_storage[key] = old_count + amount
         self._discover_consumable_key(key)
         return amount
 
@@ -985,6 +1030,33 @@ class Inventory:
             self._prune_consumable_key(key)
         return take
 
+    def _storage_add_unequip(self, key, amount):
+        """Special version of _storage_add for unequipping items that accounts for the fact
+        that the items being unequipped are currently counted in equipped_count."""
+        if amount <= 0 or not key or key not in self.consumable_catalog:
+            return 0
+        amount = int(amount)
+        if amount <= 0:
+            return 0
+        old_count = self._storage_count(key)
+        # For unequip, we need to subtract the amount being unequipped from equipped_count
+        # since these items are being moved from equipped to storage
+        equipped_count = max(0, self._total_equipped_count(key) - amount)
+        new_total = equipped_count + old_count + amount
+        
+        # Check if adding this amount would exceed the total limit of 20
+        if new_total > 20:
+            # Calculate how much we can actually add
+            max_addable = max(0, 20 - equipped_count - old_count)
+            if max_addable <= 0:
+                return 0
+            amount = max_addable
+        
+        old_count = self._storage_count(key)
+        self.consumable_storage[key] = old_count + amount
+        self._discover_consumable_key(key)
+        return amount
+
     def add_consumable_to_storage(self, key, count=1):
         """Public helper to stash consumables without equipping them."""
         return self._storage_add(key, count)
@@ -993,7 +1065,8 @@ class Inventory:
         return sum(stack.count for stack in self.consumable_slots if stack and stack.key == key)
 
     def _total_available_count(self, key):
-        return self._total_equipped_count(key) + self._storage_count(key)
+        total = self._total_equipped_count(key) + self._storage_count(key)
+        return total
 
     def _clear_consumable_slot(self, idx):
         """Clear a consumable slot when the stack is depleted or invalid."""
@@ -1012,7 +1085,8 @@ class Inventory:
         stack = self.consumable_slots[idx]
         if not stack:
             return
-        self._storage_add(stack.key, stack.count)
+        # Use a special version of storage_add that accounts for the fact we're unequipping
+        self._storage_add_unequip(stack.key, stack.count)
         self.consumable_slots[idx] = None
 
     def consume_slot(self, idx):
@@ -1044,7 +1118,8 @@ class Inventory:
         if not key_id or key_id not in self.consumable_catalog:
             return None
         stack = ConsumableStack(key=key_id, count=max(1, count))
-        self._discover_consumable_key(key_id)
+        # Don't discover during initial stack creation to avoid duplicates
+        # Discovery will happen when items are actually added to storage
         return stack
 
     def _swap_gear_slots(self, idx1, idx2):
@@ -1126,9 +1201,21 @@ class Inventory:
         item_def = self.consumable_catalog.get(key)
         if not item_def or count <= 0:
             return 0
-        remaining = count
+        
+        # Check current total before adding
+        current_total = self._total_available_count(key)
+        
+        # Calculate how many more we can add before hitting the limit of 20
+        space_available = max(0, 20 - current_total)
+        if space_available <= 0:
+            return 0
+        
+        # Limit the amount we can actually add
+        amount_to_add = min(count, space_available)
+        remaining = amount_to_add
         added_total = 0
         slot_limit = self._slot_stack_limit(key)
+        
         # first try to add to existing stacks
         for stack in self.consumable_slots:
             if stack and stack.key == key:
@@ -1155,6 +1242,7 @@ class Inventory:
             stored = self._storage_add(key, remaining)
             added_total += stored
             remaining = max(0, remaining - stored)
+            
         if added_total > 0:
             self._discover_consumable_key(key)
         return added_total
