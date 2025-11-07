@@ -1,5 +1,6 @@
 import random
 import pygame
+import math
 from config import (
     FPS, GRAVITY, TERMINAL_VY, PLAYER_SPEED, PLAYER_AIR_SPEED, PLAYER_JUMP_V,
     PLAYER_SMALL_JUMP_CUT, COYOTE_FRAMES, JUMP_BUFFER_FRAMES,
@@ -9,6 +10,35 @@ from config import (
     POGO_BOUNCE_VY, ACCENT, GREEN, CYAN, RED, WHITE, IFRAME_BLINK_INTERVAL
 )
 from utils import sign, los_clear, find_intermediate_visible_point, find_idle_patrol_target
+
+# ADDED: Vision cone helper function
+def in_vision_cone(enemy_pos, player_pos, facing_angle, cone_half_angle, max_range):
+    """
+    Check if player is within enemy's vision cone.
+    Returns True if player is within the cone and range.
+    """
+    ex, ey = enemy_pos
+    px, py = player_pos
+    
+    # Calculate distance to player
+    dx = px - ex
+    dy = py - ey
+    dist = (dx*dx + dy*dy) ** 0.5
+    
+    # Check if player is within range
+    if dist > max_range or dist == 0:
+        return False
+    
+    # Calculate angle to player
+    angle_to_player = math.atan2(dy, dx)
+    
+    # Normalize angle difference to handle wrap-around
+    angle_diff = (angle_to_player - facing_angle) % (2 * math.pi)
+    if angle_diff > math.pi:
+        angle_diff -= 2 * math.pi
+    
+    # Check if player is within cone angle
+    return abs(angle_diff) <= cone_half_angle
 
 # Shared containers (imported by main)
 hitboxes = []
@@ -734,7 +764,13 @@ class Bug:
         self.vx = random.choice([-1,1]) * 1.6
         self.hp = 30
         self.alive = True
-        self.aggro = 200
+        # ADDED: Vision cone properties (replacing aggro)
+        self.vision_range = 200
+        self.cone_half_angle = math.pi/6  # 60° total cone
+        self.turn_rate = 0.05
+        # ADDED: Facing direction and angle
+        self.facing = 1 if self.vx > 0 else -1
+        self.facing_angle = 0 if self.facing > 0 else math.pi
         self.ifr = 0
         # slow effect
         self.slow_mult = 1.0
@@ -766,22 +802,56 @@ class Bug:
             self.slow_remaining -= 1
             if self.slow_remaining <= 0:
                 self.slow_mult = 1.0
-        # --- Smart AI ---
+        # --- Smart AI with Vision Cone ---
         epos = (self.rect.centerx, self.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
-        dist_x = abs(ppos[0] - epos[0])
-        dist_y = abs(ppos[1] - epos[1])
-        in_aggro = (dist_x + dist_y) < self.aggro
-        has_los = los_clear(level, epos, ppos)
+        
+        # Calculate distance to player
+        dx = ppos[0] - epos[0]
+        dy = ppos[1] - epos[1]
+        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        # ADDED: Update facing direction
+        if dist_to_player > 0:
+            # Calculate angle to player
+            angle_to_player = math.atan2(dy, dx)
+            
+            # Update facing if player is within 1.2-1.5x vision_range
+            if dist_to_player < self.vision_range * 1.5:
+                # Smoothly turn toward player
+                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+                if angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                self.facing_angle += angle_diff * self.turn_rate
+                
+                # Update facing direction based on angle
+                self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
+            else:
+                # Idle/patrol: subtle oscillation
+                self.facing_angle += 0.02 * self.facing
+                # Flip at bounds
+                if self.facing_angle > math.pi:
+                    self.facing_angle = math.pi
+                    self.facing = -1
+                elif self.facing_angle < 0:
+                    self.facing_angle = 0
+                    self.facing = 1
+        
+        # ADDED: Vision cone check
+        in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
+        has_los = in_cone and los_clear(level, epos, ppos)
+        
         # store last LOS check / target for debug drawing
         self._has_los = has_los
         self._los_point = ppos
-        if in_aggro and has_los:
+        
+        # AI state logic based on vision cone
+        if has_los and dist_to_player < self.vision_range:
             self.state = 'pursue'
             self.last_seen = ppos
             self.target = ppos
-        elif in_aggro:
-            # lost LOS but aggroed -> search
+        elif in_cone and dist_to_player < self.vision_range:
+            # In cone but no LOS -> search
             if self.state != 'search' or self.repath_t <= 0:
                 wp = find_intermediate_visible_point(level, epos, ppos)
                 if wp:
@@ -865,6 +935,24 @@ class Bug:
         if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
+            
+            # ADDED: Draw vision cone for debug
+            if show_los:
+                center = camera.to_screen(self.rect.center)
+                # Calculate cone edges
+                left_angle = self.facing_angle - self.cone_half_angle
+                right_angle = self.facing_angle + self.cone_half_angle
+                
+                # Calculate end points of cone lines
+                left_x = center[0] + math.cos(left_angle) * self.vision_range
+                left_y = center[1] + math.sin(left_angle) * self.vision_range
+                right_x = center[0] + math.cos(right_angle) * self.vision_range
+                right_y = center[1] + math.sin(right_angle) * self.vision_range
+                
+                # Draw cone lines
+                pygame.draw.line(surf, (255, 255, 0), center, (left_x, left_y), 1)
+                pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
+        
         col = (180, 70, 160) if self.ifr==0 else (120, 40, 100)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=6)
 
@@ -879,7 +967,13 @@ class Boss:
         self.vx = 0
         self.hp = 70
         self.alive = True
-        self.aggro = 400
+        # ADDED: Vision cone properties (replacing aggro)
+        self.vision_range = 300
+        self.cone_half_angle = math.pi/3  # 120° total cone, wide
+        self.turn_rate = 0.03  # slow turn rate
+        # ADDED: Facing direction and angle
+        self.facing = 1  # starts facing right
+        self.facing_angle = 0  # 0 for right, math.pi for left
         self.ifr = 0
         # slow effect
         self.slow_mult = 1.0
@@ -905,15 +999,52 @@ class Boss:
             self.slow_remaining -= 1
             if self.slow_remaining <= 0:
                 self.slow_mult = 1.0
-        # Very simple AI: slowly move toward player when in range
-        dx = player.rect.centerx - self.rect.centerx
-        # compute LOS for drawing/debug
+        
+        # ADDED: Vision cone AI
         epos = (self.rect.centerx, self.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
-        has_los = los_clear(level, epos, ppos)
+        
+        # Calculate distance to player
+        dx = ppos[0] - epos[0]
+        dy = ppos[1] - epos[1]
+        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        # ADDED: Update facing direction
+        if dist_to_player > 0:
+            # Calculate angle to player
+            angle_to_player = math.atan2(dy, dx)
+            
+            # Update facing if player is within 1.2-1.5x vision_range
+            if dist_to_player < self.vision_range * 1.5:
+                # Smoothly turn toward player
+                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+                if angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                self.facing_angle += angle_diff * self.turn_rate
+                
+                # Update facing direction based on angle
+                self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
+            else:
+                # Idle/patrol: subtle oscillation
+                self.facing_angle += 0.02 * self.facing
+                # Flip at bounds
+                if self.facing_angle > math.pi:
+                    self.facing_angle = math.pi
+                    self.facing = -1
+                elif self.facing_angle < 0:
+                    self.facing_angle = 0
+                    self.facing = 1
+        
+        # ADDED: Vision cone check
+        in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
+        has_los = in_cone and los_clear(level, epos, ppos)
+        
+        # store last LOS check / target for debug drawing
         self._has_los = has_los
         self._los_point = ppos
-        if abs(dx) < self.aggro:
+        
+        # Simple AI: move toward player if in vision cone and has LOS
+        if has_los and dist_to_player < self.vision_range:
             self.vx = (1 if dx>0 else -1) * 1.2
         else:
             self.vx = 0
@@ -974,6 +1105,24 @@ class Boss:
         if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
+            
+            # ADDED: Draw vision cone for debug
+            if show_los:
+                center = camera.to_screen(self.rect.center)
+                # Calculate cone edges
+                left_angle = self.facing_angle - self.cone_half_angle
+                right_angle = self.facing_angle + self.cone_half_angle
+                
+                # Calculate end points of cone lines
+                left_x = center[0] + math.cos(left_angle) * self.vision_range
+                left_y = center[1] + math.sin(left_angle) * self.vision_range
+                right_x = center[0] + math.cos(right_angle) * self.vision_range
+                right_y = center[1] + math.sin(right_angle) * self.vision_range
+                
+                # Draw cone lines
+                pygame.draw.line(surf, (255, 255, 0), center, (left_x, left_y), 1)
+                pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
+        
         col = (200, 100, 40) if self.ifr==0 else (140, 80, 30)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=8)
 
@@ -988,7 +1137,13 @@ class Frog:
         self.hp = 18
         self.alive = True
         self.ifr = 0
-        self.aggro = 220
+        # ADDED: Vision cone properties (replacing aggro)
+        self.vision_range = 220
+        self.cone_half_angle = math.pi/12  # 30° total cone, precise
+        self.turn_rate = 0.08  # quick turn rate
+        # ADDED: Facing direction and angle
+        self.facing = 1  # starts facing right
+        self.facing_angle = 0  # 0 for right, math.pi for left
         self.state = 'idle'
         self.tele_t = 0
         self.tele_text = ''
@@ -1000,12 +1155,49 @@ class Frog:
         if self.ifr>0: self.ifr-=1
         epos = (self.rect.centerx, self.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
-        has_los = los_clear(level, epos, ppos)
+        
+        # Calculate distance to player
+        dx = ppos[0] - epos[0]
+        dy = ppos[1] - epos[1]
+        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        # ADDED: Update facing direction
+        if dist_to_player > 0:
+            # Calculate angle to player
+            angle_to_player = math.atan2(dy, dx)
+            
+            # Update facing if player is within 1.2-1.5x vision_range
+            if dist_to_player < self.vision_range * 1.5:
+                # Smoothly turn toward player
+                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+                if angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                self.facing_angle += angle_diff * self.turn_rate
+                
+                # Update facing direction based on angle
+                self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
+            else:
+                # Idle/patrol: subtle oscillation
+                self.facing_angle += 0.02 * self.facing
+                # Flip at bounds
+                if self.facing_angle > math.pi:
+                    self.facing_angle = math.pi
+                    self.facing = -1
+                elif self.facing_angle < 0:
+                    self.facing_angle = 0
+                    self.facing = 1
+        
+        # ADDED: Vision cone check
+        in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
+        has_los = in_cone and los_clear(level, epos, ppos)
+        
         # store last LOS check / target for debug drawing
         self._has_los = has_los
         self._los_point = ppos
-        dx = ppos[0] - epos[0]
-        dist = abs(dx) + abs(ppos[1]-epos[1])
+        
+        # Use Manhattan distance for frog's behavior (preserving original logic)
+        dist = abs(dx) + abs(dy)
+        
         if self.cool>0:
             self.cool -= 1
         if self.tele_t>0:
@@ -1013,7 +1205,6 @@ class Frog:
             if self.tele_t==0:
                 # perform dash diagonally toward player
                 spd = 8.0
-                dy = ppos[1] - epos[1]
                 distv = max(1.0, (dx*dx + dy*dy) ** 0.5)
                 nx, ny = dx/distv, dy/distv
                 self.vx = nx * spd
@@ -1031,7 +1222,7 @@ class Frog:
                     self.state='idle'
         else:
             self.vx = 0
-            if has_los and dist< self.aggro and self.cool==0:
+            if has_los and dist_to_player < self.vision_range and self.cool==0:
                 # telegraph and delay
                 self.tele_t = 24
                 self.tele_text = '!'
@@ -1070,6 +1261,24 @@ class Frog:
         if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
+            
+            # ADDED: Draw vision cone for debug
+            if show_los:
+                center = camera.to_screen(self.rect.center)
+                # Calculate cone edges
+                left_angle = self.facing_angle - self.cone_half_angle
+                right_angle = self.facing_angle + self.cone_half_angle
+                
+                # Calculate end points of cone lines
+                left_x = center[0] + math.cos(left_angle) * self.vision_range
+                left_y = center[1] + math.sin(left_angle) * self.vision_range
+                right_x = center[0] + math.cos(right_angle) * self.vision_range
+                right_y = center[1] + math.sin(right_angle) * self.vision_range
+                
+                # Draw cone lines
+                pygame.draw.line(surf, (255, 255, 0), center, (left_x, left_y), 1)
+                pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
+        
         col = (80, 200, 80) if self.ifr==0 else (60, 120, 60)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
@@ -1086,7 +1295,13 @@ class Archer:
         self.hp = 16
         self.alive = True
         self.ifr = 0
-        self.aggro = 260
+        # ADDED: Vision cone properties (replacing aggro)
+        self.vision_range = 350
+        self.cone_half_angle = math.pi/4  # 90° total cone
+        self.turn_rate = 0.05
+        # ADDED: Facing direction and angle
+        self.facing = 1  # starts facing right
+        self.facing_angle = 0  # 0 for right, math.pi for left
         self.cool = 0
         self.tele_t = 0
         self.tele_text = ''
@@ -1097,22 +1312,57 @@ class Archer:
         if self.cool>0: self.cool-=1
         epos = (self.rect.centerx, self.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
-        has_los = los_clear(level, epos, ppos)
+        
+        # Calculate distance to player
+        dx = ppos[0] - epos[0]
+        dy = ppos[1] - epos[1]
+        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        # ADDED: Update facing direction
+        if dist_to_player > 0:
+            # Calculate angle to player
+            angle_to_player = math.atan2(dy, dx)
+            
+            # Update facing if player is within 1.2-1.5x vision_range
+            if dist_to_player < self.vision_range * 1.5:
+                # Smoothly turn toward player
+                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+                if angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                self.facing_angle += angle_diff * self.turn_rate
+                
+                # Update facing direction based on angle
+                self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
+            else:
+                # Idle/patrol: subtle oscillation
+                self.facing_angle += 0.02 * self.facing
+                # Flip at bounds
+                if self.facing_angle > math.pi:
+                    self.facing_angle = math.pi
+                    self.facing = -1
+                elif self.facing_angle < 0:
+                    self.facing_angle = 0
+                    self.facing = 1
+        
+        # ADDED: Vision cone check
+        in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
+        has_los = in_cone and los_clear(level, epos, ppos)
+        
         # store last LOS check / target for debug drawing
         self._has_los = has_los
         self._los_point = ppos
+        
         if self.tele_t>0:
             self.tele_t -= 1
-            if self.tele_t==0 and has_los:
-                # fire arrow
-                dx = ppos[0]-epos[0]; dy = ppos[1]-epos[1]
+            if self.tele_t==0 and has_los and dist_to_player < self.vision_range:
+                # fire arrow (limited to vision range)
                 dist = max(1.0, (dx*dx+dy*dy)**0.5)
                 nx, ny = dx/dist, dy/dist
                 hb = pygame.Rect(0,0,10,6); hb.center = self.rect.center
                 # Match player ranger's normal arrow speed and lifetime
                 hitboxes.append(Hitbox(hb, 120, 1, self, dir_vec=(nx,ny), vx=nx*10.0, vy=ny*10.0))
                 self.cool = 60
-        elif has_los and self.cool==0:
+        elif has_los and self.cool==0 and dist_to_player < self.vision_range:
             self.tele_t = 18
             self.tele_text = '!!'
 
@@ -1148,6 +1398,24 @@ class Archer:
         if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
+            
+            # ADDED: Draw vision cone for debug
+            if show_los:
+                center = camera.to_screen(self.rect.center)
+                # Calculate cone edges
+                left_angle = self.facing_angle - self.cone_half_angle
+                right_angle = self.facing_angle + self.cone_half_angle
+                
+                # Calculate end points of cone lines
+                left_x = center[0] + math.cos(left_angle) * self.vision_range
+                left_y = center[1] + math.sin(left_angle) * self.vision_range
+                right_x = center[0] + math.cos(right_angle) * self.vision_range
+                right_y = center[1] + math.sin(right_angle) * self.vision_range
+                
+                # Draw cone lines
+                pygame.draw.line(surf, (255, 255, 0), center, (left_x, left_y), 1)
+                pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
+        
         col = (200, 200, 80) if self.ifr==0 else (120, 120, 60)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
@@ -1163,7 +1431,13 @@ class WizardCaster:
         self.hp = 14
         self.alive = True
         self.ifr = 0
-        self.aggro = 260
+        # ADDED: Vision cone properties (replacing aggro)
+        self.vision_range = 280
+        self.cone_half_angle = math.pi/3  # 120° total cone
+        self.turn_rate = 0.05
+        # ADDED: Facing direction and angle
+        self.facing = 1  # starts facing right
+        self.facing_angle = 0  # 0 for right, math.pi for left
         self.cool = 0
         self.tele_t = 0
         self.tele_text = ''
@@ -1175,14 +1449,49 @@ class WizardCaster:
         if self.cool>0: self.cool-=1
         epos = (self.rect.centerx, self.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
-        has_los = los_clear(level, epos, ppos)
+        
+        # Calculate distance to player
+        dx = ppos[0] - epos[0]
+        dy = ppos[1] - epos[1]
+        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        # ADDED: Update facing direction
+        if dist_to_player > 0:
+            # Calculate angle to player
+            angle_to_player = math.atan2(dy, dx)
+            
+            # Update facing if player is within 1.2-1.5x vision_range
+            if dist_to_player < self.vision_range * 1.5:
+                # Smoothly turn toward player
+                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+                if angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                self.facing_angle += angle_diff * self.turn_rate
+                
+                # Update facing direction based on angle
+                self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
+            else:
+                # Idle/patrol: subtle oscillation
+                self.facing_angle += 0.02 * self.facing
+                # Flip at bounds
+                if self.facing_angle > math.pi:
+                    self.facing_angle = math.pi
+                    self.facing = -1
+                elif self.facing_angle < 0:
+                    self.facing_angle = 0
+                    self.facing = 1
+        
+        # ADDED: Vision cone check
+        in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
+        has_los = in_cone and los_clear(level, epos, ppos)
+        
         # store last LOS check / target for debug drawing
         self._has_los = has_los
         self._los_point = ppos
+        
         if self.tele_t>0:
             self.tele_t -= 1
-            if self.tele_t==0 and has_los:
-                dx = ppos[0]-epos[0]; dy = ppos[1]-epos[1]
+            if self.tele_t==0 and has_los and dist_to_player < self.vision_range:
                 dist = max(1.0, (dx*dx+dy*dy)**0.5)
                 nx, ny = dx/dist, dy/dist
                 if self.action == 'missile':
@@ -1198,7 +1507,7 @@ class WizardCaster:
                     hitboxes.append(Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=nx*9.0, vy=ny*9.0))
                     self.cool = 50
                 self.action = None
-        elif has_los and self.cool==0:
+        elif has_los and self.cool==0 and dist_to_player < self.vision_range:
             import random
             self.action = random.choices(['bolt','missile','fireball'], weights=[0.5,0.3,0.2])[0]
             self.tele_t = 16
@@ -1240,7 +1549,13 @@ class Assassin:
         self.hp = 20
         self.alive = True
         self.ifr = 0
-        self.aggro = 240
+        # ADDED: Vision cone properties (replacing aggro)
+        self.vision_range = 240
+        self.cone_half_angle = math.pi/8  # 45° total cone
+        self.turn_rate = 0.06
+        # ADDED: Facing direction and angle
+        self.facing = 1  # starts facing right
+        self.facing_angle = 0  # 0 for right, math.pi for left
         self.state = 'idle'
         self.tele_t = 0
         self.cool = 0
@@ -1253,11 +1568,48 @@ class Assassin:
         if self.cool>0: self.cool-=1
         epos = (self.rect.centerx, self.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
-        has_los = los_clear(level, epos, ppos)
+        
+        # Calculate distance to player
+        dx = ppos[0] - epos[0]
+        dy = ppos[1] - epos[1]
+        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        # ADDED: Update facing direction
+        if dist_to_player > 0:
+            # Calculate angle to player
+            angle_to_player = math.atan2(dy, dx)
+            
+            # Update facing if player is within 1.2-1.5x vision_range
+            if dist_to_player < self.vision_range * 1.5:
+                # Smoothly turn toward player
+                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+                if angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                self.facing_angle += angle_diff * self.turn_rate
+                
+                # Update facing direction based on angle
+                self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
+            else:
+                # Idle/patrol: subtle oscillation
+                self.facing_angle += 0.02 * self.facing
+                # Flip at bounds
+                if self.facing_angle > math.pi:
+                    self.facing_angle = math.pi
+                    self.facing = -1
+                elif self.facing_angle < 0:
+                    self.facing_angle = 0
+                    self.facing = 1
+        
+        # ADDED: Vision cone check
+        in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
+        has_los = in_cone and los_clear(level, epos, ppos)
+        
         # store last LOS check / target for debug drawing
         self._has_los = has_los
         self._los_point = ppos
-        facing = 1 if ppos[0] > epos[0] else -1
+        self._in_cone = in_cone  # ADDED: Store for drawing
+        
+        facing = self.facing
         if self.tele_t>0:
             self.tele_t -= 1
             if self.tele_t==0:
@@ -1294,7 +1646,7 @@ class Assassin:
                 self.vx *= 0.9
                 if abs(self.vx)<1.0:
                     self.state='idle'; self.cool=60
-        elif has_los and self.cool==0:
+        elif has_los and self.cool==0 and dist_to_player < self.vision_range:
             import random
             self.action = 'dash' if random.random() < 0.5 else 'slash'
             if self.action == 'dash':
@@ -1335,8 +1687,31 @@ class Assassin:
         if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
-        # semi-invisible look: darker color
-        col = (60,60,80) if self.ifr==0 else (40,40,60)
+            
+            # ADDED: Draw vision cone for debug
+            if show_los:
+                center = camera.to_screen(self.rect.center)
+                # Calculate cone edges
+                left_angle = self.facing_angle - self.cone_half_angle
+                right_angle = self.facing_angle + self.cone_half_angle
+                
+                # Calculate end points of cone lines
+                left_x = center[0] + math.cos(left_angle) * self.vision_range
+                left_y = center[1] + math.sin(left_angle) * self.vision_range
+                right_x = center[0] + math.cos(right_angle) * self.vision_range
+                right_y = center[1] + math.sin(right_angle) * self.vision_range
+                
+                # Draw cone lines
+                pygame.draw.line(surf, (255, 255, 0), center, (left_x, left_y), 1)
+                pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
+        
+        # ADDED: Semi-invisible look: darker color when not in cone
+        in_cone = getattr(self, '_in_cone', False)
+        if in_cone:
+            col = (60,60,80) if self.ifr==0 else (40,40,60)
+        else:
+            # Even darker when not in vision cone for "semi-invisible" effect
+            col = (30,30,40) if self.ifr==0 else (20,20,30)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
 
 
@@ -1348,7 +1723,13 @@ class Bee:
         self.hp = 12
         self.alive = True
         self.ifr = 0
-        self.aggro = 240
+        # ADDED: Vision cone properties (replacing aggro)
+        self.vision_range = 240
+        self.cone_half_angle = math.pi/4  # 90° total cone
+        self.turn_rate = 0.05
+        # ADDED: Facing direction and angle
+        self.facing = 1  # starts facing right
+        self.facing_angle = 0  # 0 for right, math.pi for left
         self.cool = 0
         self.tele_t = 0
         self.tele_text = ''
@@ -1360,24 +1741,59 @@ class Bee:
         if self.cool>0: self.cool-=1
         epos = (self.rect.centerx, self.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
-        has_los = los_clear(level, epos, ppos)
+        
+        # Calculate distance to player
+        dx = ppos[0] - epos[0]
+        dy = ppos[1] - epos[1]
+        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        # ADDED: Update facing direction
+        if dist_to_player > 0:
+            # Calculate angle to player
+            angle_to_player = math.atan2(dy, dx)
+            
+            # Update facing if player is within 1.2-1.5x vision_range
+            if dist_to_player < self.vision_range * 1.5:
+                # Smoothly turn toward player
+                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+                if angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                self.facing_angle += angle_diff * self.turn_rate
+                
+                # Update facing direction based on angle
+                self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
+            else:
+                # Idle/patrol: subtle oscillation
+                self.facing_angle += 0.02 * self.facing
+                # Flip at bounds
+                if self.facing_angle > math.pi:
+                    self.facing_angle = math.pi
+                    self.facing = -1
+                elif self.facing_angle < 0:
+                    self.facing_angle = 0
+                    self.facing = 1
+        
+        # ADDED: Vision cone check
+        in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
+        has_los = in_cone and los_clear(level, epos, ppos)
+        
         # store last LOS check / target for debug drawing
         self._has_los = has_los
         self._los_point = ppos
+        
         import random
         if self.tele_t>0:
             self.tele_t -= 1
-            if self.tele_t==0 and has_los:
+            if self.tele_t==0 and has_los and dist_to_player < self.vision_range:
                 if self.action=='dash':
                     self.vx = 7 if ppos[0]>epos[0] else -7
                 elif self.action=='shoot':
-                    dx = ppos[0]-epos[0]; dy = ppos[1]-epos[1]
                     dist = max(1.0, (dx*dx+dy*dy)**0.5)
                     nx, ny = dx/dist, dy/dist
                     hb = pygame.Rect(0,0,10,6); hb.center = self.rect.center
                     hitboxes.append(Hitbox(hb, 120, 1, self, dir_vec=(nx,ny), vx=nx*7.5, vy=ny*7.5))
                 self.cool = 50
-        elif has_los and self.cool==0:
+        elif has_los and self.cool==0 and dist_to_player < self.vision_range:
             self.action = 'dash' if random.random()<0.5 else 'shoot'
             self.tele_t = 14 if self.action=='dash' else 16
             self.tele_text = '!' if self.action=='dash' else '!!'
@@ -1413,6 +1829,24 @@ class Bee:
         if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
+            
+            # ADDED: Draw vision cone for debug
+            if show_los:
+                center = camera.to_screen(self.rect.center)
+                # Calculate cone edges
+                left_angle = self.facing_angle - self.cone_half_angle
+                right_angle = self.facing_angle + self.cone_half_angle
+                
+                # Calculate end points of cone lines
+                left_x = center[0] + math.cos(left_angle) * self.vision_range
+                left_y = center[1] + math.sin(left_angle) * self.vision_range
+                right_x = center[0] + math.cos(right_angle) * self.vision_range
+                right_y = center[1] + math.sin(right_angle) * self.vision_range
+                
+                # Draw cone lines
+                pygame.draw.line(surf, (255, 255, 0), center, (left_x, left_y), 1)
+                pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
+        
         col = (240, 180, 60) if self.ifr==0 else (140, 120, 50)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
@@ -1510,6 +1944,23 @@ class Golem:
             col = GREEN if getattr(self,
             '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
+        # ADDED: Draw vision cone for debug
+        if show_los:
+            center = camera.to_screen(self.rect.center)
+            # Calculate cone edges
+            left_angle = self.facing_angle - self.cone_half_angle
+            right_angle = self.facing_angle + self.cone_half_angle
+            
+            # Calculate end points of cone lines
+            left_x = center[0] + math.cos(left_angle) * self.vision_range
+            left_y = center[1] + math.sin(left_angle) * self.vision_range
+            right_x = center[0] + math.cos(right_angle) * self.vision_range
+            right_y = center[1] + math.sin(right_angle) * self.vision_range
+            
+            # Draw cone lines
+            pygame.draw.line(surf, (255, 255, 0), center, (left_x, left_y), 1)
+            pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
+        
         col = (140, 140, 160) if self.ifr==0 else (100, 100, 120)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=7)
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
