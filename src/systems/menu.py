@@ -1,10 +1,10 @@
 import sys
 import pygame
 from config import WIDTH, HEIGHT, FPS, LEVEL_TYPE, DIFFICULTY, LEVEL_TYPES, DIFFICULTY_LEVELS
-from utils import draw_text, get_font
-from level import Level, ROOM_COUNT
-from entities import Player, hitboxes, floating
-from camera import Camera
+from ..core.utils import draw_text, get_font
+from ..level.level import Level, ROOM_COUNT
+from ..entities.entities import Player, hitboxes, floating
+from .camera import Camera
 
 
 class Menu:

@@ -12,10 +12,11 @@ from collections import defaultdict
 
 from config import (
     TILE, LEVEL_WIDTH, LEVEL_HEIGHT, GENERATION_TIME_TARGET,
-    MAX_VALIDATION_ATTEMPTS, REPAIR_ATTEMPTS
+    MAX_VALIDATION_ATTEMPTS, REPAIR_ATTEMPTS,
+    TILE_AIR, TILE_FLOOR, TILE_WALL, TILE_SOLID
 )
-from terrain_system import TerrainTypeRegistry, TerrainTag
-from area_system import AreaMap, AreaRegistry, Area, AreaType
+from .terrain_system import TerrainTypeRegistry, TerrainTag
+from .area_system import AreaMap, AreaRegistry, Area, AreaType
 
 
 @dataclass
@@ -487,7 +488,7 @@ class EnhancedLevelValidator:
             if (x, y) in visited:
                 continue
             
-            if 0 <= x < width and 0 <= y < height and grid[y][x] == 0:
+            if 0 <= x < width and 0 <= y < height and grid[y][x] == TILE_FLOOR:
                 visited.add((x, y))
                 
                 # Check 4-directional neighbors
@@ -523,7 +524,7 @@ class EnhancedLevelValidator:
             has_floor = False
             for y in range(max(0, room_y), min(len(grid), room_y + room_height)):
                 for x in range(max(0, room_x), min(len(grid[0]), room_x + room_width)):
-                    if grid[y][x] == 0:
+                    if grid[y][x] == TILE_FLOOR:
                         has_floor = True
                         break
                 if has_floor:
@@ -602,7 +603,7 @@ class EnhancedLevelValidator:
             for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
                 nx, ny = x + dx, y + dy
                 if (0 <= nx < width and 0 <= ny < height and 
-                    grid[ny][nx] == 0 and (nx, ny) not in visited):
+                    grid[ny][nx] == TILE_FLOOR and (nx, ny) not in visited):
                     to_check.append((nx, ny))
         
         return False
@@ -674,7 +675,7 @@ class EnhancedLevelValidator:
                     continue
                 
                 # Check for walls
-                if grid[ny][nx] == 1:  # Wall
+                if grid[ny][nx] == TILE_WALL:  # Wall
                     wall_count += 1
         
         # Too many walls around spawn point
@@ -730,7 +731,7 @@ class EnhancedLevelValidator:
             for dx in range(-2, 3):
                 nx, ny = x + dx, y + dy
                 if (0 <= ny < len(grid) and 0 <= nx < len(grid[0]) and 
-                    grid[ny][nx] == 0):
+                    grid[ny][nx] == TILE_FLOOR):
                     score += 1
         return score
     
@@ -740,12 +741,12 @@ class EnhancedLevelValidator:
         
         for y in range(1, len(grid) - 1):
             for x in range(1, len(grid[0]) - 1):
-                if grid[y][x] == 0:  # Floor
+                if grid[y][x] == TILE_FLOOR:  # Floor
                     # Check if this is a chokepoint (limited passage)
                     open_neighbors = 0
                     for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
                         nx, ny = x + dx, y + dy
-                        if grid[ny][nx] == 0:
+                        if grid[ny][nx] == TILE_FLOOR:
                             open_neighbors += 1
                     
                     if open_neighbors == 2:  # Exactly 2 neighbors = potential chokepoint
@@ -988,7 +989,7 @@ class EnhancedLevelValidator:
                         # Check bounds
                         if not (0 <= ny < len(grid) and 0 <= nx < len(grid[0])):
                             wall_count += 1
-                        elif grid[ny][nx] == 1:  # Wall
+                        elif grid[ny][nx] == TILE_WALL:  # Wall
                             wall_count += 1
                 
                 # If all 8 neighbors are walls, tile is isolated
@@ -1289,16 +1290,44 @@ class EnhancedLevelValidator:
                 repaired = True
         
         # Add new spawn points if needed
-        while len(new_spawn_points) < self.min_spawn_points:
+        attempts = 0
+        max_attempts = len(grid) * len(grid[0])  # Prevent infinite loops
+
+        while len(new_spawn_points) < self.min_spawn_points and attempts < max_attempts:
             # Find a safe spawn location
-            for y in range(1, len(grid) - 1):
-                for x in range(1, len(grid[0]) - 1):
-                    if grid[y][x] == 0 and len(self._check_spawn_safety(grid, [], x, y)) == 0:
+            found_safe_location = False
+
+            # Random search to avoid getting stuck
+            for _ in range(100):  # Try 100 random locations
+                x = random.randint(1, len(grid[0]) - 2)
+                y = random.randint(1, len(grid) - 1)
+
+                if grid[y][x] == 0:  # Floor tile
+                    safety_issues = self._check_spawn_safety(grid, [], x, y)
+                    if len(safety_issues) == 0:
                         new_spawn_points.append((x, y))
                         repaired = True
+                        found_safe_location = True
                         break
-                if len(new_spawn_points) >= self.min_spawn_points:
-                    break
+
+            # If no safe location found, relax the requirements
+            if not found_safe_location:
+                for _ in range(100):  # Try 100 more random locations
+                    x = random.randint(1, len(grid[0]) - 2)
+                    y = random.randint(1, len(grid) - 1)
+
+                    if grid[y][x] == 0:  # Just need a floor tile
+                        new_spawn_points.append((x, y))
+                        repaired = True
+                        found_safe_location = True
+                        break
+
+            attempts += 1
+
+            # Safety break to prevent infinite loops
+            if attempts >= max_attempts:
+                print(f"Warning: Could not find enough safe spawn points after {max_attempts} attempts")
+                break
         
         return grid, new_spawn_points, repaired
     

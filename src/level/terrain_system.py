@@ -23,6 +23,7 @@ class TerrainBaseType:
     FLOOR: str = "floor"
     WALL: str = "wall"
     WATER: str = "water"
+    AIR: str = "air"
     # Additional base types can be added via TerrainTypeRegistry.register_base_type.
 
 
@@ -73,6 +74,7 @@ class _TerrainTypeRegistry:
                 TerrainBaseType.PLATFORM,
                 TerrainBaseType.WALL,
                 TerrainBaseType.WATER,
+                TerrainBaseType.AIR,
             },
             "amphibious": {
                 TerrainBaseType.FLOOR,
@@ -256,6 +258,7 @@ class _TerrainTypeRegistry:
         self.register_base_type(TerrainBaseType.FLOOR)
         self.register_base_type(TerrainBaseType.WALL)
         self.register_base_type(TerrainBaseType.WATER)
+        self.register_base_type(TerrainBaseType.AIR)
 
         # Modifiers for PLATFORM/FLOOR; WALL intentionally has no modifiers yet.
         self.register_terrain_modifier(
@@ -289,6 +292,9 @@ class _TerrainTypeRegistry:
 
         # Water
         self.define_terrain("water", TerrainBaseType.WATER, [])
+
+        # Air
+        self.define_terrain("air", TerrainBaseType.AIR, [])
 
     # --- Utility for external code (optional overrides) ---
 

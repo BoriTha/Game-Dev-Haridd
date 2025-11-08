@@ -14,8 +14,8 @@ This is a standalone, non-pytest script intended for:
 import time
 import statistics
 
-from level_generator import LevelGenerator
-from level_validator import LevelValidator
+from ..src.level.level_generator import LevelGenerator
+from ..src.level.level_validator import LevelValidator
 from config import (
     LEVEL_WIDTH,
     LEVEL_HEIGHT,

@@ -53,7 +53,80 @@ from typing import (
     Tuple,
 )
 
-from terrain_system import TerrainTypeRegistry, TerrainBaseType, TerrainTag
+from .terrain_system import TerrainTypeRegistry, TerrainBaseType, TerrainTag
+
+
+def _is_walkable_tile(x: int, y: int, terrain_grid: List[List[str]]) -> bool:
+    """Check if a tile is walkable"""
+    if y >= len(terrain_grid) or x >= len(terrain_grid[0]):
+        return False
+
+    terrain_id = terrain_grid[y][x]
+    if isinstance(terrain_id, str):
+        terrain_tag = TerrainTypeRegistry.get_terrain(terrain_id)
+        return terrain_tag and TerrainTypeRegistry.is_platform_like(terrain_tag)
+    elif terrain_id and "wall" not in str(terrain_id).lower():
+        return True
+    return False
+
+
+def _expand_walkable_area(start_x: int, start_y: int, terrain_grid: List[List[str]], width: int, height: int) -> Dict[str, int]:
+    """Expand from a walkable tile to find contiguous walkable area"""
+    visited = set()
+    queue = [(start_x, start_y)]
+    min_x, max_x = start_x, start_x
+    min_y, max_y = start_y, start_y
+
+    while queue:
+        x, y = queue.pop(0)
+        if (x, y) in visited:
+            continue
+        visited.add((x, y))
+
+        # Update bounds
+        min_x = min(min_x, x)
+        max_x = max(max_x, x)
+        min_y = min(min_y, y)
+        max_y = max(max_y, y)
+
+        # Check neighbors
+        for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in visited:
+                if _is_walkable_tile(nx, ny, terrain_grid):
+                    queue.append((nx, ny))
+
+    return {
+        'x': min_x,
+        'y': min_y,
+        'width': max_x - min_x + 1,
+        'height': max_y - min_y + 1
+    }
+
+
+def _find_nearest_walkable_area(start_x: int, start_y: int, terrain_grid: List[List[str]], width: int, height: int) -> Optional[Dict[str, int]]:
+    """Find the nearest walkable area to the given start point"""
+    # Search in expanding squares from the start point
+    max_radius = max(width, height)
+    for radius in range(1, max_radius):
+        # Check all points at this radius
+        for dx in range(-radius, radius + 1):
+            for dy in [-radius, radius]:
+                x, y = start_x + dx, start_y + dy
+                if 0 <= x < width and 0 <= y < height:
+                    if _is_walkable_tile(x, y, terrain_grid):
+                        # Found a walkable tile, expand to find contiguous walkable area
+                        return _expand_walkable_area(x, y, terrain_grid, width, height)
+
+        for dy in range(-radius + 1, radius):
+            for dx in [-radius, radius]:
+                x, y = start_x + dx, start_y + dy
+                if 0 <= x < width and 0 <= y < height:
+                    if _is_walkable_tile(x, y, terrain_grid):
+                        # Found a walkable tile, expand to find contiguous walkable area
+                        return _expand_walkable_area(x, y, terrain_grid, width, height)
+
+    return None
 
 
 # Public constants for known area types.
@@ -477,12 +550,31 @@ def build_default_areas(
         # Clamp to grid
         sx = max(0, min(width - 1, int(sx)))
         sy = max(0, min(height - 1, int(sy)))
-        # Simple 3x3 area centered on spawn (clamped inside bounds).
-        half = 1
-        ax = max(0, sx - half)
-        ay = max(0, sy - half)
-        aw = min(width - ax, 2 * half + 1)
-        ah = min(height - ay, 2 * half + 1)
+
+        # First check if spawn point itself is walkable
+        if _is_walkable_tile(sx, sy, terrain_grid):
+            # Find contiguous walkable area
+            walkable_area = _expand_walkable_area(sx, sy, terrain_grid, width, height)
+            ax = walkable_area['x']
+            ay = walkable_area['y']
+            aw = walkable_area['width']
+            ah = walkable_area['height']
+        else:
+            # Find nearest walkable area
+            nearest_walkable = _find_nearest_walkable_area(sx, sy, terrain_grid, width, height)
+            if nearest_walkable:
+                ax = nearest_walkable['x']
+                ay = nearest_walkable['y']
+                aw = nearest_walkable['width']
+                ah = nearest_walkable['height']
+            else:
+                # Fallback: create 3x3 area around spawn point
+                half = 1
+                ax = max(0, sx - half)
+                ay = max(0, sy - half)
+                aw = min(width - ax, 2 * half + 1)
+                ah = min(height - ay, 2 * half + 1)
+
         area_map.add_area(
             Area(
                 id=f"player_spawn_{area_id_counter}",
