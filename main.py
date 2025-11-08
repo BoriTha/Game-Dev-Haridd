@@ -1,7 +1,21 @@
 import sys
 
 import pygame
-from config import WIDTH, HEIGHT, FPS, BG, WHITE, CYAN, GREEN, WALL_JUMP_AIRBORNE_COLOR
+from config import (
+    WIDTH,
+    HEIGHT,
+    FPS,
+    BG,
+    WHITE,
+    CYAN,
+    GREEN,
+    WALL_JUMP_AIRBORNE_COLOR,
+    LEVEL_WIDTH,
+    LEVEL_HEIGHT,
+    LEVEL_TYPE,
+    DIFFICULTY,
+    TILE,
+)
 from utils import draw_text, get_font
 from camera import Camera
 from level import Level, ROOM_COUNT
@@ -9,6 +23,9 @@ from entities import Player, hitboxes, floating, DamageNumber
 from inventory import Inventory
 from menu import Menu
 from shop import Shop
+from level_generator import LevelGenerator, GeneratedLevel
+from seed_manager import SeedManager
+from terrain_system import terrain_system
 
 
 
@@ -17,65 +34,225 @@ class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        # Window caption — show game title
         pygame.display.set_caption("Haridd")
         self.clock = pygame.time.Clock()
         self.font_small = get_font(18)
         self.font_big = get_font(32, bold=True)
         self.camera = Camera()
 
+        # Core systems
+        self.seed_manager = SeedManager()
+        self.level_generator = LevelGenerator(width=LEVEL_WIDTH, height=LEVEL_HEIGHT)
+
+        # Runtime generation options (can be overridden by menu)
+        # user_wants_procedural captures player intent; never mutated by error handling.
+        self.user_wants_procedural = True  # default to procedural
+        # use_procedural is kept as a per-load internal flag derived from user_wants_procedural.
+        self.use_procedural = self.user_wants_procedural
+        self.level_type = LEVEL_TYPE
+        self.difficulty = DIFFICULTY
+
         # Initialize menu system
         self.menu = Menu(self)
 
-        # Title flow first: How to Play -> Class Select -> Play Game
+        # Title flow first
         self.selected_class = 'Knight'  # default if player skips class select
+
         # Developer cheat toggles
         self.cheat_infinite_mana = False
         self.cheat_zero_cooldown = False
         self.debug_enemy_rays = False
         self.debug_enemy_nametags = False
+
+        # Seed/debug HUD
+        self.show_seed_info = True
+
+        # Run title; this may configure class, seed, generation options
         self.menu.title_screen()
 
+        # Level state
         self.level_index = 0
-        self.level = Level(self.level_index)
-        
-        # Initialize terrain system
-        from terrain_system import terrain_system
-        terrain_system.load_terrain_from_level(self.level)
-        
-        sx, sy = self.level.spawn
+        self.world_seed = self.seed_manager.get_world_seed()
+        self.current_level_seed = None
+
+        # Initialize first level (procedural or legacy fallback)
+        self._load_level(self.level_index, initial=True)
+
         # create player with chosen class
+        sx, sy = self.level.spawn
         self.player = Player(sx, sy, cls=self.selected_class)
         self.enemies = self.level.enemies
+
+        # Inventory & shop
         self.inventory = Inventory(self)
         self.inventory._refresh_inventory_defaults()
         self.shop = Shop(self)
 
-    def switch_room(self, delta):
-        # wrap using Level.ROOM_COUNT so new rooms are handled
-        self.level_index = (self.level_index + delta) % ROOM_COUNT
-        self.level = Level(self.level_index)
-        
-        # Reinitialize terrain system for new level
-        from terrain_system import terrain_system
-        terrain_system.load_terrain_from_level(self.level)
-        
+    # === Level / Generation Management ===
+
+    def restart_run(self):
+        """
+        Centralized restart logic for starting a fresh run from level 0.
+
+        Behavior:
+        - Resets level_index to 0.
+        - Uses _load_level with initial=True so procedural vs legacy behavior
+          is derived from user_wants_procedural and routed correctly
+          through GeneratedLevel/Level.
+        - Recreates the player at the new level's spawn using selected_class.
+        - Syncs enemies from the loaded level.
+        - Refreshes inventory defaults (if inventory exists).
+        - Clears transient combat/VFX collections.
+        - Resets camera.
+
+        Notes:
+        - Does NOT mutate user_wants_procedural.
+        - Does NOT force use_procedural or manually instantiate Level.
+        """
+        # Reset to first level index
+        self.level_index = 0
+
+        # Load level 0 through the unified loader so it respects procedural intent
+        self._load_level(self.level_index, initial=True)
+
+        # Recreate player at the new spawn
+        sx, sy = self.level.spawn
+        self.player = Player(sx, sy, cls=self.selected_class)
+
+        # Sync enemies from the level
+        self.enemies = getattr(self.level, "enemies", [])
+
+        # Reset/refresh inventory if present
+        if hasattr(self, "inventory") and self.inventory is not None:
+            self.inventory._refresh_inventory_defaults()
+
+        # Clear transient collections
+        hitboxes.clear()
+        floating.clear()
+
+        # Reset camera
+        self.camera = Camera()
+
+    def _load_level(self, index: int, initial: bool = False):
+        """
+        Load a level by index using procedural generation when enabled,
+        with graceful fallback to legacy Level on failure.
+        """
+        self.level_index = index
+
+        generated = None
+
+        # Derive internal per-load procedural flag from user intent.
+        use_procedural_for_load = bool(getattr(self, "user_wants_procedural", True))
+
+        if use_procedural_for_load:
+            try:
+                # Ensure world seed is set/stable
+                if not hasattr(self, "world_seed") or self.world_seed is None:
+                    self.world_seed = self.seed_manager.get_world_seed()
+                else:
+                    self.seed_manager.set_world_seed(self.world_seed)
+
+                # Generate level and capture stats
+                generated = self.level_generator.generate_level(
+                    level_index=index,
+                    level_type=self.level_type,
+                    difficulty=self.difficulty,
+                    seed=self.world_seed,
+                )
+            except Exception as e:
+                print(f"[WARN] Procedural generation failed for level {index}: {e}")
+                generated = None
+
+        if isinstance(generated, GeneratedLevel):
+            # Adapt GeneratedLevel instance; attach expected attributes dynamically
+            lvl = generated
+            # Reflect that this load is procedural (for HUD/debug).
+            self.use_procedural = True
+
+            # Provide width/height in pixels for systems expecting them
+            if generated.grid and len(generated.grid) > 0 and len(generated.grid[0]) > 0:
+                lvl.w = len(generated.grid[0]) * TILE
+                lvl.h = len(generated.grid) * TILE
+            else:
+                lvl.w = LEVEL_WIDTH * TILE
+                lvl.h = LEVEL_HEIGHT * TILE
+
+            # Mark as procedural for debug/cheats
+            lvl.is_procedural = True
+
+            # Ensure doors attribute exists (safety)
+            if not hasattr(lvl, "doors"):
+                lvl.doors = []
+
+            # Initialize / reload terrain system from generated terrain
+            if hasattr(generated, "terrain_grid") and generated.terrain_grid:
+                terrain_system.terrain_grid = generated.terrain_grid
+            else:
+                terrain_system.load_terrain_from_level(lvl)
+
+            # Ensure enemies list exists
+            if not hasattr(lvl, "enemies"):
+                lvl.enemies = []
+
+            self.level = lvl
+            self.current_level_seed = self.seed_manager.get_level_seed()
+            self.enemies = lvl.enemies
+
+        else:
+            # Fallback to legacy static Level & ROOMS for THIS load only.
+            # Do not change user_wants_procedural here; that flag is only
+            # modified via menus / explicit user actions.
+            self.use_procedural = False
+            self.level = Level(index % ROOM_COUNT)
+            self.current_level_seed = None
+            terrain_system.load_terrain_from_level(self.level)
+            self.enemies = self.level.enemies
+
+        if not initial:
+            # Clear transient combat visuals when switching rooms
+            hitboxes.clear()
+            floating.clear()
+
+    def switch_room(self, delta: int):
+        """
+        Move to next/previous room index.
+        Works for both procedural and legacy modes.
+        """
+        # In procedural mode we treat level_index as unbounded sequence.
+        # In legacy fallback we wrap using ROOM_COUNT.
+        if self.use_procedural:
+            new_index = max(0, self.level_index + delta)
+        else:
+            new_index = (self.level_index + delta) % ROOM_COUNT
+
+        self._load_level(new_index)
+
+        # Reposition player at new spawn
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)
-        self.enemies = self.level.enemies
-        hitboxes.clear(); floating.clear()
-        
-        # Open shop after completing level
+        self.enemies = getattr(self.level, "enemies", [])
+
+        # Open shop after completing level (preserve behavior)
         self.shop.open_shop()
 
-    def goto_room(self, index):
-        # go to an absolute room index (wrapped)
-        self.level_index = index % ROOM_COUNT
-        self.level = Level(self.level_index)
+    def goto_room(self, index: int):
+        """
+        Teleport to an absolute room index.
+        - Procedural: uses that index directly (for deterministic seeds).
+        - Legacy: wraps via ROOM_COUNT.
+        """
+        if self.use_procedural:
+            target_index = max(0, index)
+        else:
+            target_index = index % ROOM_COUNT
+
+        self._load_level(target_index)
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)
-        self.enemies = self.level.enemies
-        hitboxes.clear(); floating.clear()
+        self.enemies = getattr(self.level, "enemies", [])
+        hitboxes.clear()
+        floating.clear()
 
     def update(self):
         self.player.input(self.level, self.camera)
@@ -96,9 +273,9 @@ class Game:
                 if hasattr(self.player, attr):
                     setattr(self.player, attr, 0)
 
-        for d in self.level.doors:
+        for d in getattr(self.level, "doors", []):
             if self.player.rect.colliderect(d):
-                # Gate boss rooms: require boss defeat before door works
+                # Boss gate logic preserved for legacy/boss-style levels
                 if getattr(self.level, 'is_boss_room', False):
                     if any(getattr(e, 'alive', False) for e in self.enemies):
                         # door locked; stay in room
@@ -262,10 +439,23 @@ class Game:
                 draw_text(self.screen, "!", (x + 124, y-6), (255,80,80), size=18, bold=True)
             y += 12
 
-        # show room number above class on HUD
-        draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (WIDTH-220, 8), WHITE, size=16)
-        # show selected class on HUD
+        # show room/level info on HUD
+        if self.use_procedural:
+            draw_text(self.screen, f"Level {self.level_index}", (WIDTH-220, 8), WHITE, size=16)
+        else:
+            draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (WIDTH-220, 8), WHITE, size=16)
+
+        # selected class
         draw_text(self.screen, f"Class: {getattr(self.player, 'cls', 'Unknown')}", (WIDTH-220, 28), (200,200,200), size=16)
+
+        # seed info (for sharing / reproducibility)
+        if self.show_seed_info:
+            ws = getattr(self, "world_seed", None)
+            ls = getattr(self, "current_level_seed", None)
+            if ws is not None:
+                draw_text(self.screen, f"Seed: {ws}", (16, 56), (160, 160, 200), size=14)
+            if ls is not None:
+                draw_text(self.screen, f"LSeed: {ls}", (16, 72), (120, 120, 180), size=12)
 
         # Skill bar (MOBA-style): show 1/2/3 cooldowns and active highlights
         sbx, sby = 16, HEIGHT - 80
@@ -397,7 +587,7 @@ class Game:
                         else:
                             # open pause menu instead of quitting
                             self.menu.pause_menu()
-                    # Developer cheats
+                    # Developer cheats / debug tools
                     elif ev.key == pygame.K_F1:
                         # toggle god mode
                         self.player.god = not getattr(self.player, 'god', False)
@@ -414,7 +604,7 @@ class Game:
                         # open debugger menu
                         self.debug_menu()
                     elif ev.key == pygame.K_F6:
-                        # Toggle shop (moved from S key)
+                        # Toggle shop
                         if not self.inventory.inventory_open:
                             if self.shop.shop_open:
                                 self.shop.close_shop()
@@ -431,16 +621,27 @@ class Game:
                             (255, 215, 0)
                         ))
                         continue
+                    # Teleport / navigation cheats:
                     elif ev.key == pygame.K_F8:
-                        self.goto_room(1)
+                        # In procedural mode, go to previous level; legacy: room 1
+                        if self.use_procedural:
+                            self.goto_room(max(0, self.level_index - 1))
+                        else:
+                            self.goto_room(1)
                     elif ev.key == pygame.K_F9:
-                        self.goto_room(2)
+                        if self.use_procedural:
+                            self.goto_room(self.level_index + 1)
+                        else:
+                            self.goto_room(2)
                     elif ev.key == pygame.K_F10:
-                        self.goto_room(3)
+                        if not self.use_procedural:
+                            self.goto_room(3)
                     elif ev.key == pygame.K_F11:
-                        self.goto_room(4)
+                        if not self.use_procedural:
+                            self.goto_room(4)
                     elif ev.key == pygame.K_F12:
-                        self.goto_room(5)
+                        if not self.use_procedural:
+                            self.goto_room(5)
 
             if not self.inventory.inventory_open and not self.shop.shop_open:
                 self.update()
@@ -557,6 +758,11 @@ class Game:
             pygame.display.flip()
 
     def debug_teleport_menu(self):
+        """
+        Teleport debug menu.
+        - Procedural mode: treat idx as unbounded level index (no wrapping).
+        - Legacy mode: wrap using ROOM_COUNT as before.
+        """
         idx = self.level_index
         while True:
             self.clock.tick(FPS)
@@ -567,9 +773,15 @@ class Game:
                     if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
                         return
                     elif ev.key == pygame.K_LEFT:
-                        idx = (idx - 1) % ROOM_COUNT
+                        if self.use_procedural:
+                            idx = max(0, idx - 1)
+                        else:
+                            idx = (idx - 1) % ROOM_COUNT
                     elif ev.key == pygame.K_RIGHT:
-                        idx = (idx + 1) % ROOM_COUNT
+                        if self.use_procedural:
+                            idx = idx + 1
+                        else:
+                            idx = (idx + 1) % ROOM_COUNT
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         self.goto_room(idx)
                         return
@@ -587,7 +799,17 @@ class Game:
         draw_text(self.screen, "Teleport to Level", (panel.x + 24, panel.y + 16), (240,220,190), size=26, bold=True)
         info = "Left/Right choose, Enter confirm, Esc to cancel"
         draw_text(self.screen, info, (panel.x + 24, panel.bottom - 36), (180,180,200), size=16)
-        draw_text(self.screen, f"Room {idx+1}/{ROOM_COUNT}", (panel.centerx - 80, panel.centery - 10), (220,220,240), size=32, bold=True)
+
+        if self.use_procedural:
+            draw_text(self.screen, f"Level {idx}", (panel.centerx - 80, panel.centery - 10),
+                      (220,220,240), size=32, bold=True)
+            ws = getattr(self, "world_seed", None)
+            if ws is not None:
+                draw_text(self.screen, f"Seed {ws}", (panel.centerx - 80, panel.centery + 26),
+                          (180,180,220), size=18)
+        else:
+            draw_text(self.screen, f"Room {idx+1}/{ROOM_COUNT}", (panel.centerx - 80, panel.centery - 10),
+                      (220,220,240), size=32, bold=True)
 
 
 if __name__ == '__main__':
