@@ -4,6 +4,10 @@ from entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
 
 # Rooms (tilemaps). Legend: # solid, . empty, S spawn, E enemy, D door->next room
 # Extra enemies: f=Frog, r=Archer, w=WizardCaster, a=Assassin, b=Bee, G=Golem boss
+# NOTE:
+#   These legacy rooms are kept for backward compatibility and as a fallback
+#   when procedural generation is disabled or fails. Procedural levels are
+#   provided via level_generator.GeneratedLevel, which matches the Level API.
 ROOMS = [
     # Room 1 (larger)
     [
@@ -212,5 +216,5 @@ class Level:
             col = (200, 80, 80) if locked else CYAN
             pygame.draw.rect(surf, col, camera.to_screen_rect(d), width=2)
 
-# Expose ROOM_COUNT on the Level class for convenience (used by main)
-Level.ROOM_COUNT = ROOM_COUNT
+# Expose ROOM_COUNT via module-level constant; kept for backward compatibility.
+# Note: main.py now imports ROOM_COUNT directly from this module.

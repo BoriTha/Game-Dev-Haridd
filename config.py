@@ -64,3 +64,32 @@ WALL_JUMP_AIRBORNE_FRAMES = 45          # 0.75 second airborne window after wall
 WALL_JUMP_AIRBORNE_COLOR = (255, 165, 0)  # Orange color for wall jump cooldown bar
 
 TILE = 24
+
+# === Procedural Level Generation Configuration ===
+# Level generation parameters
+LEVEL_WIDTH = 40  # tiles
+LEVEL_HEIGHT = 30  # tiles
+LEVEL_TYPE = "dungeon"  # "dungeon", "cave", "outdoor", "hybrid"
+DIFFICULTY = 1  # 1=Easy, 2=Normal, 3=Hard
+
+# Generation algorithm weights
+ROOM_DENSITY = 0.6  # Fraction of level filled with rooms
+CORRIDOR_WIDTH = 2  # Width of corridors in tiles
+ENEMY_DENSITY = 0.8  # Base enemy density multiplier
+TREASURE_DENSITY = 0.3  # Base treasure density multiplier
+
+# Terrain generation parameters
+TERRAIN_VARIATION = 0.4  # How much terrain varies (0-1)
+SPECIAL_TERRAIN_CHANCE = 0.1  # Chance of special terrain features
+
+# Validation parameters
+MAX_VALIDATION_ATTEMPTS = 10  # Maximum attempts to validate/repair level
+REPAIR_ATTEMPTS = 3  # Maximum repair attempts before regeneration
+
+# Performance targets
+GENERATION_TIME_TARGET = 100  # Target generation time in milliseconds
+VALIDATION_SUCCESS_RATE = 0.95  # Target validation success rate
+
+# Level type templates
+LEVEL_TYPES = ["dungeon", "cave", "outdoor", "hybrid"]
+DIFFICULTY_LEVELS = [1, 2, 3]  # Easy, Normal, Hard
