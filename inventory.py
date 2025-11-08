@@ -82,9 +82,7 @@ class Inventory:
         cls = getattr(self.game.player, 'cls', 'Knight')
         available_armaments = self.armament_order[:]
         random.shuffle(available_armaments)
-        self.gear_slots = available_armaments[:3]
-        while len(self.gear_slots) < 3:
-            self.gear_slots.append(None)
+        self.gear_slots = available_armaments[:3] + [None] * max(0, 3 - len(available_armaments[:3]))
         
         self.consumable_order = []
         self.consumable_storage.clear()
@@ -683,8 +681,8 @@ class Inventory:
 
         current_scroll_offset = 0
         if self.inventory_stock_mode == 'gear':
-            # Only show gear that's not already equipped
-            available_gear = [key for key in self.armament_order if key not in self.gear_slots]
+            # Show all gear in armament order (including duplicates)
+            available_gear = list(self.armament_order)
             keys_to_draw = [*available_gear, self.UNEQUIP_GEAR_KEY]
             current_scroll_offset = self.armament_scroll_offset
             draw_text(stock_surface, "Armory Stock", (10, 10), (210, 200, 170), size=18)
@@ -740,7 +738,9 @@ class Inventory:
                     border_col = (160, 160, 190)
                     if selection and selection.get('kind') in ('gear_pool', 'gear_slot') and selection.get('key') == key:
                         border_col = (255, 210, 120)
-                    elif key in self.gear_slots:
+                    # Show equipped items with green border
+                    equipped_count = self.gear_slots.count(key)
+                    if equipped_count > 0:
                         border_col = (120, 230, 180)
                     pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
                     icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))

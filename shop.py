@@ -17,6 +17,9 @@ class Shop:
         # Track stock amounts for consumables
         self.consumable_stock = {}  # {item_key: available_stock}
         
+        # Track which equipment has been purchased this shop visit
+        self.purchased_equipment = set()  # {item_key}
+        
         # Create random shop inventory (3 consumables, 3 equipment)
         self.refresh_inventory()
         
@@ -27,8 +30,9 @@ class Shop:
         
     def refresh_inventory(self):
         """Create random selection of 3 consumables and 3 equipment"""
-        # Clear previous stock
+        # Clear previous stock and purchased equipment tracking
         self.consumable_stock = {}
+        self.purchased_equipment = set()
         
         # Randomly select 3 consumables
         consumable_keys = list(self.shop_consumables.keys())
@@ -111,6 +115,28 @@ class Shop:
                         (255, 100, 100)
                     ))
                     return False
+        # Check if equipment has already been purchased this shop visit or already owned
+        elif hasattr(item, 'modifiers'):  # Equipment
+            player_owns_item = False
+            if hasattr(self.game, 'inventory'):
+                player_owns_item = item.key in self.game.inventory.armament_order
+                
+            if item.key in self.purchased_equipment:
+                floating.append(DamageNumber(
+                    self.game.player.rect.centerx,
+                    self.game.player.rect.top - 12,
+                    "Already purchased this visit!",
+                    (255, 200, 100)
+                ))
+                return False
+            elif player_owns_item:
+                floating.append(DamageNumber(
+                    self.game.player.rect.centerx,
+                    self.game.player.rect.top - 12,
+                    "Already owned!",
+                    (255, 200, 100)
+                ))
+                return False
         
         # Deduct money
         self.game.player.money -= price
@@ -160,41 +186,27 @@ class Shop:
                     self.game.player.money += price
                     return False
         else:  # Equipment
-            self._equip_shop_item(item)
+            self._add_shop_item_to_inventory(item)
+            # Mark this equipment as purchased for this shop visit
+            self.purchased_equipment.add(item.key)
             floating.append(DamageNumber(
                 self.game.player.rect.centerx,
                 self.game.player.rect.top - 12,
-                f"Equipped {item.name}",
+                f"Purchased {item.name}",
                 GREEN
             ))
         
         return True
     
-    def _equip_shop_item(self, equipment):
-        """Handle equipment purchase and equipping"""
-        # Add to inventory system
+    def _add_shop_item_to_inventory(self, equipment):
+        """Add purchased equipment to inventory storage without equipping it"""
+        # Add to inventory system storage instead of equipping
         if hasattr(self.game, 'inventory'):
-            # Find empty gear slot or replace existing
-            for i in range(len(self.game.inventory.gear_slots)):
-                if self.game.inventory.gear_slots[i] is None:
-                    self.game.inventory.gear_slots[i] = equipment.key
-                    self.game.inventory.recalculate_player_stats()
-                    return
-                elif self.game.inventory.gear_slots[i] == equipment.key:
-                    # Already equipped, just refund
-                    price = self._get_item_price(equipment)
-                    self.game.player.money += price
-                    floating.append(DamageNumber(
-                        self.game.player.rect.centerx,
-                        self.game.player.rect.top - 12,
-                        "Already equipped!",
-                        (255, 200, 100)
-                    ))
-                    return
-            
-            # All slots full, replace first slot
-            self.game.inventory.gear_slots[0] = equipment.key
-            self.game.inventory.recalculate_player_stats()
+            # Add to armament order if not already there
+            if equipment.key not in self.game.inventory.armament_order:
+                self.game.inventory.armament_order.append(equipment.key)
+            # Don't equip - just add to the available stock
+            # The player can equip it manually from the inventory
         else:
             # Fallback: apply modifiers directly to player
             player = self.game.player
@@ -255,6 +267,16 @@ class Shop:
             available_stock = self.consumable_stock.get(item.key, 0)
             lines.append(f"You own: {player_owned}")
             lines.append(f"Available: {available_stock}")
+        # Add purchase status information for equipment
+        elif hasattr(item, 'modifiers'):  # Equipment
+            player_owns_item = False
+            if hasattr(self.game, 'inventory'):
+                player_owns_item = item.key in self.game.inventory.armament_order
+                
+            if item.key in self.purchased_equipment:
+                lines.append("Already purchased this visit")
+            elif player_owns_item:
+                lines.append("Already owned")
         
         font = get_font(16)
         icon_space = 34  # Space for icon
@@ -368,18 +390,18 @@ class Shop:
                     pygame.draw.rect(screen, (0, 0, 0, 180), stock_rect.inflate(4, 2))
                     screen.blit(stock_text, stock_rect)
             
-            # Item name and price (right side of icon)
-            price = self._get_item_price(item)
-            name_color = GREEN if self.game.player.money >= price else (150, 150, 150)
+            # Item name (right side of icon)
+            name_color = GREEN if self.game.player.money >= self._get_item_price(item) else (150, 150, 150)
             name_text = item_font.render(item.name, True, name_color)
             screen.blit(name_text, (item_x + 75, item_y + 15))
             
+            # Price (below name)
+            price = self._get_item_price(item)
             price_text = price_font.render(f"{price} coins", True, name_color)
             screen.blit(price_text, (item_x + 75, item_y + 35))
             
-            # Buy button (below name)
-            button_rect = pygame.Rect(item_x + 75, item_y + 55, 80, 20)
-            price = self._get_item_price(item)
+            # Buy button (on right side, beside price)
+            button_rect = pygame.Rect(item_x + 165, item_y + 35, 90, 20)
             
             # Check if mouse is hovering over this button
             mouse_pos = pygame.mouse.get_pos()
@@ -399,6 +421,19 @@ class Shop:
                 if stock_amount <= 0 or player_owned >= 20:
                     is_sold_out = True
                     button_text = "SOLD OUT"
+            elif hasattr(item, 'modifiers'):  # Equipment
+                # Check if player already owns this equipment
+                player_owns_item = False
+                if hasattr(self.game, 'inventory'):
+                    player_owns_item = item.key in self.game.inventory.armament_order
+                
+                # Check if equipment has been purchased this shop visit
+                if item.key in self.purchased_equipment or player_owns_item:
+                    is_sold_out = True
+                    button_text = "SOLD"
+                else:
+                    is_sold_out = False
+                    button_text = "BUY"
             
             # Determine button color based on state
             if is_sold_out:
@@ -426,10 +461,10 @@ class Shop:
             self.regions.append({'rect': item_rect, 'item': item})
         
         # Exit button at bottom center
-        exit_button_width = 100
-        exit_button_height = 30
+        exit_button_width = 120
+        exit_button_height = 40
         exit_button_x = panel_x + (panel_width - exit_button_width) // 2
-        exit_button_y = panel_y + panel_height - 50
+        exit_button_y = panel_y + panel_height - 60
         exit_button_rect = pygame.Rect(exit_button_x, exit_button_y, exit_button_width, exit_button_height)
         
         # Check if mouse is hovering over exit button
