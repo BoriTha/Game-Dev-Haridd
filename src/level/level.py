@@ -2,6 +2,7 @@ import pygame
 from config import TILE, TILE_COL, CYAN, TILE_SYMBOLS, WIDTH, HEIGHT
 from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
 from ..tiles import TileParser, TileRenderer, TileRegistry
+from ..tiles.tile_collision import TileCollision
 
 # Rooms (tilemaps). Legend:
 #   # wall, . floor/empty, S spawn, E enemy, D door->next room
@@ -169,6 +170,10 @@ class Level:
         # Level dimensions
         self.w = len(self.grid[0]) * TILE if self.grid else 0
         self.h = len(self.grid) * TILE
+
+        # Tile collision handler used by entities (e.g., player).
+        # This is the authoritative TileCollision used by moving entities.
+        self.tile_collision = TileCollision(TILE)
 
     def _load_entities(self, entity_positions):
         """Load enemies and special objects from parsed positions."""

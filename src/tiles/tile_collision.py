@@ -27,16 +27,17 @@ class TileCollision:
 
         # Convert rect to tile coordinates
         start_x = max(0, int(rect.left // self.tile_size))
-        end_x = min(len(tile_grid[0]), int(rect.right // self.tile_size) + 1)
+        end_x = min(len(tile_grid[0]) if tile_grid else 0, int(rect.right // self.tile_size) + 1)
         start_y = max(0, int(rect.top // self.tile_size))
         end_y = min(len(tile_grid), int(rect.bottom // self.tile_size) + 1)
 
         for y in range(start_y, end_y):
             for x in range(start_x, end_x):
-                tile_value = tile_grid[y][x]
-                if tile_value >= 0:
-                    tile_type = TileType(tile_value)
-                    tiles.append((tile_type, x, y))
+                if x < len(tile_grid[y]):
+                    tile_value = tile_grid[y][x]
+                    if tile_value >= 0:
+                        tile_type = TileType(tile_value)
+                        tiles.append((tile_type, x, y))
 
         return tiles
 
@@ -107,75 +108,152 @@ class TileCollision:
         """Resolve collision with top-only tiles (like floors)."""
         return self.resolve_platform_collision(entity_rect, tile_rect, velocity)
 
-    def resolve_full_collision(self, entity_rect: pygame.Rect, tile_rect: pygame.Rect,
-                              velocity: pygame.Vector2) -> Tuple[str, float, pygame.Vector2]:
-        """Resolve full collision and return collision side and penetration depth."""
-        # Calculate overlap on each axis
+    def resolve_full_collision(
+        self,
+        entity_rect: pygame.Rect,
+        tile_rect: pygame.Rect,
+        velocity: pygame.Vector2,
+    ) -> Tuple[str, float]:
+        """Return collision side and penetration depth (no rect mutation here)."""
         overlap_left = entity_rect.right - tile_rect.left
         overlap_right = tile_rect.right - entity_rect.left
         overlap_top = entity_rect.bottom - tile_rect.top
         overlap_bottom = tile_rect.bottom - entity_rect.top
 
-        # Find smallest overlap
+        # Smallest positive overlap decides axis
         min_overlap = min(overlap_left, overlap_right, overlap_top, overlap_bottom)
 
-        # Determine collision side
         if min_overlap == overlap_left:
-            return "left", overlap_left, velocity
+            return "left", overlap_left
         elif min_overlap == overlap_right:
-            return "right", overlap_right, velocity
+            return "right", overlap_right
         elif min_overlap == overlap_top:
-            return "top", overlap_top, velocity
-        else:  # bottom
-            return "bottom", overlap_bottom, velocity
+            return "top", overlap_top
+        else:
+            return "bottom", overlap_bottom
 
     def resolve_collisions(self, entity_rect: pygame.Rect, velocity: pygame.Vector2,
                           tile_grid: List[List[int]], delta_time: float) -> Tuple[pygame.Rect, pygame.Vector2, List[dict]]:
-        """Resolve all tile collisions for an entity."""
+        """Resolve all tile collisions for an entity using separating axis method."""
         collision_info_list = []
+        
+        if not tile_grid or len(tile_grid) == 0:
+            return entity_rect, velocity, collision_info_list
 
-        # Check collisions
-        collisions = self.check_tile_collision(entity_rect, tile_grid, velocity)
+        # Horizontal pass (X-axis) - apply velocity and resolve
+        entity_rect.x += int(velocity.x)
+        
+        tiles = self.get_tiles_in_rect(entity_rect, tile_grid)
+        for tile_type, tile_x, tile_y in tiles:
+            tile_data = tile_registry.get_tile(tile_type)
+            if not tile_data or not tile_data.has_collision:
+                continue
 
-        for collision in collisions:
-            tile_type = collision['tile_type']
-            tile_data = collision['tile_data']
-            tile_rect = collision['tile_rect']
+            tile_world_x = tile_x * self.tile_size
+            tile_world_y = tile_y * self.tile_size
+            offset_x, offset_y = tile_data.collision.collision_box_offset
+            collision_width, collision_height = tile_data.collision.collision_box_size
+
+            tile_rect = pygame.Rect(
+                tile_world_x + offset_x,
+                tile_world_y + offset_y,
+                collision_width,
+                collision_height
+            )
+
+            if not entity_rect.colliderect(tile_rect):
+                continue
+
             collision_type = tile_data.collision.collision_type
 
-            # Handle different collision types
-            if collision_type == "top_only":
-                resolved, new_velocity = self.resolve_platform_collision(entity_rect, tile_rect, velocity)
-                if resolved:
+            if collision_type == "full":
+                # Determine collision side on X-axis
+                overlap_left = entity_rect.right - tile_rect.left
+                overlap_right = tile_rect.right - entity_rect.left
+
+                if overlap_left < overlap_right:
+                    # Hit left side of tile
+                    entity_rect.right = tile_rect.left
+                    if velocity.x > 0:
+                        velocity.x = 0
                     collision_info_list.append({
-                        'tile_type': tile_type,
-                        'side': 'top',
-                        'tile_data': tile_data
+                        "tile_type": tile_type,
+                        "side": "left",
+                        "tile_data": tile_data,
+                    })
+                else:
+                    # Hit right side of tile
+                    entity_rect.left = tile_rect.right
+                    if velocity.x < 0:
+                        velocity.x = 0
+                    collision_info_list.append({
+                        "tile_type": tile_type,
+                        "side": "right",
+                        "tile_data": tile_data,
+                    })
+
+        # Vertical pass (Y-axis) - apply velocity and resolve
+        entity_rect.y += int(velocity.y)
+        
+        tiles = self.get_tiles_in_rect(entity_rect, tile_grid)
+        for tile_type, tile_x, tile_y in tiles:
+            tile_data = tile_registry.get_tile(tile_type)
+            if not tile_data or not tile_data.has_collision:
+                continue
+
+            tile_world_x = tile_x * self.tile_size
+            tile_world_y = tile_y * self.tile_size
+            offset_x, offset_y = tile_data.collision.collision_box_offset
+            collision_width, collision_height = tile_data.collision.collision_box_size
+
+            tile_rect = pygame.Rect(
+                tile_world_x + offset_x,
+                tile_world_y + offset_y,
+                collision_width,
+                collision_height
+            )
+
+            if not entity_rect.colliderect(tile_rect):
+                continue
+
+            collision_type = tile_data.collision.collision_type
+
+            if collision_type == "top_only":
+                # Platform collision: only collide from top
+                if velocity.y > 0:
+                    entity_rect.bottom = tile_rect.top
+                    velocity.y = 0
+                    collision_info_list.append({
+                        "tile_type": tile_type,
+                        "side": "top",
+                        "tile_data": tile_data,
                     })
 
             elif collision_type == "full":
-                side, penetration, new_velocity = self.resolve_full_collision(entity_rect, tile_rect, velocity)
+                # Determine collision side on Y-axis
+                overlap_top = entity_rect.bottom - tile_rect.top
+                overlap_bottom = tile_rect.bottom - entity_rect.top
 
-                # Push entity out of tile
-                if side == "left":
-                    entity_rect.left -= penetration
-                    velocity.x = min(velocity.x, 0)
-                elif side == "right":
-                    entity_rect.left += penetration
-                    velocity.x = max(velocity.x, 0)
-                elif side == "top":
-                    entity_rect.top -= penetration
-                    velocity.y = min(velocity.y, 0)
-                elif side == "bottom":
-                    entity_rect.top += penetration
-                    velocity.y = max(velocity.y, 0)
-
-                collision_info_list.append({
-                    'tile_type': tile_type,
-                    'side': side,
-                    'penetration': penetration,
-                    'tile_data': tile_data
-                })
+                if overlap_top < overlap_bottom:
+                    # Hit top side of tile
+                    entity_rect.bottom = tile_rect.top
+                    if velocity.y > 0:
+                        velocity.y = 0
+                    collision_info_list.append({
+                        "tile_type": tile_type,
+                        "side": "top",
+                        "tile_data": tile_data,
+                    })
+                else:
+                    # Hit bottom side of tile
+                    entity_rect.top = tile_rect.bottom
+                    if velocity.y < 0:
+                        velocity.y = 0
+                    collision_info_list.append({
+                        "tile_type": tile_type,
+                        "side": "bottom",
+                        "tile_data": tile_data,
+                    })
 
         return entity_rect, velocity, collision_info_list
 
@@ -202,4 +280,4 @@ class TileCollision:
             return 0
 
         tile_data = tile_registry.get_tile(tile_type)
-        return tile_data.get_damage() if tile_data else 0
+        return tile_data.collision.damage_on_contact if tile_data else 0

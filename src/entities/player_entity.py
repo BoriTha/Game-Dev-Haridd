@@ -454,7 +454,7 @@ class Player:
             speed = 9.0
             hb = pygame.Rect(0, 0, 8, 8)
             hb.center = self.rect.center
-            hitboxes.append(Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=nx*speed, vy=ny*speed))
+            hitboxes.append(Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=int(nx*speed), vy=int(ny*speed)))
             return
 
         up = keys[pygame.K_w] or keys[pygame.K_UP]
@@ -501,7 +501,7 @@ class Player:
         hb.center = self.rect.center
         vx = nx * speed
         vy = ny * speed
-        hitboxes.append(Hitbox(hb, 120, damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, pierce=pierce))
+        hitboxes.append(Hitbox(hb, 120, damage, self, dir_vec=(nx,ny), vx=int(vx), vy=int(vy), pierce=pierce))
 
     def fire_triple_arrows(self, base_damage, speed, camera, pierce=False):
         # Fire three arrows with slight angle offsets
@@ -518,7 +518,7 @@ class Player:
             hb.center = self.rect.center
             vx = nx * speed
             vy = ny * speed
-            hitboxes.append(Hitbox(hb, 120, base_damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, pierce=pierce, bypass_ifr=True))
+            hitboxes.append(Hitbox(hb, 120, base_damage, self, dir_vec=(nx,ny), vx=int(vx), vy=int(vy), pierce=pierce, bypass_ifr=True))
 
     # --- Wizard skill casts ---
     def cast_fireball(self, level, camera):
@@ -541,7 +541,7 @@ class Player:
         hb = pygame.Rect(0, 0, 12, 12)
         hb.center = self.rect.center
         # small moving projectile that explodes on hit (AOE)
-        hitboxes.append(Hitbox(hb, 180, 6, self, dir_vec=(nx, ny), vx=nx*speed, vy=ny*speed, aoe_radius=48))
+        hitboxes.append(Hitbox(hb, 180, 6, self, dir_vec=(nx, ny), vx=int(nx*speed), vy=int(ny*speed), aoe_radius=48))
 
     def cast_coldfeet(self, level, camera):
         cost = 25
@@ -592,7 +592,7 @@ class Player:
         hb.center = self.rect.center
         vx = nx * speed
         vy = ny * speed
-        hitboxes.append(Hitbox(hb, 36, 12, self, dir_vec=(nx,ny), vx=vx, vy=vy))
+        hitboxes.append(Hitbox(hb, 36, 12, self, dir_vec=(nx,ny), vx=int(vx), vy=int(vy)))
 
     def parry_action(self):
         # Knight parry (consumes stamina), short duration
@@ -693,7 +693,7 @@ class Player:
         self._teleport_cooldown = int(FPS)  # 1 second cooldown
         # small mana use shouldn't block stamina regen, no cooldown
 
-    def physics(self, level):
+    def physics(self, level, dt=1.0/FPS):
         if self.dead:
             return
 
@@ -906,7 +906,64 @@ class Player:
             self.phoenix_feather_active = False
             floating.append(DamageNumber(self.rect.centerx, self.rect.top - 12, "PHOENIX REVIVE!", (255, 150, 50)))
 
-        self.move_and_collide(level)
+        # Prefer new tile-based collision system when available on the level.
+        collisions = None
+        tile_collision = getattr(level, "tile_collision", None)
+        if tile_collision is not None and getattr(level, "grid", None) is not None:
+            try:
+                # Use TileCollision to resolve against tile grid.
+                # Maintain compatibility by mirroring rect/vx/vy back to player.
+                entity_rect = self.rect.copy()
+                velocity = pygame.math.Vector2(self.vx, self.vy)
+                new_rect, new_velocity, collision_info_list = tile_collision.resolve_collisions(
+                    entity_rect,
+                    velocity,
+                    level.grid,
+                    dt,
+                )
+                # Update from resolved values
+                self.rect = new_rect
+                self.vx = float(new_velocity.x)
+                self.vy = float(new_velocity.y)
+
+                # Derive grounded / wall state from collisions
+                self.was_on_ground = self.on_ground
+                self.on_ground = False
+                self.on_left_wall = False
+                self.on_right_wall = False
+
+                for c in collision_info_list:
+                    side = c.get("side")
+                    if side == "top":
+                        # Landed on a solid surface
+                        self.on_ground = True
+                    elif side == "left":
+                        # Collided on left side of the player against a wall
+                        self.on_right_wall = True
+                    elif side == "right":
+                        # Collided on right side of the player against a wall
+                        self.on_left_wall = True
+
+                # Reset coyote timer when grounded
+                if self.on_ground:
+                    self.coyote = COYOTE_FRAMES
+
+                collisions = collision_info_list
+            except Exception:
+                # Fail-safe: if anything goes wrong, fall back to legacy solids-based movement.
+                collisions = None
+                self.move_and_collide(level)
+        else:
+            # Legacy behavior when no tile collision system is present.
+            self.move_and_collide(level)
+
+        # Expose last tile collisions for debug/telemetry systems (e.g., Game collision logger)
+        # Always set an attribute; use empty list when collisions is None.
+        try:
+            self.last_tile_collisions = list(collisions) if collisions else []
+        except Exception:
+            # Never let bad collision info break the game.
+            self.last_tile_collisions = []
 
     def move_and_collide(self, level):
         # Reset wall detection

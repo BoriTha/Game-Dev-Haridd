@@ -49,6 +49,12 @@ class Game:
         self.debug_enemy_rays = False
         self.debug_enemy_nametags = False
 
+        # Debug visualization toggles
+        self.debug_tile_inspector = False
+        self.debug_collision_boxes = False
+        self.debug_collision_log = False
+        self.collision_events = []  # recent collision events for logger
+
         # Terrain/Area debug
         self.debug_show_area_overlay = False
         # Whether we are currently in the dedicated terrain/area test level
@@ -171,9 +177,9 @@ class Game:
         hitboxes.clear()
         floating.clear()
 
-    def update(self):
+    def update(self, dt=1.0/FPS):
         self.player.input(self.level, self.camera)
-        self.player.physics(self.level)
+        self.player.physics(self.level, dt)
         self.inventory.recalculate_player_stats()
 
         # If player died, show restart menu
@@ -334,7 +340,7 @@ class Game:
             if dn.life <= 0:
                 floating.remove(dn)
 
-        self.camera.update(self.player.rect, 1/FPS)
+        self.camera.update(self.player.rect, dt)
 
     def _draw_area_overlay(self):
         """
@@ -588,6 +594,449 @@ class Game:
         # Apply overlay
         self.screen.blit(overlay, (0, 0))
 
+    def _draw_tile_inspector(self):
+        """
+        Live inspector for tile under mouse cursor.
+        Safe-guarded, read-only; only active when explicitly enabled.
+        """
+        import pygame
+        from config import TILE, WIDTH, HEIGHT
+        from src.tiles.tile_types import TileType
+        from src.tiles.tile_registry import tile_registry
+
+        try:
+            # Preconditions
+            level = getattr(self, "level", None)
+            if level is None:
+                return
+            grid = getattr(level, "grid", None)
+            if not grid:
+                # No grid present
+                mx, my = pygame.mouse.get_pos()
+                msg = "No tile grid"
+                font = self.font_small
+                surf = font.render(msg, True, (255, 180, 180))
+                w, h = surf.get_size()
+                bx = min(max(mx + 12, 0), max(0, WIDTH - w - 8))
+                by = min(max(my - h - 12, 0), max(0, HEIGHT - h - 8))
+                panel = pygame.Surface((w + 6, h + 6), pygame.SRCALPHA)
+                panel.fill((20, 0, 0, 200))
+                self.screen.blit(panel, (bx, by))
+                self.screen.blit(surf, (bx + 3, by + 3))
+                return
+
+            # Block when shop/inventory overlays are open (no interaction)
+            if getattr(self.shop, "shop_open", False):
+                return
+            if getattr(self.inventory, "inventory_open", False):
+                return
+
+            # Optional: require god mode for safety
+            # If enforced, uncomment next two lines.
+            # if not getattr(self.player, "god", False):
+            #     return
+
+            mx, my = pygame.mouse.get_pos()
+            # Convert screen -> world
+            world_x = (mx / self.camera.zoom) + self.camera.x
+            world_y = (my / self.camera.zoom) + self.camera.y
+            grid_x = int(world_x // TILE)
+            grid_y = int(world_y // TILE)
+
+            rows = len(grid)
+            cols = len(grid[0]) if rows > 0 else 0
+
+            # Helper: draw small info panel with clamping
+            def draw_panel(lines, title_color=(255, 255, 255)):
+                font = self.font_small
+                pad_x = 8
+                pad_y = 6
+                line_h = font.get_linesize()
+                max_w = 0
+                for line in lines:
+                    w, _ = font.render(line, True, (255, 255, 255)).get_size()
+                    max_w = max(max_w, w)
+                panel_w = max_w + pad_x * 2
+                panel_h = line_h * len(lines) + pad_y * 2
+
+                text_x = mx + 20
+                text_y = my - 40
+                # Clamp horizontally
+                if text_x + panel_w > WIDTH:
+                    text_x = mx - panel_w - 20
+                if text_x < 0:
+                    text_x = 4
+                # Clamp vertically
+                if text_y < 0:
+                    text_y = my + 20
+                if text_y + panel_h > HEIGHT:
+                    text_y = max(4, HEIGHT - panel_h - 4)
+
+                panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+                panel.fill((10, 10, 18, 210))
+                pygame.draw.rect(panel, (200, 200, 240, 255), panel.get_rect(), 1)
+                # Blit text
+                y = pad_y
+                for i, line in enumerate(lines):
+                    col = (255, 255, 255)
+                    surf = font.render(line, True, col)
+                    panel.blit(surf, (pad_x, y))
+                    y += line_h
+                self.screen.blit(panel, (text_x, text_y))
+
+            # Bounds check
+            if grid_y < 0 or grid_y >= rows or grid_x < 0 or grid_x >= cols:
+                draw_panel([
+                    f"Grid: ({grid_x}, {grid_y})",
+                    f"World: ({int(world_x)}, {int(world_y)})",
+                    "Out of bounds",
+                ])
+                return
+
+            tile_value = grid[grid_y][grid_x]
+
+            # Highlight rect for in-bounds tile
+            tile_screen_x = (grid_x * TILE - self.camera.x) * self.camera.zoom
+            tile_screen_y = (grid_y * TILE - self.camera.y) * self.camera.zoom
+            tile_screen_size = TILE * self.camera.zoom
+            highlight = pygame.Surface((int(tile_screen_size), int(tile_screen_size)), pygame.SRCALPHA)
+            highlight.fill((255, 255, 255, 40))
+            self.screen.blit(highlight, (int(tile_screen_x), int(tile_screen_y)))
+            pygame.draw.rect(
+                self.screen,
+                (255, 255, 255),
+                pygame.Rect(
+                    int(tile_screen_x),
+                    int(tile_screen_y),
+                    int(tile_screen_size),
+                    int(tile_screen_size),
+                ),
+                1,
+            )
+
+            # Empty / no tile
+            if tile_value < 0:
+                draw_panel([
+                    f"Grid: ({grid_x}, {grid_y})",
+                    f"World: ({int(world_x)}, {int(world_y)})",
+                    "Empty (no tile)",
+                ])
+                return
+
+            # Resolve TileType & TileData
+            try:
+                tile_type = TileType(tile_value)
+            except ValueError:
+                draw_panel([
+                    f"Grid: ({grid_x}, {grid_y})",
+                    f"World: ({int(world_x)}, {int(world_y)})",
+                    f"Unknown tile id={tile_value}",
+                ])
+                return
+
+            tile_data = tile_registry.get_tile(tile_type)
+
+            if tile_data is None:
+                draw_panel([
+                    f"Grid: ({grid_x}, {grid_y})",
+                    f"World: ({int(world_x)}, {int(world_y)})",
+                    f"Unknown tile: ID={tile_value}, type={tile_type.name}, no TileData",
+                ])
+                return
+
+            # Collect info sections with defensive access
+            c = getattr(tile_data, "collision", None)
+            p = getattr(tile_data, "physics", None)
+            inter = getattr(tile_data, "interaction", None)
+            vis = getattr(tile_data, "visual", None)
+            lit = getattr(tile_data, "lighting", None)
+            aud = getattr(tile_data, "audio", None)
+
+            lines = []
+            # Position
+            lines.append(f"Grid: ({grid_x}, {grid_y})")
+            lines.append(f"World: ({int(world_x)}, {int(world_y)})")
+            # Identity
+            lines.append(f"Tile: {tile_data.name} ({tile_type.name}, id={tile_type.value})")
+
+            # Collision
+            if c:
+                lines.append(f"collision_type={getattr(c, 'collision_type', 'unknown')}")
+                lines.append(f"can_walk_on={getattr(c, 'can_walk_on', False)} pass_through={getattr(c, 'can_pass_through', False)} climb={getattr(c, 'can_climb', False)}")
+                lines.append(f"damage={getattr(c, 'damage_on_contact', 0)} push={getattr(c, 'push_force', 0.0)}")
+                lines.append(f"box_off={getattr(c, 'collision_box_offset', (0, 0))} box_size={getattr(c, 'collision_box_size', None)}")
+
+            # Physical
+            if p:
+                lines.append(f"friction={getattr(p, 'friction', 1.0)} bounce={getattr(p, 'bounciness', 0.0)} move_speed_mul={getattr(p, 'movement_speed_modifier', 1.0)}")
+                lines.append(f"sticky={getattr(p, 'is_sticky', False)} slippery={getattr(p, 'is_slippery', False)} density={getattr(p, 'density', 1.0)}")
+
+            # Interaction
+            if inter:
+                lines.append(
+                    f"breakable={getattr(inter, 'breakable', False)} hp={getattr(inter, 'health_points', 0)} "
+                    f"climbable={getattr(inter, 'climbable', False)} interact={getattr(inter, 'interactable', False)} "
+                    f"collectible={getattr(inter, 'collectible', False)} trigger={getattr(inter, 'is_trigger', False)}"
+                )
+                lines.append(f"resistance={getattr(inter, 'resistance', 1.0)}")
+
+            # Visual
+            if vis:
+                base_color = getattr(vis, "base_color", None)
+                sprite_path = getattr(vis, "sprite_path", None)
+                anim_frames = getattr(vis, "animation_frames", []) or []
+                anim_speed = getattr(vis, "animation_speed", 0.0)
+                border_radius = getattr(vis, "border_radius", 0)
+                render_border = getattr(vis, "render_border", False)
+                border_color = getattr(vis, "border_color", None)
+                lines.append(f"base_color={base_color}")
+                lines.append(f"sprite={sprite_path or 'None'} anim_frames={len(anim_frames)} speed={anim_speed}")
+                lines.append(f"border_radius={border_radius} border={render_border} border_color={border_color}")
+
+            # Lighting
+            if lit:
+                lines.append(
+                    f"emits_light={getattr(lit, 'emits_light', False)} "
+                    f"color={getattr(lit, 'light_color', None)} radius={getattr(lit, 'light_radius', 0.0)}"
+                )
+                lines.append(
+                    f"blocks_light={getattr(lit, 'blocks_light', False)} "
+                    f"transparency={getattr(lit, 'transparency', 1.0)} casts_shadows={getattr(lit, 'casts_shadows', True)} "
+                    f"reflection={getattr(lit, 'reflection_intensity', 0.0)}"
+                )
+
+            # Audio
+            if aud:
+                lines.append(
+                    f"snd_foot={getattr(aud, 'footstep_sound', None)} "
+                    f"snd_contact={getattr(aud, 'contact_sound', None)} "
+                    f"snd_break={getattr(aud, 'break_sound', None)} "
+                    f"snd_ambient={getattr(aud, 'ambient_sound', None)} "
+                    f"vol={getattr(aud, 'sound_volume', 1.0)}"
+                )
+
+            # Derived
+            try:
+                lines.append(
+                    f"is_walkable={getattr(tile_data, 'is_walkable', False)} "
+                    f"has_collision={getattr(tile_data, 'has_collision', False)} "
+                    f"is_destructible={getattr(tile_data, 'is_destructible', False)}"
+                )
+            except Exception:
+                pass
+
+            draw_panel(lines)
+        except Exception:
+            # Fail-safe: never let inspector crash the game.
+            return
+
+    def _draw_collision_boxes(self):
+        """
+        Debug: draw tile collision boxes for visible region.
+        Uses Level.grid and TileRegistry; read-only and fail-safe.
+        """
+        import pygame
+        from config import TILE
+        from src.tiles.tile_types import TileType
+        from src.tiles.tile_registry import tile_registry
+
+        try:
+            level = getattr(self, "level", None)
+            if level is None:
+                return
+            grid = getattr(level, "grid", None)
+            if not grid:
+                return
+
+            screen_w, screen_h = self.screen.get_size()
+            zoom = getattr(self.camera, "zoom", 1.0) or 1.0
+
+            world_left = self.camera.x
+            world_top = self.camera.y
+            world_right = self.camera.x + screen_w / zoom
+            world_bottom = self.camera.y + screen_h / zoom
+
+            rows = len(grid)
+            cols = len(grid[0]) if rows > 0 else 0
+            if rows == 0 or cols == 0:
+                return
+
+            start_tx = max(0, int(world_left // TILE) - 1)
+            end_tx = min(cols, int(world_right // TILE) + 2)
+            start_ty = max(0, int(world_top // TILE) - 1)
+            end_ty = min(rows, int(world_bottom // TILE) + 2)
+
+            for ty in range(start_ty, end_ty):
+                row = grid[ty]
+                for tx in range(start_tx, end_tx):
+                    tile_value = row[tx]
+                    if tile_value < 0:
+                        continue
+                    try:
+                        tile_type = TileType(tile_value)
+                    except ValueError:
+                        continue
+                    tile_data = tile_registry.get_tile(tile_type)
+                    if not tile_data or not getattr(tile_data, "has_collision", False):
+                        continue
+
+                    c = getattr(tile_data, "collision", None)
+                    if not c:
+                        continue
+                    off = getattr(c, "collision_box_offset", (0, 0))
+                    size = getattr(c, "collision_box_size", None)
+                    if not size:
+                        continue
+                    off_x, off_y = off
+                    width, height = size
+
+                    world_x = tx * TILE + off_x
+                    world_y = ty * TILE + off_y
+
+                    sx = int((world_x - self.camera.x) * zoom)
+                    sy = int((world_y - self.camera.y) * zoom)
+                    sw = int(width * zoom)
+                    sh = int(height * zoom)
+                    if sw <= 0 or sh <= 0:
+                        continue
+
+                    ct = getattr(c, "collision_type", "")
+                    if ct == "full":
+                        color = (255, 80, 80)
+                    elif ct == "top_only":
+                        color = (80, 255, 80)
+                    elif ct == "one_way":
+                        color = (80, 160, 255)
+                    else:
+                        color = (255, 255, 0)
+
+                    pygame.draw.rect(self.screen, color, (sx, sy, sw, sh), width=1)
+        except Exception:
+            # Never allow debug overlay to crash the game.
+            return
+
+    def _draw_collision_log_overlay(self):
+        """
+        Debug: visualize recent player-vs-tile collisions.
+        Uses self.collision_events populated from Player.last_tile_collisions.
+        """
+        import pygame
+        from config import TILE, WIDTH, HEIGHT
+
+        try:
+            if not getattr(self, "collision_events", None):
+                return
+
+            now = pygame.time.get_ticks()
+            RECENT_MS = 120
+
+            # On-map markers for very recent collisions
+            for ev in self.collision_events:
+                if not isinstance(ev, dict):
+                    continue
+                t = ev.get("time")
+                if t is None or now - t > RECENT_MS:
+                    continue
+                tx = ev.get("tile_x")
+                ty = ev.get("tile_y")
+                tile_data = ev.get("tile_data")
+                if tx is None or ty is None:
+                    continue
+
+                # Base rect from tile
+                wx = tx * TILE
+                wy = ty * TILE
+                ww = TILE
+                wh = TILE
+
+                # If detailed collision tile_rect is available, prefer that
+                tile_rect = ev.get("tile_rect")
+                if tile_rect is not None and hasattr(tile_rect, "x"):
+                    wx, wy, ww, wh = tile_rect.x, tile_rect.y, tile_rect.w, tile_rect.h
+
+                # Project to screen
+                zoom = getattr(self.camera, "zoom", 1.0) or 1.0
+                sx = int((wx - self.camera.x) * zoom)
+                sy = int((wy - self.camera.y) * zoom)
+                sw = int(ww * zoom)
+                sh = int(wh * zoom)
+                if sw <= 0 or sh <= 0:
+                    continue
+
+                side = ev.get("side")
+                col = (0, 255, 0)
+                if side == "top":
+                    col = (0, 255, 255)
+                elif side == "bottom":
+                    col = (255, 0, 255)
+                elif side == "left":
+                    col = (255, 255, 0)
+                elif side == "right":
+                    col = (255, 165, 0)
+
+                pygame.draw.rect(self.screen, col, (sx, sy, sw, sh), width=1)
+                # Small marker at impact edge
+                if side == "top":
+                    pygame.draw.line(self.screen, col, (sx, sy), (sx + sw, sy), 2)
+                elif side == "bottom":
+                    pygame.draw.line(self.screen, col, (sx, sy + sh), (sx + sw, sy + sh), 2)
+                elif side == "left":
+                    pygame.draw.line(self.screen, col, (sx, sy), (sx, sy + sh), 2)
+                elif side == "right":
+                    pygame.draw.line(self.screen, col, (sx + sw, sy), (sx + sw, sy + sh), 2)
+
+            # Text log panel: last N events (newest first)
+            font = self.font_small
+            lines = []
+            max_events = 8
+            for ev in reversed(self.collision_events[-40:]):
+                if len(lines) >= max_events:
+                    break
+                if not isinstance(ev, dict):
+                    continue
+                tile_name = ev.get("tile_name", "Unknown")
+                tx = ev.get("tile_x")
+                ty = ev.get("tile_y")
+                side = ev.get("side") or "-"
+                pen = ev.get("penetration")
+                if pen is None:
+                    pen = "-"
+                dmg = ev.get("damage")
+                if dmg is None:
+                    dmg = "-"
+                line = f"P vs {tile_name} @({tx},{ty}) side={side} pen={pen} dmg={dmg}"
+                lines.append(line)
+
+            if not lines:
+                return
+
+            pad_x = 8
+            pad_y = 6
+            line_h = font.get_linesize()
+            max_w = 0
+            for s in lines:
+                w, _ = font.render(s, True, (255, 255, 255)).get_size()
+                max_w = max(max_w, w)
+            panel_w = max_w + pad_x * 2
+            panel_h = line_h * len(lines) + pad_y * 2
+
+            x = 8
+            y = HEIGHT - panel_h - 8
+
+            panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            panel.fill((5, 5, 10, 200))
+            pygame.draw.rect(panel, (120, 220, 255, 255), panel.get_rect(), 1)
+
+            cy = pad_y
+            for s in lines:
+                surf = font.render(s, True, (220, 240, 255))
+                panel.blit(surf, (pad_x, cy))
+                cy += line_h
+
+            self.screen.blit(panel, (x, y))
+        except Exception:
+            return
+
     def draw(self):
         self.screen.fill(BG)
         self.level.draw(self.screen, self.camera)
@@ -759,7 +1208,7 @@ class Game:
 
     def run(self):
         while True:
-            self.clock.tick(FPS)
+            dt = self.clock.tick(FPS) / 1000.0  # Convert milliseconds to seconds
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
@@ -856,10 +1305,11 @@ class Game:
                             (255, 215, 0)
                         ))
                         continue
-                    # Teleport / navigation cheats:
+                    # Teleport / navigation / debug cheats:
                     elif ev.key == pygame.K_F8:
-                        # Reserved: previously procedural terrain test; now no-op
-                        continue         
+                        # Toggle tile inspector (safe: overlay-only)
+                        self.debug_tile_inspector = not self.debug_tile_inspector
+                        continue
                     elif ev.key == pygame.K_F11:
                         # Reserved: previously procedural regen; now no-op
                         continue
@@ -868,8 +1318,42 @@ class Game:
                         self.goto_room(5)
 
             if not self.inventory.inventory_open and not self.shop.shop_open:
-                self.update()
-            
+                self.update(dt)
+
+                # Capture tile collision events for debug logger (player vs tiles)
+                if self.debug_collision_log:
+                    collisions = getattr(self.player, "last_tile_collisions", []) or []
+                    now = pygame.time.get_ticks()
+                    for c in collisions:
+                        if not isinstance(c, dict):
+                            continue
+                        tile_data = c.get("tile_data")
+                        tile_type = c.get("tile_type")
+                        # Build safe event snapshot
+                        event = {
+                            "time": now,
+                            "entity": "player",
+                            "tile_type": tile_type,
+                            "tile_name": getattr(tile_data, "name", "Unknown") if tile_data else "Unknown",
+                            "tile_x": c.get("tile_x"),
+                            "tile_y": c.get("tile_y"),
+                            "tile_rect": c.get("tile_rect"),
+                            "tile_data": tile_data,
+                            "collision_type": getattr(getattr(tile_data, "collision", None), "collision_type", "unknown") if tile_data else "unknown",
+                            "side": c.get("side"),
+                            "penetration": c.get("penetration"),
+                        }
+                        # Attach damage if available
+                        if tile_data and getattr(tile_data, "collision", None):
+                            event["damage"] = getattr(tile_data.collision, "damage_on_contact", 0)
+                        else:
+                            event["damage"] = 0
+                        self.collision_events.append(event)
+
+                    # Trim history
+                    if len(self.collision_events) > 40:
+                        self.collision_events = self.collision_events[-40:]
+
             self.draw()
             pygame.display.flip()
 
@@ -904,6 +1388,15 @@ class Game:
              'action': self.inventory.add_all_consumables},
             {'label': "Give Items...", 'type': 'action',
              'action': self.debug_item_menu},
+            {'label': "Tile Inspector", 'type': 'toggle',
+             'getter': lambda: self.debug_tile_inspector,
+             'setter': lambda v: setattr(self, 'debug_tile_inspector', v)},
+            {'label': "Collision Boxes", 'type': 'toggle',
+             'getter': lambda: self.debug_collision_boxes,
+             'setter': lambda v: setattr(self, 'debug_collision_boxes', v)},
+            {'label': "Collision Log", 'type': 'toggle',
+             'getter': lambda: self.debug_collision_log,
+             'setter': lambda v: setattr(self, 'debug_collision_log', v)},
             {'label': "Close", 'type': 'action',
              'action': None, 'close': True},
         ]
@@ -959,7 +1452,7 @@ class Game:
         offset = 0
         visible = min(9, len(options)) or 1
         while True:
-            self.clock.tick(FPS)
+            dt = self.clock.tick(FPS) / 1000.0
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
@@ -993,7 +1486,7 @@ class Game:
         """
         idx = self.level_index
         while True:
-            self.clock.tick(FPS)
+            dt = self.clock.tick(FPS) / 1000.0
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
