@@ -6,17 +6,7 @@ Eliminates code duplication across player and enemy classes
 import pygame
 from typing import Optional
 from config import GRAVITY, TERMINAL_VY, TILE
-try:
-    from ..utils.tile_utils import (
-        has_side_collision, has_top_collision, has_bottom_collision,
-        check_collision_at_tile, is_platform_tile
-    )
-except ImportError:
-    # Fallback for different import paths
-    from src.utils.tile_utils import (
-        has_side_collision, has_top_collision, has_bottom_collision,
-        check_collision_at_tile, is_platform_tile
-    )
+from ...tiles import TileCollision, TileType
 
 
 class PhysicsComponent:
@@ -28,6 +18,7 @@ class PhysicsComponent:
         self.terminal_velocity = TERMINAL_VY
         self.friction = 0.8
         self.bounce_factor = 0.5
+        self.tile_collision = TileCollision(TILE)
         
     def apply_gravity(self, gravity_multiplier=None):
         """Apply gravity to entity's vertical velocity"""
@@ -211,25 +202,13 @@ class PhysicsComponent:
                     return True
             return False
 
-        # Check tile-based collision
-        left_x = new_x
-        right_x = new_x + self.entity.rect.width
-        top_y = self.entity.rect.y
-        bottom_y = self.entity.rect.y + self.entity.rect.height
+        # Use new tile collision system
+        temp_rect = self.entity.rect.copy()
+        temp_rect.x = new_x
+        collisions = self.tile_collision.check_tile_collision(temp_rect, level.grid)
 
-        # Check corners and midpoints
-        check_points = [
-            (left_x, top_y),
-            (left_x, bottom_y - 1),
-            (right_x - 1, top_y),
-            (right_x - 1, bottom_y - 1),
-            (left_x, (top_y + bottom_y) // 2),
-            (right_x - 1, (top_y + bottom_y) // 2)
-        ]
-
-        for px, py in check_points:
-            tile = self.get_tile_at_pos(px, py, level)
-            if tile and has_side_collision(tile):
+        for collision in collisions:
+            if collision['collision_type'] in ('full',):
                 return True
 
         return False
@@ -245,108 +224,66 @@ class PhysicsComponent:
                     return True
             return False
 
-        # Check tile-based collision
-        left_x = self.entity.rect.x
-        right_x = self.entity.rect.x + self.entity.rect.width
-        top_y = new_y
-        bottom_y = new_y + self.entity.rect.height
+        # Use new tile collision system
+        temp_rect = self.entity.rect.copy()
+        temp_rect.y = new_y
+        velocity = pygame.Vector2(0, vy)
+        collisions = self.tile_collision.check_tile_collision(temp_rect, level.grid, velocity)
 
-        if vy > 0:  # Moving down - check for landing
-            # Check bottom edge points
-            for px in range(left_x, right_x, max(1, TILE // 4)):
-                tile = self.get_tile_at_pos(px, bottom_y - 1, level)
-                if tile and has_top_collision(tile):
-                    # Special handling for platform tiles - can jump through
-                    if is_platform_tile(tile):
-                        # Only collide if we're above the platform
-                        current_bottom = self.entity.rect.y + self.entity.rect.height
-                        platform_top = (bottom_y - 1) // TILE * TILE
-                        if current_bottom <= platform_top + 4:  # Small tolerance
-                            return True
-                    else:
-                        return True
-        elif vy < 0:  # Moving up - check for ceiling collision
-            # Check top edge points
-            for px in range(left_x, right_x, max(1, TILE // 4)):
-                tile = self.get_tile_at_pos(px, top_y, level)
-                if tile and has_bottom_collision(tile):
-                    return True
+        for collision in collisions:
+            collision_type = collision['collision_type']
+            # Check based on movement direction and collision type
+            if vy > 0 and collision_type in ('full', 'top_only'):
+                return True
+            elif vy < 0 and collision_type == 'full':
+                return True
 
         return False
 
     def handle_tile_horizontal_collision(self, level):
-        """Handle horizontal movement with tile-based collision."""
-        if not hasattr(self.entity, 'vx') or self.entity.vx == 0:
-            return
+        """Handle horizontal collision using new tile system."""
+        velocity = pygame.Vector2(self.entity.vx, 0)
+        self.entity.rect, self.entity.vx, collisions = self.tile_collision.resolve_collisions(
+            self.entity.rect, velocity, level.grid, 1/60
+        )
 
-        new_x = self.entity.rect.x + int(self.entity.vx)
+        # Set wall flags
+        if hasattr(self.entity, 'on_left_wall'):
+            self.entity.on_left_wall = False
+        if hasattr(self.entity, 'on_right_wall'):
+            self.entity.on_right_wall = False
 
-        if self.check_tile_collision_horizontal(level, new_x):
-            # Collision detected - stop at wall
-            if self.entity.vx > 0:
-                # Moving right - find the wall position
-                tile_x = (self.entity.rect.right) // TILE
-                for check_x in range(tile_x, tile_x + 5):
-                    if not self.check_tile_collision_horizontal(level, check_x * TILE - self.entity.rect.width):
-                        self.entity.rect.right = check_x * TILE
-                        break
-                else:
-                    self.entity.rect.x = new_x - int(self.entity.vx)
-            else:
-                # Moving left - find the wall position
-                tile_x = self.entity.rect.left // TILE
-                for check_x in range(tile_x, max(-1, tile_x - 5), -1):
-                    if not self.check_tile_collision_horizontal(level, check_x * TILE):
-                        self.entity.rect.left = check_x * TILE
-                        break
-                else:
-                    self.entity.rect.x = new_x - int(self.entity.vx)
-
-            self.entity.vx = 0
-
-            # Update wall flags
-            if hasattr(self.entity, 'on_left_wall') or hasattr(self.entity, 'on_right_wall'):
-                self.handle_wall_collision(level)
-        else:
-            # No collision - move normally
-            self.entity.rect.x = new_x
+        for collision in collisions:
+            if collision['side'] == 'left' and hasattr(self.entity, 'on_right_wall'):
+                self.entity.on_right_wall = True
+            elif collision['side'] == 'right' and hasattr(self.entity, 'on_left_wall'):
+                self.entity.on_left_wall = True
 
     def handle_tile_vertical_collision(self, level):
-        """Handle vertical movement with tile-based collision."""
-        if not hasattr(self.entity, 'vy'):
-            return
-
-        old_y = self.entity.rect.y
-        new_y = self.entity.rect.y + int(self.entity.vy)
-        was_on_ground = getattr(self.entity, 'on_ground', False)
+        """Handle vertical collision using new tile system."""
+        velocity = pygame.Vector2(0, self.entity.vy)
+        old_on_ground = getattr(self.entity, 'on_ground', False)
         self.entity.on_ground = False
 
-        if self.check_tile_collision_vertical(level, new_y, self.entity.vy):
-            # Collision detected
-            if self.entity.vy > 0:
-                # Moving down - land on surface
-                tile_y = (self.entity.rect.bottom - 1) // TILE
-                for check_y in range(tile_y, min(len(level.grid), tile_y + 5)):
-                    test_bottom = check_y * TILE
-                    if not self.check_tile_collision_vertical(level, test_bottom - self.entity.rect.height, self.entity.vy):
-                        self.entity.rect.bottom = test_bottom
-                        self.entity.on_ground = True
-                        break
-                else:
-                    self.entity.rect.y = old_y
-                self.entity.vy = 0
-            else:
-                # Moving up - hit ceiling
-                tile_y = self.entity.rect.top // TILE
-                for check_y in range(tile_y, max(-1, tile_y - 5), -1):
-                    test_top = check_y * TILE
-                    if not self.check_tile_collision_vertical(level, test_top, self.entity.vy):
-                        self.entity.rect.top = test_top
-                        break
-                else:
-                    self.entity.rect.y = old_y
-                self.entity.vy = 0
-        else:
-            # No collision - move normally
-            self.entity.rect.y = new_y
+        self.entity.rect, self.entity.vy, collisions = self.tile_collision.resolve_collisions(
+            self.entity.rect, velocity, level.grid, 1/60
+        )
+
+        # Check if landed on ground
+        for collision in collisions:
+            if collision['side'] == 'top':
+                self.entity.on_ground = True
+                # Apply tile properties
+                tile_data = collision.get('tile_data')
+                if tile_data:
+                    # Apply friction from tile
+                    self.friction = tile_data.physics.friction
+                    # Apply damage if tile deals damage
+                    if tile_data.get_damage() > 0:
+                        if hasattr(self.entity, 'take_damage'):
+                            self.entity.take_damage(tile_data.get_damage())
+
+    def get_tile_at_pos(self, x: int, y: int, level) -> Optional[int]:
+        """Get tile value at pixel position using new tile system."""
+        return self.tile_collision.get_tile_at_pos(x, y, level.grid)
     

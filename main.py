@@ -10,6 +10,7 @@ from config import (
     CYAN,
     GREEN,
     WALL_JUMP_COOLDOWN,
+    TILE,
 )
 from src.core.utils import draw_text, get_font
 from src.systems.camera import Camera
@@ -333,77 +334,15 @@ class Game:
             if dn.life <= 0:
                 floating.remove(dn)
 
-        self.camera.update(self.player.rect)
+        self.camera.update(self.player.rect, 1/FPS)
 
     def _draw_area_overlay(self):
         """
         Debug: draw logical areas and terrain test info on top of current map.
         Uses self.level.areas if present.
         """
-        if not getattr(self, "debug_show_area_overlay", False):
-            return
-
-        areas = getattr(self.level, "areas", None)
-        if not areas or not getattr(areas, "areas", None):
-            return
-
-        # Semi-transparent surface
-        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-
-        # Draw grid lines first (very subtle) for levels that expose a grid.
-        # Static Level does not define grid/terrain_grid; only run when attributes exist.
-        level_grid = getattr(self.level, "grid", None)
-        if level_grid:
-            grid_height = len(level_grid)
-            grid_width = len(level_grid[0]) if grid_height > 0 else 0
-
-            # Vertical grid lines
-            for x in range(grid_width + 1):
-                world_x = x * TILE
-                line_rect = pygame.Rect(world_x, 0, 1, grid_height * TILE)
-                screen_rect = self.camera.to_screen_rect(line_rect)
-                pygame.draw.rect(overlay, (100, 100, 100, 30), screen_rect)
-
-            # Horizontal grid lines
-            for y in range(grid_height + 1):
-                world_y = y * TILE
-                line_rect = pygame.Rect(0, world_y, grid_width * TILE, 1)
-                screen_rect = self.camera.to_screen_rect(line_rect)
-                pygame.draw.rect(overlay, (100, 100, 100, 30), screen_rect)
-
-        # Simple color mapping per area type
-        from src.level.area_system import AreaType
-        color_map = {
-            AreaType.PLAYER_SPAWN: (80, 200, 120, 80),
-            AreaType.PORTAL_ZONE: (80, 160, 255, 80),
-            AreaType.GROUND_ENEMY_SPAWN: (255, 120, 80, 80),
-            AreaType.FLYING_ENEMY_SPAWN: (200, 200, 80, 80),
-            AreaType.WATER_AREA: (80, 120, 255, 80),
-            AreaType.MERCHANT_AREA: (255, 200, 120, 80),
-        }
-
-        for area in areas.areas:
-            px = area.x * TILE
-            py = area.y * TILE
-            pw = area.width * TILE
-            ph = area.height * TILE
-            screen_rect = self.camera.to_screen_rect(pygame.Rect(px, py, pw, ph))
-
-            base_col = color_map.get(area.type, (255, 255, 255, 40))
-            pygame.draw.rect(overlay, base_col, screen_rect, border_radius=3)
-            pygame.draw.rect(overlay, (base_col[0], base_col[1], base_col[2], 180), screen_rect, width=1, border_radius=3)
-
-            # Label inside area with coordinates
-            label = f"{area.type} ({area.x},{area.y})"
-            draw_text(overlay, label, (screen_rect.x + 4, screen_rect.y + 2), (255, 255, 255), size=10)
-
-            # Draw corner labels for tile coordinates
-            if screen_rect.width > 40 and screen_rect.height > 20:
-                # Top-left corner coordinate
-                coord_label = f"({area.x},{area.y})"
-                draw_text(overlay, coord_label, (screen_rect.x + 2, screen_rect.y + screen_rect.height - 15), (200, 200, 200), size=8)
-
-        self.screen.blit(overlay, (0, 0))
+        # Disabled: area system not fully implemented, causes import errors
+        pass
 
     def _get_player_area_labels(self):
         """
@@ -841,6 +780,16 @@ class Game:
                             self.inventory.inventory_open = not self.inventory.inventory_open
                             if not self.inventory.inventory_open:
                                 self.inventory._clear_inventory_selection()
+                        continue
+                    if ev.key == pygame.K_z:
+                        # Toggle camera zoom
+                        self.camera.toggle_zoom()
+                        floating.append(DamageNumber(
+                            self.player.rect.centerx,
+                            self.player.rect.top - 12,
+                            self.camera.get_zoom_label(),
+                            (255, 255, 100)
+                        ))
                         continue
                     if ev.key == pygame.K_F5:
                         self.inventory.inventory_open = False

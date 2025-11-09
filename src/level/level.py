@@ -1,9 +1,12 @@
 import pygame
-from config import TILE, TILE_COL, CYAN, TILE_SYMBOLS
+from config import TILE, TILE_COL, CYAN, TILE_SYMBOLS, WIDTH, HEIGHT
 from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
+from ..tiles import TileParser, TileRenderer, TileRegistry
 
-# Rooms (tilemaps). Legend: # wall, . floor/empty, S spawn, E enemy, D door->next room
-# Extra enemies: f=Frog, r=Archer, w=WizardCaster, a=Assassin, b=Bee, G=Golem boss
+# Rooms (tilemaps). Legend:
+#   # wall, . floor/empty, S spawn, E enemy, D door->next room
+#   Extra enemies: f=Frog, r=Archer, w=WizardCaster, a=Assassin, b=Bee, G=Golem boss
+#   New tiles: B=Breakable Wall, b=Breakable Floor, _=Platform
 # NOTE:
 #   Procedural generation has been removed. These static rooms are now the
 #   canonical and only level layouts used by the game.
@@ -149,71 +152,106 @@ class Level:
         self.doors = []
         self.spawn = (TILE * 2, TILE * 2)
 
-        # detect if this room contains a boss tile; boss rooms should not
-        # spawn normal 'E' enemies so the boss is the sole opponent
-        boss_present = any(('B' in row) or ('G' in row) for row in raw)
+        # Initialize new tile system components
+        self.tile_parser = TileParser()
+        self.tile_renderer = TileRenderer(TILE)
+        self.tile_registry = TileRegistry()
+
+        # Parse ASCII level to tile grid
+        self.grid, entity_positions = self.tile_parser.parse_ascii_level(raw)
+
+        # Load entities from parsed positions
+        self._load_entities(entity_positions)
+
+        # Keep solids list for backward compatibility with physics system
+        self._update_solids_from_grid()
+
+        # Level dimensions
+        self.w = len(self.grid[0]) * TILE if self.grid else 0
+        self.h = len(self.grid) * TILE
+
+    def _load_entities(self, entity_positions):
+        """Load enemies and special objects from parsed positions."""
+        # Check if boss is present
+        boss_present = 'enemy_boss' in entity_positions or len(entity_positions.get('boss', [])) > 0
         self.is_boss_room = boss_present
 
-        # Normalize all rows to the same width so each ASCII character maps
-        # 1:1 to a tile. Pad with '.' (empty space) so we don't accidentally
-        # introduce solids, and treat unknown chars as empty terrain.
-        max_w = max(len(row) for row in raw)
-        rows = []
-        for row in raw:
-            if len(row) < max_w:
-                pad_char = row[-1] if row else '.'
-                row = row + (pad_char * (max_w - len(row)))
-            rows.append(row)
+        # Load spawn point
+        if 'spawn' in entity_positions:
+            for x, y in entity_positions['spawn']:
+                self.spawn = (x * TILE, y * TILE)
 
-        for y, row in enumerate(rows):
-            for x, ch in enumerate(row):
-                # Sanitize stray characters to empty terrain for a clean 1:1 map
-                if ch not in {'#', '.', 'S', 'E', 'B', 'f', 'r', 'w', 'a', 'b', 'G', 'D'}:
-                    ch = '.'
-                r = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
-                if ch == '#':
-                    self.solids.append(r)
-                elif ch == 'S':
-                    self.spawn = (x * TILE, y * TILE)
-                elif ch == 'E':
-                    # skip regular enemies in boss rooms
-                    if not boss_present:
-                        self.enemies.append(Bug(r.centerx, r.bottom))
-                elif ch == 'B':
-                    # spawn the boss (placed at tile center x, bottom y)
-                    self.enemies.append(Boss(r.centerx, r.bottom))
-                elif ch == 'f':
-                    if not boss_present:
-                        self.enemies.append(Frog(r.centerx, r.bottom))
-                elif ch == 'r':
-                    if not boss_present:
-                        self.enemies.append(Archer(r.centerx, r.bottom))
-                elif ch == 'w':
-                    if not boss_present:
-                        self.enemies.append(WizardCaster(r.centerx, r.bottom))
-                elif ch == 'a':
-                    if not boss_present:
-                        self.enemies.append(Assassin(r.centerx, r.bottom))
-                elif ch == 'b':
-                    if not boss_present:
-                        self.enemies.append(Bee(r.centerx, r.bottom))
-                elif ch == 'G':
-                    # golem boss
-                    self.enemies.append(Golem(r.centerx, r.bottom))
-                elif ch == 'D':
-                    self.doors.append(r)
+        # Load enemies
+        for entity_type, positions in entity_positions.items():
+            for x, y in positions:
+                world_x = x * TILE
+                world_y = y * TILE
+                rect = pygame.Rect(world_x, world_y, TILE, TILE)
 
-        self.w = max_w * TILE
-        self.h = len(rows) * TILE
+                # Skip regular enemies in boss rooms
+                if boss_present and entity_type != 'enemy_boss':
+                    continue
+
+                if entity_type == 'enemy':
+                    self.enemies.append(Bug(rect.centerx, rect.bottom))
+                elif entity_type == 'enemy_fast':
+                    self.enemies.append(Frog(rect.centerx, rect.bottom))
+                elif entity_type == 'enemy_ranged':
+                    self.enemies.append(Archer(rect.centerx, rect.bottom))
+                elif entity_type == 'enemy_wizard':
+                    self.enemies.append(WizardCaster(rect.centerx, rect.bottom))
+                elif entity_type == 'enemy_armor':
+                    self.enemies.append(Assassin(rect.centerx, rect.bottom))
+                elif entity_type == 'enemy_boss':
+                    self.enemies.append(Golem(rect.centerx, rect.bottom))
+                elif entity_type == 'door':
+                    self.doors.append(rect)
+
+    def _update_solids_from_grid(self):
+        """Update solids list from tile grid for backward compatibility."""
+        self.solids = []
+        for y, row in enumerate(self.grid):
+            for x, tile_value in enumerate(row):
+                if tile_value >= 0:
+                    from ..tiles import TileType
+                    tile_type = TileType(tile_value)
+                    tile_data = self.tile_registry.get_tile(tile_type)
+
+                    # Add solids for tiles with full collision
+                    if tile_data and tile_data.collision.collision_type == "full":
+                        rect = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
+                        self.solids.append(rect)
+
+    def get_tile_at(self, x: int, y: int) -> int:
+        """Get tile value at grid position."""
+        if 0 <= y < len(self.grid) and 0 <= x < len(self.grid[0]):
+            return self.grid[y][x]
+        return -1
+
+    def set_tile_at(self, x: int, y: int, tile_value: int):
+        """Set tile value at grid position."""
+        if 0 <= y < len(self.grid) and 0 <= x < len(self.grid[0]):
+            self.grid[y][x] = tile_value
+            self._update_solids_from_grid()
 
     def draw(self, surf, camera):
-        for r in self.solids:
-            pygame.draw.rect(surf, TILE_COL, camera.to_screen_rect(r), border_radius=6)
+        # Draw tiles using the new tile renderer
+        camera_offset = (camera.x, camera.y)
+        # visible_rect should be screen coordinates in pixels, not world coords
+        visible_rect = pygame.Rect(0, 0, WIDTH, HEIGHT)
+        self.tile_renderer.render_tile_grid(surf, self.grid, camera_offset, visible_rect, zoom=camera.zoom)
+
+        # Draw doors (over tiles)
         for d in self.doors:
             # Locked (red) if boss room and boss still alive
             locked = getattr(self, 'is_boss_room', False) and any(getattr(e, 'alive', False) for e in self.enemies)
             col = (200, 80, 80) if locked else CYAN
             pygame.draw.rect(surf, col, camera.to_screen_rect(d), width=2)
+
+    def draw_debug(self, surf, camera, show_collision_boxes=False):
+        """Draw debug information about tiles."""
+        camera_offset = (camera.x, camera.y)
+        self.tile_renderer.render_debug_grid(surf, self.grid, camera_offset, show_collision_boxes, zoom=camera.zoom)
 
 # Expose ROOM_COUNT via module-level constant; kept for backward compatibility.
 # Note: main.py now imports ROOM_COUNT directly from this module.
