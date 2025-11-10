@@ -1,8 +1,12 @@
 import pygame
+from typing import Optional, List
 from config import TILE, TILE_COL, CYAN, WIDTH, HEIGHT
 from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
 from ..tiles import TileParser, TileRenderer, TileRegistry, TileType
 from ..tiles.tile_collision import TileCollision
+from src.level.room_data import GenerationConfig, MovementAttributes, RoomData
+from src.level.level_data import LevelData, LevelGenerationConfig
+from src.level.graph_generator import generate_complete_level
 
 # Rooms (tilemaps). Legend:
 #   Tiles: # wall, . air/empty, _ platform, @ breakable wall, % breakable floor
@@ -145,39 +149,96 @@ ROOMS = [
 ROOM_COUNT = len(ROOMS)
 
 class Level:
-    def __init__(self, index=0):
-        self.index = index % len(ROOMS)
-        raw = ROOMS[self.index]
+    def __init__(self, index=0, room_data: Optional[RoomData] = None, level_data: Optional[LevelData] = None, room_id: Optional[str] = None):
+        """
+        Initialize a level, either from static rooms (legacy) or procedural generation.
+        
+        Args:
+            index: Legacy room index (unused if room_data provided)
+            room_data: Procedurally generated room (new system)
+            level_data: Complete level data for multi-room dungeons
+            room_id: Which room in level_data to load
+        """
+        self.index = index
+        self.level_data = level_data  # Store for room transitions
+        self.current_room_id = room_id  # Track current room in level
+        
+        # NEW: Use procedural room if provided
+        if room_data is not None:
+            raw = self._convert_roomdata_to_ascii(room_data)
+            print("\n[DEBUG] Generated Room ASCII:")
+            for line in raw:
+                print(line)
+            print("[DEBUG] End Room ASCII\n")
+            self.procedural = True
+        else:
+            # LEGACY: Use static rooms
+            self.index = index % len(ROOMS)
+            raw = ROOMS[self.index]
+            self.procedural = False
+        
         self.solids = []
         self.enemies = []
         self.doors = []
-        # Default spawn position
         self.spawn = (TILE * 2, TILE * 2)
-
-        # Initialize new tile system components
+        
+        # Initialize tile system
         self.tile_parser = TileParser()
         self.tile_renderer = TileRenderer(TILE)
         self.tile_registry = TileRegistry()
-
-        # Parse ASCII level to tile grid, using legacy mode for the hardcoded rooms
-        self.grid, entity_positions = self.tile_parser.parse_ascii_level(raw, legacy=True)
-
-        # Load entities from parsed positions
+        
+        # Parse ASCII (legacy mode for static rooms, normal mode for procedural)
+        self.grid, entity_positions = self.tile_parser.parse_ascii_level(
+            raw, 
+            legacy=(not self.procedural)
+        )
+        
+        # Load entities
         self._load_entities(entity_positions)
-
-        # Keep solids list for backward compatibility with physics system
         self._update_solids_from_grid()
-
+        
         # Level dimensions
         self.w = len(self.grid[0]) * TILE if self.grid else 0
         self.h = len(self.grid) * TILE
-
-        # Tile collision handler used by entities (e.g., player).
-        # This is the authoritative TileCollision used by moving entities.
+        
         self.tile_collision = TileCollision(TILE)
-
-        # Validate spawn position to ensure player doesn't spawn inside walls
         self.spawn = self._validate_spawn_position(self.spawn)
+    
+    def _convert_roomdata_to_ascii(self, room_data: RoomData) -> List[str]:
+        """
+        Convert RoomData (sparse grid) to ASCII format for TileParser.
+        
+        Returns:
+            List of strings, one per row
+        """
+        width, height = room_data.size
+        ascii_rows = []
+        
+        for y in range(height):
+            row = []
+            for x in range(width):
+                tile = room_data.get_tile(x, y)
+                
+                # Map tile types to ASCII characters
+                if tile.t == "WALL":
+                    if "PLATFORM" in tile.flags:
+                        row.append('_')  # Platform (can jump through from below)
+                    else:
+                        row.append('#')  # Solid wall
+                elif tile.t == "AIR":
+                    # Check for doors
+                    if (x, y) == room_data.entrance_coords:
+                        row.append('S')  # Spawn/entrance
+                    elif (x, y) == room_data.exit_coords:
+                        row.append('D')  # Door/exit
+                    else:
+                        row.append('.')  # Empty air
+                else:
+                    row.append('.')  # Unknown → air
+            
+            ascii_rows.append(''.join(row))
+        
+        return ascii_rows
 
     def _load_entities(self, entity_positions):
         """Load enemies and special objects from parsed positions."""
@@ -190,7 +251,7 @@ class Level:
             for x, y in entity_positions['spawn']:
                 # Position player's feet at the spawn point, accounting for player height
                 # Player height is 30px, so we offset by player height to place feet on tile
-                raw_spawn = (x * TILE, y * TILE - 30)
+                raw_spawn = (x * TILE, y * TILE)
                 print(f"[LEVEL DEBUG] Raw spawn position from 'S': ({x}, {y}) -> {raw_spawn}")
                 self.spawn = raw_spawn
 
@@ -255,7 +316,7 @@ class Level:
             if tile_data and tile_data.collision.collision_type == "full":
                 # Spawn position is inside a solid tile, find a better position
                 # Try to spawn below this tile
-                new_y = (tile_y + 1) * TILE - 30  # Place player's feet on the tile below
+                new_y = tile_y * TILE - 30  # Player's top at tile_y * TILE - player_height
                 print(f"[SPAWN VALIDATION] Spawn inside solid! Adjusting to ({x}, {new_y})")
                 return (x, new_y)
 

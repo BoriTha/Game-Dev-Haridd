@@ -267,7 +267,7 @@ class TileCollision:
                     continue
 
                 # Handle floor (standing ON tile): only when moving downward
-                if overlap_top > 0 and overlap_top <= overlap_bottom and velocity.y > 0:
+                if overlap_top > 0 and overlap_top <= overlap_bottom and velocity.y >= 0:
                     entity_rect.bottom = tile_rect.top
                     velocity.y = 0
                     if debug_enabled:

@@ -17,7 +17,7 @@ from ..tiles.tile_types import TileType
 
 TILE_CHAR_MAP = {
     '#': TileType.WALL,
-    '.': TileType.WALL,  # Consolidated from FLOOR
+    '.': TileType.AIR,  # Corrected: '.' now represents AIR
     '_': TileType.PLATFORM,
     '@': TileType.BREAKABLE_WALL,
     ' ': TileType.AIR,

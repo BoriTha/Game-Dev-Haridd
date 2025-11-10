@@ -19,6 +19,12 @@ from src.entities.entities import Player, hitboxes, floating, DamageNumber
 from src.systems.inventory import Inventory
 from src.systems.menu import Menu
 from src.systems.shop import Shop
+from typing import Optional
+from src.level.procedural_generator import GenerationConfig, MovementAttributes
+from src.level.traversal_verification import verify_traversable
+from src.level.room_data import RoomData
+from src.level.level_data import LevelData, LevelGenerationConfig
+from src.level.graph_generator import generate_complete_level
 
 
 
@@ -33,6 +39,35 @@ class Game:
         self.font_big = get_font(32, bold=True)
         self.camera = Camera()
 
+        # NEW: Procedural generation config
+        self.use_procedural = True  # Set to False to use static rooms
+        
+        self.movement_attrs = MovementAttributes(
+            max_jump_height=4,  # Adjust based on your player jump
+            max_jump_distance=6,
+            player_width=1,
+            player_height=2
+        )
+        
+        self.room_gen_config = GenerationConfig(
+            min_room_size=40,  # Adjust to match your tile size
+            max_room_size=60,
+            min_corridor_width=3,
+            platform_placement_attempts=15,
+            movement_attributes=self.movement_attrs, # CRITICAL: Pass here
+            seed=None  # None = random, or set int for reproducible levels
+        )
+        
+        self.level_gen_config = LevelGenerationConfig(
+            num_rooms=5,  # 5 rooms per level
+            layout_type="branching",  # or "linear", "looping"
+            branch_probability=0.3
+        )
+        
+        # Track current level
+        self.current_level_data: Optional[LevelData] = None
+        self.current_level_number = 1
+        
         # Level configuration: static layout only (procedural disabled)
         self.level_type = "static"
         self.difficulty = 1
@@ -79,7 +114,7 @@ class Game:
         self.level_index = 0
         
         # Initialize first static level
-        self._load_level(self.level_index, initial=True)
+        self._load_level(level_number=1, initial=True)
 
         # create player with chosen class
         sx, sy = self.level.spawn
@@ -92,8 +127,7 @@ class Game:
             print(f"[SPAWN DEBUG] Spawn grid position: ({spawn_grid_x}, {spawn_grid_y})")
             print(f"[SPAWN DEBUG] Grid dimensions: {len(self.level.grid)}x{len(self.level.grid[0]) if self.level.grid else 0}")
             
-            if (0 <= spawn_grid_y < len(self.level.grid) and
-                0 <= spawn_grid_x < len(self.level.grid[0])):
+            if (0 <= spawn_grid_y < len(self.level.grid) and 0 <= spawn_grid_x < len(self.level.grid[0])):
                 spawn_tile = self.level.grid[spawn_grid_y][spawn_grid_x]
                 print(f"[SPAWN DEBUG] Spawn tile at ({spawn_grid_x}, {spawn_grid_y}) = {spawn_tile} (0=air, 1=wall)")
 
@@ -137,50 +171,150 @@ class Game:
         # Reset camera
         self.camera = Camera()
 
-    def _load_level(self, index: int, initial: bool = False):
+    def _load_level(self, level_number: int = None, room_id: str = None, initial: bool = False):
         """
-        Load a static level by index using legacy hard-coded rooms.
+        Load a level - either generate new procedural level or load specific room.
+        
+        Args:
+            level_number: Which level to load (generates new if different from current)
+            room_id: Which room in current level to load (for room transitions)
+            initial: Is this the first load?
         """
-        self.level_index = index
-
-        # Use modulo to cycle through available hardcoded rooms
-        room_index = index % ROOM_COUNT
-
-        try:
-            lvl = Level(room_index)
-            print(f"[INFO] Loaded hardcoded room {room_index} for level {index}")
-        except Exception as e:
-            print(f"[CRITICAL ERROR] Failed to load hardcoded room {room_index}: {e}")
+        if not self.use_procedural:
+            # LEGACY: Use old static room system
+            self._load_static_level(level_number or 0, initial)
             return
-
-        # Ensure core attributes exist
-        if not hasattr(lvl, "doors"):
-            lvl.doors = []
-        if not hasattr(lvl, "enemies"):
-            lvl.enemies = []
-
+        
+        # PROCEDURAL SYSTEM
+        
+        # Generate new level if needed (first load or new level number requested)
+        if self.current_level_data is None or (level_number is not None and level_number != self.current_level_number):
+            print(f"[INFO] Generating new procedural level {level_number}...")
+            
+            # Set seed for reproducible levels (optional)
+            level_seed = level_number * 1000  # Deterministic based on level number
+            
+            # Generate complete multi-room level
+            self.current_level_data = generate_complete_level(
+                self.room_gen_config,
+                self.level_gen_config,
+                self.movement_attrs,
+                seed=level_seed
+            )
+            
+            self.current_level_number = level_number
+            
+            # Start at first room
+            room_id = self.current_level_data.start_room_id
+            
+            print(f"[INFO] Generated level with {len(self.current_level_data.rooms)} rooms")
+            print(f"[INFO] Start: {self.current_level_data.start_room_id}, Goal: {self.current_level_data.goal_room_id}")
+        
+        # Load specific room
+        if room_id is None:
+            room_id = self.current_level_data.start_room_id
+        
+        room_data = self.current_level_data.get_room(room_id)
+        
+        if room_data is None:
+            print(f"[ERROR] Room {room_id} not found in level!")
+            return
+        
+        try:
+            # Create Level from RoomData
+            lvl = Level(
+                room_data=room_data,
+                level_data=self.current_level_data,
+                room_id=room_id
+            )
+            print(f"[INFO] Loaded procedural room: {room_id} (difficulty {room_data.difficulty_rating})")
+        except Exception as e:
+            print(f"[CRITICAL ERROR] Failed to load room {room_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+        
         self.level = lvl
         self.enemies = lvl.enemies
-
+        
         if not initial:
-            # Clear transient combat visuals when switching rooms
             hitboxes.clear()
             floating.clear()
 
-    def switch_room(self, delta: int):
-        """
-        Move to next/previous static room index (wraps within ROOM_COUNT).
-        """
-        new_index = max(0, self.level_index + delta)
-        self._load_level(new_index)
+    def _load_static_level(self, index: int, initial: bool = False):
+        """Legacy static room loading (for backwards compatibility)."""
+        self.level_index = index
+        room_index = index % ROOM_COUNT
+        
+        try:
+            lvl = Level(room_index)
+            print(f"[INFO] Loaded static room {room_index}")
+        except Exception as e:
+            print(f"[CRITICAL ERROR] Failed to load static room {room_index}: {e}")
+            return
+        
+        self.level = lvl
+        self.enemies = lvl.enemies
+        
+        if not initial:
+            hitboxes.clear()
+            floating.clear()
 
-        # Reposition player at new spawn
+    def switch_room(self, delta: int = None, target_room_id: str = None):
+        """
+        Switch to next room in procedural level or next level.
+        
+        Args:
+            delta: +1 for next room (legacy compatibility)
+            target_room_id: Specific room to switch to
+        """
+        if not self.use_procedural:
+            # Legacy static room switching
+            new_index = max(0, self.level_index + (delta or 1))
+            self._load_level(new_index)
+            sx, sy = self.level.spawn
+            self.player.rect.topleft = (sx, sy)
+            self.enemies = getattr(self.level, "enemies", [])
+            self.shop.open_shop()
+            return
+        
+        # PROCEDURAL SYSTEM
+        
+        current_room_id = self.level.current_room_id
+        
+        # Determine next room
+        if target_room_id:
+            next_room_id = target_room_id
+        else:
+            # Get next room from graph
+            neighbors = self.current_level_data.internal_graph.get(current_room_id, [])
+            
+            if not neighbors:
+                # No more rooms - reached goal!
+                print(f"[INFO] Level {self.current_level_number} complete!")
+                
+                # Generate next level
+                self._load_level(level_number=self.current_level_number + 1)
+                
+                # Reset player position
+                sx, sy = self.level.spawn
+                self.player.rect.topleft = (sx, sy)
+                self.enemies = getattr(self.level, "enemies", [])
+                
+                # Open shop between levels
+                self.shop.open_shop()
+                return
+            
+            # If multiple neighbors, use first (later: let player choose)
+            next_room_id = neighbors[0]
+        
+        # Load next room
+        self._load_level(room_id=next_room_id)
+        
+        # Reset player position
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)
         self.enemies = getattr(self.level, "enemies", [])
-
-        # Open shop after completing level (preserve behavior)
-        self.shop.open_shop()
 
     def goto_room(self, index: int):
         """
@@ -411,6 +545,7 @@ class Game:
         level_grid = getattr(self.level, "grid", None)
         if level_grid:
             if 0 <= grid_y < len(level_grid) and 0 <= grid_x < len(level_grid[0]):
+                grid_value = level_grid[grid_y][grid_x]
                 # Get collision type from grid (0=air, 1=wall)
                 from config import TILE_AIR, TILE_WALL
                 if grid_value == TILE_AIR:
