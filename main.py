@@ -47,7 +47,7 @@ class Game:
         self.cheat_infinite_mana = False
         self.cheat_zero_cooldown = False
         self.debug_enemy_rays = False
-        self.debug_enemy_nametags = False
+        self.debug_enemy_nametags = False # Default to False
 
         # Debug visualization toggles
         self.debug_tile_inspector = False
@@ -95,22 +95,8 @@ class Game:
             if (0 <= spawn_grid_y < len(self.level.grid) and
                 0 <= spawn_grid_x < len(self.level.grid[0])):
                 spawn_tile = self.level.grid[spawn_grid_y][spawn_grid_x]
-                print(f"[SPAWN DEBUG] Spawn tile at ({spawn_grid_x}, {spawn_grid_y}) = {spawn_tile} (0=air, 1=floor, 2=wall)")
-                # If spawning at top of grid, that explains the issue!
-                if spawn_grid_y <= 1:
-                    print(f"[SPAWN CRITICAL] Spawning at TOP of level! This explains why player gets pulled to ceiling.")
-                    # Find a safe position lower in the level
-                    for new_y in range(2, min(10, len(self.level.grid))):
-                        for new_x in range(max(0, spawn_grid_x-2), min(len(self.level.grid[0]), spawn_grid_x+3)):
-                            if self.level.grid[new_y][new_x] == 1:  # floor tile
-                                sx = new_x * 24 + 12  # center on tile
-                                sy = new_y * 24 - 15  # on top of floor
-                                print(f"[SPAWN DEBUG] Found safe spawn at ({sx}, {sy})")
-                                break
-                        else:
-                            continue
-                        break
-        
+                print(f"[SPAWN DEBUG] Spawn tile at ({spawn_grid_x}, {spawn_grid_y}) = {spawn_tile} (0=air, 1=wall)")
+
         self.player = Player(sx, sy, cls=self.selected_class)
         print(f"[SPAWN DEBUG] Player rect after init: {self.player.rect}")
         print(f"[SPAWN DEBUG] Player velocity after init: vx={self.player.vx}, vy={self.player.vy}")
@@ -214,7 +200,7 @@ class Game:
         self.inventory.recalculate_player_stats()
 
         # If player died, show restart menu
-        if getattr(self.player, 'dead', False):
+        if not self.player.alive:
             self.menu.game_over_screen()
             return
 
@@ -313,7 +299,7 @@ class Game:
                         # apply damage if any
                         if getattr(hb, 'damage', 0) > 0:
                             kx, ky = hb.dir_vec if getattr(hb, 'dir_vec', None) else (0, -1)
-                            self.player.damage(hb.damage, (int(kx*3), -6))
+                            self.player.combat.take_damage(hb.damage, (int(kx*3), -6))
                         # consume the AOE
                         hb.alive = False
                 # direct projectile/contact against player
@@ -322,7 +308,7 @@ class Game:
                         self.player.stunned = max(self.player.stunned, int(0.8 * FPS))
                     if getattr(hb, 'damage', 0) > 0:
                         kx, ky = hb.dir_vec if getattr(hb, 'dir_vec', None) else (0, -1)
-                        self.player.damage(hb.damage, (int(kx*3), -6))
+                        self.player.combat.take_damage(hb.damage, (int(kx*3), -6))
                     # non-piercing projectiles disappear after hitting player
                     if (getattr(hb, 'vx', 0) or getattr(hb, 'vy', 0)) and not getattr(hb, 'pierce', False):
                         hb.alive = False
@@ -425,17 +411,12 @@ class Game:
         level_grid = getattr(self.level, "grid", None)
         if level_grid:
             if 0 <= grid_y < len(level_grid) and 0 <= grid_x < len(level_grid[0]):
-                # Get collision type from grid (0=air, 1=floor, 2=wall, 3=solid)
-                grid_value = level_grid[grid_y][grid_x]
-                from config import TILE_AIR, TILE_FLOOR, TILE_WALL, TILE_SOLID
+                # Get collision type from grid (0=air, 1=wall)
+                from config import TILE_AIR, TILE_WALL
                 if grid_value == TILE_AIR:
                     collision_type = "Air"
-                elif grid_value == TILE_FLOOR:
-                    collision_type = "Floor"
                 elif grid_value == TILE_WALL:
                     collision_type = "Wall"
-                elif grid_value == TILE_SOLID:
-                    collision_type = "Solid"
                 else:
                     collision_type = f"Unknown({grid_value})"
         
@@ -450,8 +431,7 @@ class Game:
                             terrain_type = "Platform"
                         elif "wall" in terrain_id:
                             terrain_type = "Wall"
-                        elif "floor" in terrain_id:
-                            terrain_type = "Floor"
+
                         elif "water" in terrain_id:
                             terrain_type = "Water"
                         else:
@@ -515,22 +495,16 @@ class Game:
         level_grid = getattr(self.level, "grid", None)
         if level_grid:
             if 0 <= grid_y < len(level_grid) and 0 <= grid_x < len(level_grid[0]):
-                from config import TILE_AIR, TILE_FLOOR, TILE_WALL, TILE_SOLID
+                from config import TILE_AIR, TILE_WALL
                 tile_value = level_grid[grid_y][grid_x]
 
                 # Set colors based on tile type
                 if tile_value == TILE_AIR:
                     highlight_color = (200, 200, 200, 30)  # Light gray for air
                     border_color = (200, 200, 200, 100)
-                elif tile_value == TILE_FLOOR:
-                    highlight_color = (100, 255, 100, 60)  # Green for floors
-                    border_color = (100, 255, 100, 180)
                 elif tile_value == TILE_WALL:
                     highlight_color = (255, 100, 100, 60)  # Red for walls
                     border_color = (255, 100, 100, 180)
-                elif tile_value == TILE_SOLID:
-                    highlight_color = (255, 200, 100, 60)  # Orange for solid tiles
-                    border_color = (255, 200, 100, 180)
                 else:
                     highlight_color = (255, 255, 255, 60)  # White for unknown
                     border_color = (255, 255, 255, 180)
@@ -545,19 +519,7 @@ class Game:
                         if "water" in terrain_id:
                             highlight_color = (100, 100, 255, 60)  # Blue for water
                             border_color = (100, 100, 255, 180)
-                        elif "floor" in terrain_id:
-                            if "sticky" in terrain_id:
-                                highlight_color = (255, 200, 100, 60)  # Orange for sticky floors
-                                border_color = (255, 200, 100, 180)
-                            elif "icy" in terrain_id:
-                                highlight_color = (200, 200, 255, 60)  # Light blue for icy floors
-                                border_color = (200, 200, 255, 180)
-                            elif "fire" in terrain_id:
-                                highlight_color = (255, 150, 50, 60)  # Orange-red for fire floors
-                                border_color = (255, 150, 50, 180)
-                            else:
-                                highlight_color = (200, 200, 200, 60)  # Gray for normal floors
-                                border_color = (200, 200, 200, 180)
+
 
         pygame.draw.rect(overlay, highlight_color, highlight_rect)
         pygame.draw.rect(overlay, border_color, highlight_rect, width=2)
@@ -1155,7 +1117,7 @@ class Game:
         # Names per class
         if self.player.cls == 'Knight':
             names = ['Shield', 'Power', 'Charge']
-            actives = [self.player.shield_timer>0, self.player.power_timer>0, False]
+            actives = [getattr(self.player.combat, 'shield_timer', 0) > 0, getattr(self.player.combat, 'power_timer', 0) > 0, False]
         elif self.player.cls == 'Ranger':
             names = ['Triple', 'Sniper', 'Speed']
             actives = [self.player.triple_timer>0, self.player.sniper_ready, self.player.speed_timer>0]
