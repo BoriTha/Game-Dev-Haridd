@@ -494,70 +494,22 @@ def configure_room_difficulty(
 def place_doors(room: RoomData, movement_attrs: MovementAttributes):
     """
     Finds valid ground locations on the edges and places doors.
-    Ensures chosen door locations have enough vertical clearance for the player.
     """
-    all_valid_ground = find_valid_ground_locations(room, movement_attrs.player_width, movement_attrs.player_height)
+    valid_ground = find_valid_ground_locations(room, movement_attrs.player_width, movement_attrs.player_height)
     
-    left_edge_candidates = [pos for pos in all_valid_ground if pos[0] == 1]
-    right_edge_candidates = [pos for pos in all_valid_ground if pos[0] == room.size[0] - 2]
+    left_edge_candidates = [pos for pos in valid_ground if pos[0] == 1]
+    right_edge_candidates = [pos for pos in valid_ground if pos[0] == room.size[0] - 2]
 
     if not left_edge_candidates or not right_edge_candidates:
-        print(f"[DEBUG] place_doors: Not enough valid ground candidates on edges. Left: {len(left_edge_candidates)}, Right: {len(right_edge_candidates)}")
         return False # Not a valid room for doors
 
-    # Try to find a suitable entrance ground
-    random.shuffle(left_edge_candidates)
-    entrance_ground = None
-    for candidate_x, candidate_y in left_edge_candidates:
-        # Check if the space above the candidate ground is clear for player dimensions
-        is_clear = True
-        for dx_offset in range(movement_attrs.player_width):
-            for dy_offset in range(movement_attrs.player_height):
-                check_x = candidate_x + dx_offset
-                check_y = candidate_y - dy_offset - 1 # Check from the tile *above* the ground, up to player height
-                
-                if not room.is_in_bounds(check_x, check_y) or room.get_tile(check_x, check_y).t == "WALL":
-                    is_clear = False
-                    break
-            if not is_clear:
-                break
-        if is_clear:
-            entrance_ground = (candidate_x, candidate_y)
-            break
-    
-    if not entrance_ground:
-        print("[DEBUG] place_doors: Could not find suitable entrance ground with clearance.")
-        return False
-
-    # Try to find a suitable exit ground
-    random.shuffle(right_edge_candidates)
-    exit_ground = None
-    for candidate_x, candidate_y in right_edge_candidates:
-        # Check if the space above the candidate ground is clear for player dimensions
-        is_clear = True
-        for dx_offset in range(movement_attrs.player_width):
-            for dy_offset in range(movement_attrs.player_height):
-                check_x = candidate_x + dx_offset
-                check_y = candidate_y - dy_offset - 1 # Check from the tile *above* the ground, up to player height
-                
-                if not room.is_in_bounds(check_x, check_y) or room.get_tile(check_x, check_y).t == "WALL":
-                    is_clear = False
-                    break
-            if not is_clear:
-                break
-        if is_clear:
-            exit_ground = (candidate_x, candidate_y)
-            break
-
-    if not exit_ground:
-        print("[DEBUG] place_doors: Could not find suitable exit ground with clearance.")
-        return False
-
     # Place entrance door (AIR tile above the ground)
+    entrance_ground = random.choice(left_edge_candidates)
     room.entrance_coords = (entrance_ground[0], entrance_ground[1] - 1)
     room.grid[room.entrance_coords] = TileCell(t="AIR", flags={"DOOR_ENTRANCE"})
 
     # Place exit door (AIR tile above the ground)
+    exit_ground = random.choice(right_edge_candidates)
     room.exit_coords = (exit_ground[0], exit_ground[1] - 1)
     room.grid[room.exit_coords] = TileCell(t="AIR", flags={"DOOR_EXIT"})
     
@@ -784,42 +736,31 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
         walker_x = max(margin, min(width - margin - 1, walker_x + dx))
         walker_y = max(margin, min(height - margin - 1, walker_y + dy))
     
-    # Ensure a solid border around the room
-    for x in range(width):
-        room.set_tile(x, 0, TileCell(t="WALL"))  # Top border
-        room.set_tile(x, height - 1, TileCell(t="WALL"))  # Bottom border
-    for y in range(height):
-        room.set_tile(0, y, TileCell(t="WALL"))  # Left border
-        room.set_tile(width - 1, y, TileCell(t="WALL"))  # Right border
+    # --- ADD THIS SECTION ---
+    # Guarantee valid, flat ground for doors at a reasonable height
+    door_ground_y = height - 5  # e.g., 5 tiles from bottom
+    player_height = config.movement_attributes.player_height
+    if door_ground_y > player_height: # Ensure it's not too high
+        # Carve a 3-wide platform for the entrance
+        for x_offset in range(3):
+            room.set_tile(1 + x_offset, door_ground_y, TileCell(t="WALL"))
+            # Carve clearance above it
+            for y_offset in range(1, player_height + 2):
+                 room.set_tile(1 + x_offset, door_ground_y - y_offset, TileCell(t="AIR"))
+
+        # Carve a 3-wide platform for the exit
+        for x_offset in range(3):
+            room.set_tile(width - 4 + x_offset, door_ground_y, TileCell(t="WALL"))
+            # Carve clearance above it
+            for y_offset in range(1, player_height + 2):
+                 room.set_tile(width - 4 + x_offset, door_ground_y - y_offset, TileCell(t="AIR"))
+
+    # --- END ADDED SECTION ---
 
     # Designate general door areas (edges of room, in carved regions)
-    # Entrance: left side
-    entrance_x = 1
-    entrance_y = height // 2
-    
-    # Exit: right side  
-    exit_x = width - 2
-    exit_y = height // 2
-    
-    # Mark these as general areas (exact coords chosen later in place_doors)
-    room.entrance_coords = (entrance_x, entrance_y)
-    room.exit_coords = (exit_x, exit_y)
-
-    # CRITICAL FIX: Ensure entrance and exit are carved out as AIR
-    carve_corridor_block(
-        room,
-        room.entrance_coords[0],
-        room.entrance_coords[1],
-        carve_width, # Use the same carve_width/height as the drunkard's walk
-        carve_height
-    )
-    carve_corridor_block(
-        room,
-        room.exit_coords[0],
-        room.exit_coords[1],
-        carve_width,
-        carve_height
-    )
+    # These are now just hints, place_doors will find the *real* spots
+    room.entrance_coords = (1, door_ground_y - 1)
+    room.exit_coords = (width - 2, door_ground_y - 1)
     
     return room
 
@@ -857,7 +798,6 @@ def generate_validated_room(
         if len(regions) > 1:
             # Multiple disconnected regions - try to reconnect
             if not reconnect_isolated_regions(room, config):  #  Pass config
-                print(f"[DEBUG] Attempt {attempt+1}: Reconnection failed.")
                 continue  # Reconnection failed, try new room
             #  REMOVED redundant check_connectivity_basic call
             # If reconnection succeeded, we're guaranteed to be connected!
@@ -870,44 +810,29 @@ def generate_validated_room(
             
             # Quick sanity check
             if entrance_tile.t != "AIR" or exit_tile.t != "AIR":
-                print(f"[DEBUG] Attempt {attempt+1}: Entrance/Exit not in AIR. Entrance: {entrance_tile.t}, Exit: {exit_tile.t}")
                 continue  # Doors not in AIR, regenerate
-        else:
-            print(f"[DEBUG] Attempt {attempt+1}: Entrance or Exit coords not set.")
+        
+        # --- THIS IS THE NEW ORDER ---
+
+        # Phase 2: Place DOORS *FIRST*
+        # This establishes the *real* entrance/exit coords.
+        if not place_doors(room, movement_attrs):
             continue
         
-        # Phase 2: Place platforms
+        # Phase 3: Place PLATFORMS *SECOND*
+        # Now, verify_traversable (inside place_platforms) will use
+        # the *real* coordinates and can validate paths correctly.
         num_platforms = place_platforms(room, config, movement_attrs)
         
-        # Phase 3: Place doors
-        if not place_doors(room, movement_attrs):
-            print(f"[DEBUG] Attempt {attempt+1}: place_doors failed.")
-            continue
-        
-        # Phase 4: Final validation (this checks entrance -> exit via jump-graph)
-        if room.entrance_coords and room.exit_coords:
-            if verify_traversable(room, movement_attrs):
-                # Phase 5: Configure difficulty
-                configure_room_difficulty(room, depth_from_start, config)
-                
-                # Phase 6: Place spawn areas
-                num_spawn_areas = place_spawn_areas(room, config)
-                
-                print(f"[DEBUG] Generated Room Details (Attempt {attempt+1}):")
-                print(f"  Size: {room.size}")
-                print(f"  Entrance: {room.entrance_coords}")
-                print(f"  Exit: {room.exit_coords}")
-                print(f"  Platforms Added: {num_platforms}")
-                print(f"  Spawn Areas Placed: {num_spawn_areas}")
-                print(f"  Difficulty Rating: {room.difficulty_rating}")
-                
-                return room
-            else:
-                print(f"[DEBUG] Attempt {attempt+1}: verify_traversable failed.")
-                continue
-        else:
-            print(f"[DEBUG] Attempt {attempt+1}: Entrance or Exit coords became unset during generation.")
-            continue
+        # Phase 4: Final validation
+        if verify_traversable(room, movement_attrs):
+            # Phase 5: Configure difficulty
+            configure_room_difficulty(room, depth_from_start, config)
+            
+            # Phase 6: Place spawn areas
+            num_spawn_areas = place_spawn_areas(room, config)
+            
+            return room
     
     # Fallback
     fallback = generate_fallback_room(config)
