@@ -73,16 +73,12 @@ TILE = 24
 # === Tile System Constants ===
 # Tile type values for the grid system
 TILE_AIR = 0          # Empty/air - no collision
-TILE_FLOOR = 1        # Floor - top-only collision (can jump through)
-TILE_WALL = 2         # Wall - full collision from all sides
-TILE_SOLID = 3        # Non-surface solid - collision from all sides except top (ceilings)
+TILE_WALL = 1         # Wall - full collision from all sides
 
 # Tile colors for visual distinction
 TILE_COLORS = {
     TILE_AIR: None,           # Transparent - no rendering
-    TILE_FLOOR: (101, 67, 33),  # Brown - platform top
     TILE_WALL: (54, 60, 78),    # Dark gray - full wall
-    TILE_SOLID: (78, 84, 102),  # Medium gray - ceiling/overhang
 }
 
 # === Procedural Level Generation Configuration ===

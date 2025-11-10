@@ -17,12 +17,12 @@ from config import (
     AIR_ACCEL, AIR_FRICTION, MAX_AIR_SPEED
 )
 from .entity_common import Hitbox, DamageNumber, hitboxes, floating
+from .components.combat_component import CombatComponent
 
 class Player:
     def __init__(self, x, y, cls='Knight'):
         self.rect = pygame.Rect(x, y, 18, 30)
         self.vx = 0
-        # Start with zero velocity - gravity will handle ground detection
         self.vy = 0
         self.facing = 1
         self.on_ground = False
@@ -30,29 +30,25 @@ class Player:
         self.coyote = 0
         self.jump_buffer = 0
         self.jump_key_pressed = False
-        # NEW Wall jump system - cleaner physics-based approach
         self.on_left_wall = False
         self.on_right_wall = False
         self.wall_sliding = False
         self.wall_jump_cooldown = 0
-        self.wall_jump_coyote_timer = 0  # Frames after leaving wall you can still jump
-        self.wall_jump_buffer_timer = 0  # Remember jump input when touching wall
-        self.wall_jump_state = None  # None, 'jumping', 'sliding', 'falling'
-        self.wall_jump_direction = 0  # 1 for right, -1 for left
-        self.wall_reattach_timer = 0  # Prevent immediate reattachment
+        self.wall_jump_coyote_timer = 0
+        self.wall_jump_buffer_timer = 0
+        self.wall_jump_state = None
+        self.wall_jump_direction = 0
+        self.wall_reattach_timer = 0
         self.double_jumps = DOUBLE_JUMPS
         self.can_dash = True
         self.dashing = 0
         self.dash_cd = 0
-        # Shared mobility cooldown: any jump/double/wall/dash triggers this,
-        # and while > 0 all those actions are locked.
         self.mobility_cd = 0
-        self.inv = 0
-        # class selection
+
         self.cls = cls
+        combat_config = {}
+
         if cls == 'Knight':
-            self.max_hp = 7
-            self.hp = 7
             self.player_speed = 3.6
             self.player_air_speed = 3.0
             self.attack_damage = 4
@@ -60,12 +56,20 @@ class Player:
             self.stamina = 8.0
             self.max_mana = 50.0
             self.mana = 50.0
-            # Knight: moderate stamina regen, mana regen default 5 per second
             self._stamina_regen = 0.08
             self._mana_regen = 5.0 / FPS
+            combat_config = {
+                'max_hp': 7,
+                'default_ifr': INVINCIBLE_FRAMES,
+                'god_mode': False,
+                'shield_hits_max': 2,
+                'shield_duration': 10 * FPS,
+                'parry_duration': 12,
+                'power_buff_lifesteal': 1,
+                'power_buff_duration': 10 * FPS,
+                'power_buff_atk_bonus': 2,
+            }
         elif cls == 'Ranger':
-            self.max_hp = 5
-            self.hp = 5
             self.player_speed = 4.6
             self.player_air_speed = 4.0
             self.attack_damage = 3
@@ -73,12 +77,13 @@ class Player:
             self.stamina = 12.0
             self.max_mana = 70.0
             self.mana = 70.0
-            # Ranger: fast stamina regen, mana regen default 5 per second
             self._stamina_regen = 0.18
             self._mana_regen = 5.0 / FPS
+            combat_config = {
+                'max_hp': 5,
+                'default_ifr': INVINCIBLE_FRAMES,
+            }
         elif cls == 'Wizard':
-            self.max_hp = 4
-            self.hp = 4
             self.player_speed = 3.8
             self.player_air_speed = 3.2
             self.attack_damage = 1
@@ -86,12 +91,13 @@ class Player:
             self.stamina = 4.0
             self.max_mana = 100.0
             self.mana = 100.0
-            # Wizard: lower stamina regen, higher mana regen (8 per second)
             self._stamina_regen = 0.05
             self._mana_regen = 8.0 / FPS
-        elif cls == 'Assassin': # Assuming Assassin is a player class
-            self.max_hp = 6
-            self.hp = 6
+            combat_config = {
+                'max_hp': 4,
+                'default_ifr': INVINCIBLE_FRAMES,
+            }
+        elif cls == 'Assassin':
             self.player_speed = 5.0
             self.player_air_speed = 4.5
             self.attack_damage = 5
@@ -101,64 +107,50 @@ class Player:
             self.mana = 60.0
             self._stamina_regen = 0.15
             self._mana_regen = 6.0 / FPS
-        else:
-            # fallback to defaults
-            self.max_hp = 5
-            self.hp = 5
+            combat_config = {
+                'max_hp': 6,
+                'default_ifr': INVINCIBLE_FRAMES,
+            }
+        else: # Fallback
             self.player_speed = PLAYER_SPEED
             self.player_air_speed = PLAYER_AIR_SPEED
             self.attack_damage = SWORD_DAMAGE
+            combat_config = {
+                'max_hp': 5,
+                'default_ifr': INVINCIBLE_FRAMES,
+            }
+
+        self.combat = CombatComponent(self, combat_config)
+        self.alive = True # Unified death state
+
         self.combo = 0
         self.combo_t = 0
         self.attack_cd = 0
         self.iframes_flash = False
-        # developer cheat flag - when True player takes no damage
-        self.god = False
-        # parry state (frames left)
-        self.parrying = 0
-        # stamina regen cooldown (frames). When >0, stamina will not regen.
         self._stamina_cooldown = 0
-        # teleport (wizard) cooldown
         self._teleport_cooldown = 0
         self._teleport_distance = 160
         self._teleport_mana_cost = 20.0
-        # dead state
-        self.dead = False
-        # no-clip mode (for debugging)
         self.no_clip = False
-        # floating mode variables
         self.floating_mode = False
         self.last_space_time = 0
-        self.space_double_tap_window = 20  # frames for double-tap detection
-        # skill cooldown small buffer to avoid spam
-        # Per-skill cooldowns (frames) and maxima for HUD
+        self.space_double_tap_window = 20
         self.skill_cd1 = 0
         self.skill_cd2 = 0
         self.skill_cd3 = 0
         self.skill_cd1_max = 1
         self.skill_cd2_max = 1
         self.skill_cd3_max = 1
-        # ranger charge state
         self.charging = False
         self.charge_time = 0
         self.charge_threshold = int(0.5 * FPS)
-        # track previous mouse button state to detect release
         self._prev_lmb = False
-        # Knight buffs/skills
-        self.shield_timer = 0
-        self.shield_hits = 0
-        self.power_timer = 0
-        self.atk_bonus = 0
-        self.lifesteal = 0
-        # Ranger buffs/skills
         self.triple_timer = 0
         self.sniper_ready = False
         self.sniper_mult = 2.5
         self.speed_timer = 0
         self._blink_t = 0
-        # crowd control
         self.stunned = 0
-        # consumable buffs
         self.speed_potion_timer = 0
         self.speed_potion_bonus = 0.0
         self.jump_boost_timer = 0
@@ -167,7 +159,7 @@ class Player:
         self.stamina_boost_timer = 0
         self.stamina_buff_mult = 1.0
         self._base_stats = {
-            'max_hp': float(self.max_hp),
+            'max_hp': float(self.combat.max_hp),
             'attack_damage': float(self.attack_damage),
             'player_speed': float(self.player_speed),
             'player_air_speed': float(self.player_air_speed),
@@ -176,7 +168,6 @@ class Player:
             'stamina_regen': float(getattr(self, '_stamina_regen', 0.0)),
             'mana_regen': float(getattr(self, '_mana_regen', 0.0)),
         }
-        # Money/currency system
         self.money = 0
 
     def _find_safe_landing_spot(self, level):
@@ -262,7 +253,7 @@ class Player:
                 (255, 255, 100)
             ))
     def input(self, level, camera):
-        if self.dead:
+        if not self.alive:
             return
         keys = pygame.key.get_pressed()
         stunned = self.stunned > 0
@@ -374,7 +365,9 @@ class Player:
         # Parry: Right mouse button or E (Knight only)
         rmb = pygame.mouse.get_pressed()[2]
         if not stunned and (rmb or keys[pygame.K_e]) and self.cls == 'Knight':
-            self.parry_action()
+            if self.combat.activate_parry():
+                # Optional: Add feedback for successful parry activation
+                pass
         # Wizard teleport skill: R (teleport toward mouse)
         if not stunned and keys[pygame.K_r] and self.cls == 'Wizard':
             self.teleport_to_mouse(level, camera)
@@ -446,7 +439,7 @@ class Player:
             self.wall_jump_state = None
         
         # grant short invincibility when dash starts (0.25s)
-        self.inv = int(0.25 * FPS)
+        self.combat.invincible_frames = int(0.25 * FPS)
         self.dashing = DASH_TIME
         self.vy = 0
         self.vx = self.facing * DASH_SPEED
@@ -498,7 +491,7 @@ class Player:
             else:
                 hb.midright = (self.rect.left, self.rect.centery)
         # use class attack damage (melee)
-        dmg = self.attack_damage + getattr(self, 'atk_bonus', 0)
+        dmg = self.attack_damage + self.combat.atk_bonus
         hitboxes.append(Hitbox(hb, ATTACK_LIFETIME, dmg, self, dir_vec, pogo=(dir_vec==(0,1))))
 
     def fire_arrow(self, damage, speed, camera, pierce=False):
@@ -610,20 +603,11 @@ class Player:
         vy = ny * speed
         hitboxes.append(Hitbox(hb, 36, 12, self, dir_vec=(nx,ny), vx=int(vx), vy=int(vy)))
 
-    def parry_action(self):
-        # Knight parry (consumes stamina), short duration
-        if self.dead or getattr(self, 'parrying', 0) > 0 or self.cls != 'Knight':
-            return
-        parry_cost = 3.0
-        parry_duration = 12
-        if getattr(self, 'stamina', 0) >= parry_cost:
-            self.stamina = max(0.0, self.stamina - parry_cost)
-            self.parrying = parry_duration
-            self._stamina_cooldown = int(FPS)
+
 
     def activate_skill(self, idx, level, camera):
         # Route skill casts by class and index
-        if self.dead:
+        if not self.alive:
             return
         if self.cls == 'Wizard':
             if idx == 1:
@@ -635,14 +619,11 @@ class Player:
         elif self.cls == 'Knight':
             # Knight skills: Shield, Power, Charge
             if idx == 1 and self.skill_cd1 == 0:
-                self.shield_timer = 10 * FPS
-                self.shield_hits = 2
-                self.skill_cd1 = self.skill_cd1_max = 15 * FPS
+                if self.combat.activate_shield():
+                    self.skill_cd1 = self.skill_cd1_max = 15 * FPS
             elif idx == 2 and self.skill_cd2 == 0:
-                self.power_timer = 10 * FPS
-                self.atk_bonus = 2
-                self.lifesteal = 1
-                self.skill_cd2 = self.skill_cd2_max = 25 * FPS
+                if self.combat.activate_power_buff():
+                    self.skill_cd2 = self.skill_cd2_max = 25 * FPS
             elif idx == 3 and self.skill_cd3 == 0:
                 # charge: a short fast moving hitbox that deals 4 dmg
                 self.skill_cd3 = self.skill_cd3_max = 6 * FPS
@@ -710,8 +691,19 @@ class Player:
         # small mana use shouldn't block stamina regen, no cooldown
 
     def physics(self, level, dt=1.0/FPS):
-        if self.dead:
+        if not self.alive:
+            # Phoenix feather revival check
+            if getattr(self, 'phoenix_feather_active', False):
+                self.phoenix_feather_active = False
+                self.alive = True
+                self.combat.alive = True
+                self.combat.hp = max(1, self.combat.max_hp // 2)
+                self.hp = self.combat.hp
+                floating.append(DamageNumber(self.rect.centerx, self.rect.top - 12, "PHOENIX REVIVE!", (255, 150, 50)))
             return
+
+        # Update all combat timers and states
+        self.combat.update()
 
         # DEBUG: Track upward pull issue
         frame_debug_count = getattr(self, '_physics_debug_count', 0)
@@ -723,17 +715,19 @@ class Player:
         if self.mobility_cd > 0:
             self.mobility_cd -= 1
 
+        # Update attack cooldown timer regardless of mode
+        speed_bonus = self.speed_potion_bonus if self.speed_potion_timer > 0 else 0.0
+        cd_step = 1.0 + speed_bonus
+        if self.attack_cd > 0: self.attack_cd = max(0.0, self.attack_cd - cd_step)
+
         # CRITICAL: In floating_mode, bypass all tile/solid collisions and move directly.
-        # This must run BEFORE the tile_collision system so floating/no-clip can freely pass through tiles.
         if getattr(self, 'floating_mode', False):
             self.rect.x += int(self.vx)
             self.rect.y += int(self.vy)
-            # In floating mode, always treat as airborne with no ground/wall constraints.
             self.was_on_ground = False
             self.on_ground = False
             self.on_left_wall = False
             self.on_right_wall = False
-            # Ensure debug/telemetry users see no tile collisions while floating.
             try:
                 self.last_tile_collisions = []
             except Exception:
@@ -744,7 +738,6 @@ class Player:
             self.coyote = COYOTE_FRAMES
             self.double_jumps = DOUBLE_JUMPS + int(getattr(self, 'extra_jump_charges', 0))
             self.can_dash = True if self.dash_cd == 0 else self.can_dash
-            # Reset wall jump state when touching ground
             if self.wall_jump_state is not None:
                 self.wall_jump_state = None
                 self.wall_jump_direction = 0
@@ -754,59 +747,39 @@ class Player:
         if self.jump_buffer > 0:
             self.jump_buffer -= 1
 
-        # NEW: Update wall jump system timers
         if self.wall_jump_cooldown > 0:
             self.wall_jump_cooldown -= 1
-
         if self.wall_jump_coyote_timer > 0:
             self.wall_jump_coyote_timer -= 1
-
         if self.wall_jump_buffer_timer > 0:
             self.wall_jump_buffer_timer -= 1
-
         if self.wall_reattach_timer > 0:
             self.wall_reattach_timer -= 1
 
-        # NEW: Simplified wall sliding detection
         self.wall_sliding = False
         if not self.on_ground and self.wall_jump_cooldown == 0:
             if self.on_left_wall or self.on_right_wall:
-                # Start sliding if touching wall
                 self.wall_sliding = True
                 self.wall_jump_coyote_timer = WALL_JUMP_COYOTE_TIME
-                # Reset jump buffer when touching wall
                 if self.jump_buffer > 0 and self.wall_jump_buffer_timer == 0:
                     self.wall_jump_buffer_timer = WALL_JUMP_BUFFER_TIME
 
-        # Only allow resolving buffered jump if mobility cooldown is free
         want_jump = self.jump_buffer > 0 and self.mobility_cd == 0
         jump_mult = getattr(self, 'jump_force_multiplier', 1.0)
         if want_jump:
             did = False
-
-            # NEW: Physics-based wall jump system
             if self.wall_sliding or self.wall_jump_coyote_timer > 0:
-                # Wall jump with acceleration-based physics
                 if self.wall_jump_cooldown == 0:
-                    # Determine jump direction based on wall
                     if self.on_left_wall:
-                        self.wall_jump_direction = 1  # Jump right
-                        # Gentle nudge away from wall
+                        self.wall_jump_direction = 1
                         self.rect.x += 1
                     elif self.on_right_wall:
-                        self.wall_jump_direction = -1  # Jump left
-                        # Gentle nudge away from wall
+                        self.wall_jump_direction = -1
                         self.rect.x -= 1
                     else:
-                        # Use coyote direction if just left wall
                         self.wall_jump_direction = self.wall_jump_direction if self.wall_jump_direction != 0 else (-1 if self.facing > 0 else 1)
-
-                    # Apply gentle initial horizontal boost
                     self.vx = WALL_LEAVE_H_BOOST * self.wall_jump_direction
-                    # Set vertical velocity
                     self.vy = WALL_JUMP_V_SPEED * jump_mult
-
-                    # Set state for physics update
                     self.wall_jump_state = 'jumping'
                     self.wall_jump_cooldown = WALL_JUMP_COOLDOWN
                     self.wall_reattach_timer = WALL_REATTACH_TIME
@@ -815,16 +788,13 @@ class Player:
                     self.on_right_wall = False
                     did = True
                 elif self.double_jumps > 0:
-                    # Normal double jump if wall jump on cooldown
                     self.vy = PLAYER_JUMP_V * jump_mult
                     self.double_jumps -= 1
                     did = True
             elif self.on_ground or self.coyote > 0:
-                # Normal ground jump
                 self.vy = PLAYER_JUMP_V * jump_mult
                 did = True
             elif self.double_jumps > 0:
-                # Air double jump
                 self.vy = PLAYER_JUMP_V * jump_mult
                 self.double_jumps -= 1
                 did = True
@@ -832,28 +802,18 @@ class Player:
             if did:
                 self.jump_buffer = 0
                 self.on_ground = False
-                # Any successful jump triggers shared mobility cooldown
                 self.mobility_cd = MOBILITY_COOLDOWN_FRAMES
 
-        # Apply gravity or wall slide physics
-        # NEW: Simplified physics system
         if getattr(self, 'no_clip', False):
             keys = pygame.key.get_pressed()
             if getattr(self, 'floating_mode', False):
-                # Floating mode with direct control
                 if self.stunned <= 0:
-                    if keys[pygame.K_w]:
-                        self.vy = -8
-                    elif keys[pygame.K_s]:
-                        self.vy = 8
-                    else:
-                        self.vy = 0
+                    if keys[pygame.K_w]: self.vy = -8
+                    elif keys[pygame.K_s]: self.vy = 8
+                    else: self.vy = 0
             else:
-                # No-clip mode with physics
-                if not self.dashing:
-                    self._apply_physics()
-                else:
-                    self.dashing -= 1
+                if not self.dashing: self._apply_physics()
+                else: self.dashing -= 1
         elif not self.dashing:
             self._apply_physics()
         else:
@@ -861,143 +821,67 @@ class Player:
             if self.dashing == 0 and not self.on_ground:
                 self.vy = GRAVITY
 
-        # Apply collision detection AFTER physics has been applied (skip in no-clip mode)
         collisions = None
         if not getattr(self, 'no_clip', False):
             tile_collision = getattr(level, "tile_collision", None)
             if tile_collision is not None and getattr(level, "grid", None) is not None:
                 try:
-                    # Use TileCollision to resolve against tile grid.
-                    # Maintain compatibility by mirroring rect/vx/vy back to player.
                     entity_rect = self.rect.copy()
                     velocity = pygame.math.Vector2(self.vx, self.vy)
-                    
-                    # DEBUG: Log collision state before resolution
-                    if frame_debug_count < 5:
-                        print(f"[COLLISION DEBUG #{frame_debug_count+1}] Before collision: rect={entity_rect}, vel={velocity}")
-                    
-                    new_rect, new_velocity, collision_info_list = tile_collision.resolve_collisions(
-                        entity_rect,
-                        velocity,
-                        level.grid,
-                        dt,
-                    )
-                    
-                    # DEBUG: Log collision results
+                    if frame_debug_count < 5: print(f"[COLLISION DEBUG #{frame_debug_count+1}] Before collision: rect={entity_rect}, vel={velocity}")
+                    new_rect, new_velocity, collision_info_list = tile_collision.resolve_collisions(entity_rect, velocity, level.grid, dt)
                     if frame_debug_count < 5:
                         print(f"[COLLISION DEBUG #{frame_debug_count+1}] After collision: rect={new_rect}, vel={new_velocity}, collisions={len(collision_info_list)}")
-                        for i, col in enumerate(collision_info_list):
-                            print(f"  Collision {i}: side={col.get('side')}, tile={col.get('tile_type')}")
-                    
-                    # Update from resolved values
+                        for i, col in enumerate(collision_info_list): print(f"  Collision {i}: side={col.get('side')}, tile={col.get('tile_type')}")
                     self.rect = new_rect
                     self.vx = float(new_velocity.x)
                     self.vy = float(new_velocity.y)
-
-                    # Derive grounded / wall state from collisions
                     self.was_on_ground = self.on_ground
                     self.on_ground = False
                     self.on_left_wall = False
                     self.on_right_wall = False
-
                     for c in collision_info_list:
                         side = c.get("side")
-                        if side == "top":
-                            # Landed on a solid surface
-                            self.on_ground = True
-                        elif side == "left":
-                            # Collided on left side of the player against a wall
-                            self.on_right_wall = True
-                        elif side == "right":
-                            # Collided on right side of the player against a wall
-                            self.on_left_wall = True
-                        elif side == "bottom":
-                            # Ceiling collision (head hit); keep as non-ground, rely on vy=0 from resolver.
-                            self.on_ground = False
-
-                    # Reset coyote timer when grounded
-                    if self.on_ground:
-                        self.coyote = COYOTE_FRAMES
-
+                        if side == "top": self.on_ground = True
+                        elif side == "left": self.on_right_wall = True
+                        elif side == "right": self.on_left_wall = True
+                        elif side == "bottom": self.on_ground = False
+                    if self.on_ground: self.coyote = COYOTE_FRAMES
                     collisions = collision_info_list
                 except Exception as e:
-                    # Log error for debugging but continue with simplified physics
                     print(f"Tile collision error: {e}")
-                    # Simple fallback: just update position with basic gravity
                     self.rect.x += int(self.vx)
                     self.rect.y += int(self.vy)
                     self.was_on_ground = self.on_ground
-                    # Simple ground detection - check if player would fall further
                     self.on_ground = False
                     collisions = []
             else:
-                # If no tile collision system, use simple physics
                 self.rect.x += int(self.vx)
                 self.rect.y += int(self.vy)
                 self.was_on_ground = self.on_ground
                 self.on_ground = False
                 collisions = []
 
-        # Expose last tile collisions for debug/telemetry systems (e.g., Game collision logger)
-        # Always set an attribute; use empty list when collisions is None.
         try:
             self.last_tile_collisions = list(collisions) if collisions else []
-            
-            # DEBUG: Log final state
-            if frame_debug_count < 5:
-                print(f"[PHYSICS DEBUG #{frame_debug_count+1}] Final state: pos=({self.rect.x}, {self.rect.y}), vx={self.vx}, vy={self.vy}, on_ground={self.on_ground}")
+            if frame_debug_count < 5: print(f"[PHYSICS DEBUG #{frame_debug_count+1}] Final state: pos=({self.rect.x}, {self.rect.y}), vx={self.vx}, vy={self.vy}, on_ground={self.on_ground}")
         except Exception:
-            # Never let bad collision info break the game.
             self.last_tile_collisions = []
 
         speed_bonus = self.speed_potion_bonus if self.speed_potion_timer > 0 else 0.0
         cd_step = 1.0 + speed_bonus
-        if self.dash_cd > 0:
-            self.dash_cd = max(0.0, self.dash_cd - cd_step)
-        if self.attack_cd > 0:
-            self.attack_cd = max(0.0, self.attack_cd - cd_step)
-        # per-skill cooldowns
+        if self.dash_cd > 0: self.dash_cd = max(0.0, self.dash_cd - cd_step)
         if self.skill_cd1 > 0: self.skill_cd1 = max(0.0, self.skill_cd1 - cd_step)
         if self.skill_cd2 > 0: self.skill_cd2 = max(0.0, self.skill_cd2 - cd_step)
         if self.skill_cd3 > 0: self.skill_cd3 = max(0.0, self.skill_cd3 - cd_step)
-        if self.combo_t > 0:
-            self.combo_t -= 1
-        else:
-            self.combo = 0
-        if self.inv > 0:
-            self.inv -= 1
-            self.iframes_flash = not self.iframes_flash
-        else:
-            self.iframes_flash = False
+        if self.combo_t > 0: self.combo_t -= 1
+        else: self.combo = 0
 
-        # parry timer
-        if self.parrying > 0:
-            self.parrying -= 1
-        # Knight shield/power timers
-        if self.shield_timer > 0:
-            self.shield_timer -= 1
-            if self.shield_timer == 0:
-                self.shield_hits = 0
-        if self.power_timer > 0:
-            self.power_timer -= 1
-            if self.power_timer == 0:
-                self.atk_bonus = 0
-                self.lifesteal = 0
-        # Ranger timers
-        if self.triple_timer > 0:
-            self.triple_timer -= 1
-        if self.speed_timer > 0:
-            self.speed_timer -= 1
+        if self.triple_timer > 0: self.triple_timer -= 1
+        if self.speed_timer > 0: self.speed_timer -= 1
+        if getattr(self, '_stamina_cooldown', 0) > 0: self._stamina_cooldown -= 1
+        if getattr(self, '_teleport_cooldown', 0) > 0: self._teleport_cooldown -= 1
 
-        # stamina regen cooldown timer decrement
-        if getattr(self, '_stamina_cooldown', 0) > 0:
-            self._stamina_cooldown -= 1
-
-        # teleport cooldown decrement
-        if getattr(self, '_teleport_cooldown', 0) > 0:
-            self._teleport_cooldown -= 1
-
-        # regenerate stamina & mana when not dashing and cooldown expired
         if hasattr(self, 'stamina') and not self.dashing and self._stamina_cooldown == 0:
             self.stamina = min(self.max_stamina, self.stamina + self._stamina_regen)
         if hasattr(self, 'mana'):
@@ -1020,19 +904,10 @@ class Player:
                 self.stamina_boost_timer = 0
                 self.stamina_buff_mult = 1.0
         
-        # Lucky charm timer
         if getattr(self, 'lucky_charm_timer', 0) > 0:
             self.lucky_charm_timer -= 1
             if self.lucky_charm_timer <= 0:
                 self.lucky_charm_timer = 0
-        
-        # Phoenix feather revival check
-        if getattr(self, 'phoenix_feather_active', False) and getattr(self, 'dead', False):
-            # Revive player with 50% HP
-            self.dead = False
-            self.hp = max(1, self.max_hp // 2)
-            self.phoenix_feather_active = False
-            floating.append(DamageNumber(self.rect.centerx, self.rect.top - 12, "PHOENIX REVIVE!", (255, 150, 50)))
 
     def move_and_collide(self, level):
         # Reset wall detection
@@ -1158,29 +1033,7 @@ class Player:
                         pass
                 self.vy = 0
 
-    def damage(self, amount, knock=(0,0)):
-        # respect god mode first
-        if getattr(self, 'god', False):
-            return
-        # Knight shield absorbs up to 2 hits while active
-        if getattr(self, 'shield_timer', 0) > 0 and getattr(self, 'shield_hits', 0) > 0:
-            self.shield_hits -= 1
-            floating.append(DamageNumber(self.rect.centerx, self.rect.top-8, "BLOCK", CYAN))
-            return
-        if self.inv > 0:
-            return
-        self.hp -= amount
-        self.inv = INVINCIBLE_FRAMES
-        # start blinking timer for visible feedback during i-frames
-        self._blink_t = IFRAME_BLINK_INTERVAL
-        self.iframes_flash = True
-        self.vx += knock[0]
-        self.vy += knock[1]
-        floating.append(DamageNumber(self.rect.centerx, self.rect.top-8, f"-{amount}", RED))
-        if self.hp <= 0:
-            self.hp = 0
-            self.dead = True
-            floating.append(DamageNumber(self.rect.centerx, self.rect.centery, "KO", CYAN))
+
 
     def draw(self, surf, camera):
         # Change color for visual feedback
@@ -1281,3 +1134,19 @@ class Player:
                     friction *= (1.0 - (WALL_CONTROL_MULTIPLIER - 1.0) * 0.1)  # Slightly better air control
 
             self.vx *= friction
+
+    @property
+    def hp(self):
+        return self.combat.hp
+
+    @hp.setter
+    def hp(self, value):
+        self.combat.hp = value
+
+    @property
+    def max_hp(self):
+        return self.combat.max_hp
+
+    @max_hp.setter
+    def max_hp(self, value):
+        self.combat.max_hp = value

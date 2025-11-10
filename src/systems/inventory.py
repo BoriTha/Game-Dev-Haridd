@@ -1221,7 +1221,8 @@ class Inventory:
                 stats[mod_key] = stats.get(mod_key, 0.0) + value
         stamina_mult = getattr(player, 'stamina_buff_mult', 1.0)
         stats['max_stamina'] = stats.get('max_stamina', 0.0) * stamina_mult
-        player.max_hp = max(1, int(round(stats.get('max_hp', player.max_hp) or player.max_hp)))
+        default_max_hp = getattr(player, 'max_hp', base.get('max_hp', 1))
+        player.max_hp = max(1, int(round(stats.get('max_hp', default_max_hp) or default_max_hp)))
         player.hp = min(player.hp, player.max_hp)
         player.attack_damage = max(1, int(round(stats.get('attack_damage', player.attack_damage) or player.attack_damage)))
         player.player_speed = stats.get('player_speed', player.player_speed)

@@ -42,28 +42,7 @@ class TileRegistry:
             )
         ))
 
-        # Floor tile
-        self.register_tile(TileData(
-            tile_type=TileType.FLOOR,
-            name="Floor",
-            collision=CollisionProperties(
-                collision_type="top_only",
-                can_walk_on=True,
-                collision_box_offset=(0, 20),
-                collision_box_size=(24, 4)
-            ),
-            visual=VisualProperties(
-                base_color=(101, 67, 33),
-                border_radius=2
-            ),
-            physics=PhysicalProperties(
-                friction=1.0
-            ),
-            audio=AudioProperties(
-                footstep_sound="step_stone",
-                contact_sound="land_stone"
-            )
-        ))
+
 
         # Wall tile
         self.register_tile(TileData(
@@ -89,26 +68,7 @@ class TileRegistry:
             )
         ))
 
-        # Solid tile (for ceilings/background elements)
-        self.register_tile(TileData(
-            tile_type=TileType.SOLID,
-            name="Solid",
-            collision=CollisionProperties(
-                collision_type="full",
-                collision_box_size=(24, 24)
-            ),
-            visual=VisualProperties(
-                base_color=(78, 84, 102),
-                border_radius=3
-            ),
-            physics=PhysicalProperties(
-                friction=0.5
-            ),
-            lighting=LightingProperties(
-                blocks_light=True,
-                casts_shadows=True
-            )
-        ))
+
 
         # Platform tile
         self.register_tile(TileData(
@@ -162,36 +122,7 @@ class TileRegistry:
             )
         ))
 
-        # Breakable Floor tile
-        self.register_tile(TileData(
-            tile_type=TileType.BREAKABLE_FLOOR,
-            name="Breakable Floor",
-            collision=CollisionProperties(
-                collision_type="top_only",
-                can_walk_on=True,
-                collision_box_offset=(0, 20),
-                collision_box_size=(24, 4)
-            ),
-            visual=VisualProperties(
-                base_color=(160, 82, 45),
-                border_radius=2,
-                border_color=(139, 69, 19)
-            ),
-            physics=PhysicalProperties(
-                friction=0.8,
-                density=0.3
-            ),
-            interaction=InteractionProperties(
-                breakable=True,
-                health_points=2,
-                resistance=0.3
-            ),
-            audio=AudioProperties(
-                footstep_sound="step_wood",
-                contact_sound="land_wood",
-                break_sound="break_wood"
-            )
-        ))
+
 
     def register_tile(self, tile_data: TileData):
         """Register a new tile type."""

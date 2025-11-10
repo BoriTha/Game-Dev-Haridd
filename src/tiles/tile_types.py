@@ -12,10 +12,6 @@ class TileType(IntEnum):
     PLATFORM = 2
     BREAKABLE_WALL = 3
 
-    # Future extension slots
-    # ONE_WAY_PLATFORM = auto()
-    # WATER = auto()
-    # DOOR = auto()
     @property
     def is_solid(self) -> bool:
         """Return True if tile blocks movement completely."""

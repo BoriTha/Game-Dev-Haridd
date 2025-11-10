@@ -17,11 +17,9 @@ from ..tiles.tile_types import TileType
 
 TILE_CHAR_MAP = {
     '#': TileType.WALL,
-    '.': TileType.FLOOR,  # Canonical mapping is FLOOR
-    '~': TileType.SOLID,
+    '.': TileType.WALL,  # Consolidated from FLOOR
     '_': TileType.PLATFORM,
     '@': TileType.BREAKABLE_WALL,
-    '%': TileType.BREAKABLE_FLOOR,
     ' ': TileType.AIR,
 }
 
