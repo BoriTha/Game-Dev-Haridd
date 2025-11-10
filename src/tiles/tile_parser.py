@@ -2,43 +2,36 @@ from typing import List, Dict, Tuple, Optional
 from .tile_types import TileType
 
 
+from typing import List, Dict, Tuple, Optional
+from .tile_types import TileType
+from ..core.constants import TILE_CHAR_MAP, LEGACY_CHAR_ALIASES, ENTITY_CHAR_MAP
+
+
 class TileParser:
     """Parses ASCII level definitions to tile grids."""
 
     def __init__(self):
-        # Default ASCII to tile type mapping
-        self.ascii_map: Dict[str, TileType] = {
-            ' ': TileType.AIR,
-            '.': TileType.FLOOR,
-            '#': TileType.WALL,
-            '~': TileType.SOLID,
-            '_': TileType.PLATFORM,  # Underscore for platform
-            '@': TileType.BREAKABLE_WALL,  # @ for breakable wall
-            '%': TileType.BREAKABLE_FLOOR,  # % for breakable floor
-        }
+        # Use canonical mappings from constants
+        self.ascii_map: Dict[str, TileType] = TILE_CHAR_MAP
+        self.entity_markers: Dict[str, str] = ENTITY_CHAR_MAP
 
-        # Entity markers (not converted to tiles)
-        self.entity_markers = {
-            'S': 'spawn',
-            'E': 'enemy',
-            'D': 'door',
-            'f': 'enemy_fast',
-            'r': 'enemy_ranged',
-            'w': 'enemy_wizard',
-            'a': 'enemy_armor',
-            'b': 'enemy_bee',
-            'G': 'enemy_boss',
-        }
-
-    def parse_ascii_level(self, ascii_level: List[str]) -> Tuple[List[List[int]], Dict[str, List[Tuple[int, int]]]]:
+    def parse_ascii_level(self, ascii_level: List[str], legacy: bool = False) -> Tuple[List[List[int]], Dict[str, List[Tuple[int, int]]]]:
         """
         Parse ASCII level definition to tile grid and entity positions.
 
-        Returns:
-            Tuple of (tile_grid, entity_positions)
+        Args:
+            ascii_level: The list of strings representing the level.
+            legacy: If True, applies legacy parsing rules for characters.
         """
         if not ascii_level:
             return [], {}
+
+        # Determine the correct tile map to use for this parsing operation
+        active_tile_map = self.ascii_map
+        if legacy:
+            legacy_map = self.ascii_map.copy()
+            legacy_map['.'] = TileType.AIR  # Legacy rule: '.' is AIR
+            active_tile_map = legacy_map
 
         # Find max dimensions
         max_width = max(len(line) for line in ascii_level)
@@ -51,12 +44,17 @@ class TileParser:
         # Parse each line
         for y, line in enumerate(ascii_level):
             for x, char in enumerate(line):
-                if char in self.ascii_map:
+                # Handle legacy aliases before lookup
+                lookup_char = char
+                if legacy and char in LEGACY_CHAR_ALIASES:
+                    lookup_char = LEGACY_CHAR_ALIASES[char]
+
+                if lookup_char in active_tile_map:
                     # It's a tile
-                    tile_type = self.ascii_map[char]
+                    tile_type = active_tile_map[lookup_char]
                     tile_grid[y][x] = tile_type.value
                 elif char in self.entity_markers:
-                    # It's an entity
+                    # It's an entity (use original char for entities)
                     entity_type = self.entity_markers[char]
                     if entity_type not in entity_positions:
                         entity_positions[entity_type] = []
@@ -82,7 +80,7 @@ class TileParser:
         if not tile_grid:
             return []
 
-        # Create reverse mapping
+        # Create reverse mapping from the canonical map
         tile_to_ascii = {tile_type: char for char, tile_type in self.ascii_map.items()}
 
         # Initialize with spaces
@@ -100,14 +98,11 @@ class TileParser:
 
         # Add entity markers
         if entity_positions:
+            # Create reverse mapping for entities
+            entity_to_ascii = {v: k for k, v in self.entity_markers.items()}
             for entity_type, positions in entity_positions.items():
-                entity_char = None
-                for char, e_type in self.entity_markers.items():
-                    if e_type == entity_type:
-                        entity_char = char
-                        break
-
-                if entity_char:
+                if entity_type in entity_to_ascii:
+                    entity_char = entity_to_ascii[entity_type]
                     for x, y in positions:
                         if 0 <= y < height and 0 <= x < width:
                             ascii_lines[y][x] = entity_char
@@ -131,7 +126,7 @@ class TileParser:
             issues.append(f"Inconsistent line lengths: {line_lengths}")
 
         # Check for valid characters
-        valid_chars = set(self.ascii_map.keys()) | set(self.entity_markers.keys())
+        valid_chars = set(self.ascii_map.keys()) | set(self.entity_markers.keys()) | set(LEGACY_CHAR_ALIASES.keys())
         for y, line in enumerate(ascii_level):
             for x, char in enumerate(line):
                 if char not in valid_chars and char != ' ':
@@ -151,8 +146,9 @@ class TileParser:
             return f"Tile: {tile_type.name} ({tile_type.value})"
         elif ascii_char in self.entity_markers:
             return f"Entity: {self.entity_markers[ascii_char]}"
-        elif ascii_char == ' ':
-            return "Air/Empty"
+        elif ascii_char in LEGACY_CHAR_ALIASES:
+            target_char = LEGACY_CHAR_ALIASES[ascii_char]
+            return f"Legacy Alias for '{target_char}' ({self.get_tile_info(target_char)})"
         else:
             return "Unknown"
 
@@ -164,4 +160,6 @@ class TileParser:
         print("\n=== Entity Legend ===")
         for char, entity_type in self.entity_markers.items():
             print(f"  '{char}' : {entity_type}")
-        print(f"  ' '  : Air/Empty")
+        print("\n=== Legacy Aliases ===")
+        for char, target in LEGACY_CHAR_ALIASES.items():
+            print(f"  '{char}' : Alias for '{target}'")

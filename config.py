@@ -85,14 +85,6 @@ TILE_COLORS = {
     TILE_SOLID: (78, 84, 102),  # Medium gray - ceiling/overhang
 }
 
-# Tile character symbols for hardcoded rooms
-TILE_SYMBOLS = {
-    '.': TILE_FLOOR,  # Floor tile
-    '#': TILE_WALL,   # Wall tile
-    '~': TILE_SOLID,  # Solid/ceiling tile
-    ' ': TILE_AIR,    # Air/empty
-}
-
 # === Procedural Level Generation Configuration ===
 # Level generation parameters
 LEVEL_WIDTH = 40  # tiles

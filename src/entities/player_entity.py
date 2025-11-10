@@ -29,6 +29,7 @@ class Player:
         self.was_on_ground = False
         self.coyote = 0
         self.jump_buffer = 0
+        self.jump_key_pressed = False
         # NEW Wall jump system - cleaner physics-based approach
         self.on_left_wall = False
         self.on_right_wall = False
@@ -348,12 +349,15 @@ class Player:
         # Jump input buffering - allow jumping when in god mode with floating mode OFF
         in_no_clip_but_not_floating = getattr(self, 'no_clip', False) and not getattr(self, 'floating_mode', False)
         if not getattr(self, 'no_clip', False) or in_no_clip_but_not_floating:
-            if not stunned and self.mobility_cd == 0 and (keys[pygame.K_SPACE] or keys[pygame.K_k]):
+            jump_key_down = keys[pygame.K_SPACE] or keys[pygame.K_k]
+            if not stunned and self.mobility_cd == 0 and jump_key_down and not self.jump_key_pressed:
                 self.jump_buffer = JUMP_BUFFER_FRAMES
-            else:
-                if self.vy < 0:
-                    if not (keys[pygame.K_SPACE] or keys[pygame.K_k]):
-                        self.vy *= PLAYER_SMALL_JUMP_CUT
+            
+            if self.vy < 0:
+                if not jump_key_down:
+                    self.vy *= PLAYER_SMALL_JUMP_CUT
+            
+            self.jump_key_pressed = jump_key_down
 
         # NEW: Simplified dash - only if mobility cooldown is free
         free_dash_available = False

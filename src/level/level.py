@@ -1,5 +1,5 @@
 import pygame
-from config import TILE, TILE_COL, CYAN, TILE_SYMBOLS, WIDTH, HEIGHT
+from config import TILE, TILE_COL, CYAN, WIDTH, HEIGHT
 from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
 from ..tiles import TileParser, TileRenderer, TileRegistry, TileType
 from ..tiles.tile_collision import TileCollision
@@ -156,13 +156,11 @@ class Level:
 
         # Initialize new tile system components
         self.tile_parser = TileParser()
-        # Legacy compatibility: Override mappings for old hardcoded maps
-        self.tile_parser.ascii_map['.'] = TileType.AIR  # Old maps use '.' for air, not floor
         self.tile_renderer = TileRenderer(TILE)
         self.tile_registry = TileRegistry()
 
-        # Parse ASCII level to tile grid
-        self.grid, entity_positions = self.tile_parser.parse_ascii_level(raw)
+        # Parse ASCII level to tile grid, using legacy mode for the hardcoded rooms
+        self.grid, entity_positions = self.tile_parser.parse_ascii_level(raw, legacy=True)
 
         # Load entities from parsed positions
         self._load_entities(entity_positions)

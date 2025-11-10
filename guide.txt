@@ -20,12 +20,19 @@ Developer Cheats:
 - F5  Open Debugger Menu (alternative)
 - F6–F10  Jump to Rooms 1–5
 
-ASCII Map Legend:
-- # wall/platform
-- . empty
-- S spawn
-- D door to next room
-- E Bug, f Frog, r Archer, w Wizard Caster, a Assassin, b Bee, B Boss, G Golem (boss)
+ASCII Map Legend (Canonical):
+- # : Wall
+- . : Floor
+- ~ : Solid (Ceiling)
+- _ : Platform
+-   : (space) Empty/Air
+- S : Spawn point
+- D : Door to next room
+- E, f, r, w, a, b, G : Enemies (see below)
+
+Note on Legacy Maps (the current hardcoded rooms):
+- In legacy maps, '.' is used for Empty/Air instead of a space.
+- The character '=' is also treated as Empty/Air.
 
 Classes:
 - Knight: Tanky melee with Shield/Power/Charge skills
