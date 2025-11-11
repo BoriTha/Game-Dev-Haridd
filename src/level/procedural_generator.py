@@ -519,23 +519,18 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
     room.player_spawn = (spawn_center_x, spawn_center_y)
     
     # === NEW: Carve 3x3 spawn area with ground support ===
-    # Place solid ground under spawn center
-    ground_y = spawn_center_y + 1
-    if room.is_in_bounds(spawn_center_x, ground_y):
-        room.set_tile(spawn_center_x, ground_y, TileCell(t="WALL"))
-    
-    # Carve 3x3 AIR spawn area (excluding ground tile)
+    # Carve a 3x3 block of AIR tiles centered around spawn_center
     for dx in range(-1, 2):
         for dy in range(-1, 2):
             carve_x = spawn_center_x + dx
             carve_y = spawn_center_y + dy
-            # Skip ground tile and ensure we don't carve room boundaries
-            if (carve_x == spawn_center_x and carve_y == ground_y) or \
-               carve_x == 0 or carve_x == width - 1 or \
-               carve_y == 0 or carve_y == height - 1:
-                continue
             if room.is_in_bounds(carve_x, carve_y):
                 room.set_tile(carve_x, carve_y, TileCell(t="AIR"))
+    
+    # Place solid ground tile directly below the player spawn point
+    ground_y = spawn_center_y + 1
+    if room.is_in_bounds(spawn_center_x, ground_y):
+        room.set_tile(spawn_center_x, ground_y, TileCell(t="WALL"))
     
     # === NEW: Create exclusion zone for spawn area ===
     spawn_exclusion = set()

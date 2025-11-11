@@ -1,4 +1,5 @@
 import sys
+import random
 
 import pygame
 from config import (
@@ -63,6 +64,30 @@ class Game:
             layout_type="branching",  # or "linear", "looping"
             branch_probability=0.3
         )
+
+        # Seed management for procedural generation
+        self.user_seed: Optional[int] = None # Stores user-set seed, None for random
+        self.current_active_seed: Optional[int] = None # The seed actually used for current level
+
+    def toggle_procedural_generation(self):
+        """Toggles procedural generation on/off."""
+        self.use_procedural = not self.use_procedural
+        print(f"[PCG] Procedural generation: {'ON' if self.use_procedural else 'OFF'}")
+
+    def set_custom_seed(self, seed: int):
+        """Sets a custom seed for procedural generation."""
+        self.user_seed = seed
+        print(f"[PCG] Custom seed set to: {self.user_seed}")
+
+    def generate_random_seed(self):
+        """Clears the custom seed, allowing random generation."""
+        self.user_seed = None
+        print("[PCG] Random seed will be used for next generation.")
+
+    def get_current_seed(self) -> Optional[int]:
+        """Returns the currently active seed (user-set or the one used for current level)."""
+        return self.user_seed if self.user_seed is not None else self.current_active_seed
+
         
         # Track current level
         self.current_level_data: Optional[LevelData] = None
@@ -191,8 +216,18 @@ class Game:
         if self.current_level_data is None or (level_number is not None and level_number != self.current_level_number):
             print(f"[INFO] Generating new procedural level {level_number}...")
             
-            # Set seed for reproducible levels (optional)
-            level_seed = level_number * 1000  # Deterministic based on level number
+            # Determine seed for reproducible levels
+            if self.user_seed is not None:
+                level_seed = self.user_seed
+                print(f"[PCG] Using user-defined seed: {level_seed}")
+            else:
+                # If no user seed, generate a new random one for this level
+                # or use a deterministic one based on level_number if that's desired behavior
+                import random
+                level_seed = random.randint(0, 1000000) # Generate a truly random seed
+                print(f"[PCG] Using random seed: {level_seed}")
+            
+            self.current_active_seed = level_seed # Store the seed actually used
             
             # Generate complete multi-room level
             self.current_level_data = generate_complete_level(
@@ -1499,6 +1534,7 @@ class Game:
                         self.collision_events = self.collision_events[-40:]
 
             self.draw()
+
             pygame.display.flip()
 
 
