@@ -148,13 +148,14 @@ ROOMS = [
 ROOM_COUNT = len(ROOMS)
 
 class Level:
-    def __init__(self, index: Optional[int] = None, room_data: Optional[RoomData] = None):
+    def __init__(self, index: Optional[int] = None, room_data: Optional[RoomData] = None, room_id: Optional[str] = None):
         """
         Initialize a level from static ASCII rooms or PCG RoomData.
         
         Args:
             index: Room index to load from ROOMS array (for static rooms)
             room_data: RoomData object from PCG system
+            room_id: Room ID for PCG rooms (e.g., "room_0", "room_1")
         """
         # Core containers
         self.solids: List[pygame.Rect] = []
@@ -170,7 +171,8 @@ class Level:
 
         # Choose initialization method
         if room_data is not None:
-            self.current_room_id = getattr(room_data, 'room_id', 'pcg_room')
+            self.current_room_id = room_id or getattr(room_data, 'room_id', 'pcg_room')
+            self.room_data = room_data  # Store reference for PCG door access
             self._init_from_room_data(room_data)
         else:
             self.index = (index or 0) % len(ROOMS)
@@ -219,19 +221,26 @@ class Level:
         # Set spawn position from RoomData
         if room_data.player_spawn:
             self.spawn = (room_data.player_spawn[0] * TILE, room_data.player_spawn[1] * TILE)
-        elif room_data.entrance_coords:
-            self.spawn = (room_data.entrance_coords[0] * TILE, room_data.entrance_coords[1] * TILE)
         else:
-            self.spawn = (TILE * 2, TILE * 2)  # Fallback
+            # For PCG rooms, spawn near first door or fallback
+            if room_data.doors:
+                first_door = next(iter(room_data.doors.values()))
+                # Spawn a few tiles away from door
+                spawn_x = max(2, first_door.position[0] - 3)
+                spawn_y = first_door.position[1]
+                self.spawn = (spawn_x * TILE, spawn_y * TILE)
+            else:
+                self.spawn = (TILE * 2, TILE * 2)  # Fallback
         
-        # Set doors from RoomData
-        if room_data.entrance_coords:
-            x, y = room_data.entrance_coords
-            self.doors.append(pygame.Rect(x * TILE, y * TILE, TILE, TILE))
-        
-        if room_data.exit_coords:
-            x, y = room_data.exit_coords  
-            self.doors.append(pygame.Rect(x * TILE, y * TILE, TILE, TILE))
+        # Set doors from PCG RoomData doors
+        for door_id, door in room_data.doors.items():
+            door_rect = pygame.Rect(
+                door.position[0] * TILE,
+                door.position[1] * TILE,
+                TILE,
+                TILE
+            )
+            self.doors.append(door_rect)
         
         # Spawn enemies from spawn areas
         self._spawn_enemies_from_areas(room_data)

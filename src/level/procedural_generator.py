@@ -229,16 +229,10 @@ def place_spawn_areas(
     # Calculate target number
     target_num_areas = calculate_spawn_density(room_data, config)
     
-    # Create exclusion zones around doors
+    # Create exclusion zones around PCG doors
     excluded_coords = set()
-    if room_data.entrance_coords:
-        ex, ey = room_data.entrance_coords
-        for dx in range(-2, 3):
-            for dy in range(-2, 3):
-                excluded_coords.add((ex + dx, ey + dy))
-    
-    if room_data.exit_coords:
-        ex, ey = room_data.exit_coords
+    for door in room_data.doors.values():
+        ex, ey = door.position
         for dx in range(-2, 3):
             for dy in range(-2, 3):
                 excluded_coords.add((ex + dx, ey + dy))
@@ -329,10 +323,24 @@ def configure_room_difficulty(
                 area.spawn_rules['difficulty_level'] = difficulty_rating
 
 
-def place_doors(room: RoomData, movement_attrs: MovementAttributes):
+def place_doors(room: RoomData, movement_attrs: MovementAttributes, entrance_doors: int = 1, exit_doors: int = 1):
     """
-    Finds valid ground locations on the edges and places doors.
+    Places PCG doors in the room based on separate entrance/exit door counts.
+    
+    For linear levels (entrance_doors=1, exit_doors=1): Places 1 entrance + 1 exit door
+    For branching levels (entrance_doors=1, exit_doors=1-2): Places 1 entrance + 1-2 exit doors
+    
+    Args:
+        room: Room to modify
+        movement_attrs: Player movement constraints
+        entrance_doors: Number of entrance doors to place
+        exit_doors: Number of exit doors to place
+    
+    Returns:
+        True if doors placed successfully, False otherwise
     """
+    from src.level.room_data import Door
+    
     valid_ground = find_valid_ground_locations(room, movement_attrs.player_width, movement_attrs.player_height)
     
     # Look for ground specifically at door platform height (height - 5)
@@ -348,18 +356,53 @@ def place_doors(room: RoomData, movement_attrs: MovementAttributes):
     if not right_edge_candidates:
         right_edge_candidates = [pos for pos in valid_ground if pos[0] == room.size[0] - 2]
 
-    if not left_edge_candidates or not right_edge_candidates:
+    if not left_edge_candidates and not right_edge_candidates:
         return False # Not a valid room for doors
 
-    # Place entrance door (AIR tile above the ground)
-    entrance_ground = random.choice(left_edge_candidates)
-    room.entrance_coords = (entrance_ground[0], entrance_ground[1] - 1)
-    room.grid[room.entrance_coords] = TileCell(tile_type=TileType.AIR, flags={"DOOR_ENTRANCE"})
-
-    # Place exit door (AIR tile above the ground)
-    exit_ground = random.choice(right_edge_candidates)
-    room.exit_coords = (exit_ground[0], exit_ground[1] - 1)
-    room.grid[room.exit_coords] = TileCell(tile_type=TileType.AIR, flags={"DOOR_EXIT"})
+    doors_placed = 0
+    door_id_counter = 65  # Start with 'A'
+    
+    # Place entrance doors (typically on left edge)
+    for i in range(entrance_doors):
+        if left_edge_candidates:
+            door_ground = random.choice(left_edge_candidates)
+            door_pos = (door_ground[0], door_ground[1] - 1)
+            door_id = chr(door_id_counter)
+            door_id_counter += 1
+            
+            # Create PCG entrance door
+            door = Door(
+                door_id=door_id,
+                position=door_pos,
+                door_type="entrance"
+            )
+            room.doors[door_id] = door
+            
+            # Place door tile in grid
+            room.grid[door_pos] = TileCell(tile_type=TileType.DOOR, flags={"PCG_DOOR"})
+            doors_placed += 1
+    
+    # Place exit doors (typically on right edge)
+    for i in range(exit_doors):
+        if right_edge_candidates:
+            door_ground = random.choice(right_edge_candidates)
+            door_pos = (door_ground[0], door_ground[1] - 1)
+            door_id = chr(door_id_counter)
+            door_id_counter += 1
+            
+            # Create PCG exit door
+            door = Door(
+                door_id=door_id,
+                position=door_pos,
+                door_type="exit"
+            )
+            room.doors[door_id] = door
+            
+            # Place door tile in grid
+            room.grid[door_pos] = TileCell(tile_type=TileType.DOOR, flags={"PCG_DOOR"})
+            doors_placed += 1
+    
+    return doors_placed > 0
     
     return True
 
@@ -721,10 +764,8 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
 
     # --- END ADDED SECTION ---
 
-    # Designate general door areas (edges of room, in carved regions)
-    # These are now just hints, place_doors will find the *real* spots
-    room.entrance_coords = (1, door_ground_y - 1)
-    room.exit_coords = (width - 2, door_ground_y - 1)
+    # PCG doors will be placed by place_doors() function
+    # No need to set entrance/exit hints anymore
     
     return room
 
@@ -773,41 +814,27 @@ def generate_validated_room(
         
 
         
-        #  HOWEVER: Still verify entrance/exit are accessible
-        # (They might be in WALL tiles initially)
-        if room.entrance_coords and room.exit_coords:
-            entrance_tile = room.get_tile(*room.entrance_coords)
-            exit_tile = room.get_tile(*room.exit_coords)
-            
-            # Quick sanity check
-            if entrance_tile.t != "AIR" or exit_tile.t != "AIR":
-                continue  # Doors not in AIR, regenerate
-        
         # --- THIS IS THE NEW ORDER ---
 
-        # Phase 2: Place DOORS *FIRST*
-        # This establishes the *real* entrance/exit coords.
-        if not place_doors(room, movement_attrs):
-            continue
+        # Phase 2: Place PCG DOORS *FIRST*
+        # This establishes the real door positions using the PCG system
+        # For linear levels, we use 1 entrance + 1 exit door
+        if not place_doors(room, movement_attrs, entrance_doors=1, exit_doors=1):
+            continue  # Door placement failed, try new room
+        
+        # Quick sanity check - verify doors were placed
+        if not room.doors:
+            continue  # No doors placed, regenerate
 
         
         # Phase 2.5: Create exclusion zones for door ground platforms
         # This ensures doors always have solid ground to stand on
-        if room.entrance_coords:
+        # Create exclusion zones around PCG doors
+        for door in room.doors.values():
             create_exclusion_zone(
                 room_data=room,
-                center_x=room.entrance_coords[0],
-                center_y=room.entrance_coords[1] + 1,  # Below door
-                width=3,
-                height=1,
-                exclusion_type="DOOR_PLATFORM"
-            )
-        
-        if room.exit_coords:
-            create_exclusion_zone(
-                room_data=room,
-                center_x=room.exit_coords[0],
-                center_y=room.exit_coords[1] + 1,  # Below door
+                center_x=door.position[0],
+                center_y=door.position[1] + 1,  # Below door
                 width=3,
                 height=1,
                 exclusion_type="DOOR_PLATFORM"
@@ -853,13 +880,28 @@ def generate_fallback_room(config: GenerationConfig) -> RoomData:
     for x in range(fallback_width):
         room.grid[(x, floor_y)] = TileCell(tile_type=TileType.WALL)
 
-    # Place entrance and exit on opposite sides, one tile above the floor
-    room.entrance_coords = (1, floor_y - 1)
-    room.exit_coords = (fallback_width - 2, floor_y - 1)
-
-    # Ensure the entrance and exit spots are AIR (door openings)
-    room.grid[room.entrance_coords] = TileCell(tile_type=TileType.AIR, flags={"DOOR_ENTRANCE"})
-    room.grid[room.exit_coords] = TileCell(tile_type=TileType.AIR, flags={"DOOR_EXIT"})
+    # Place PCG doors on opposite sides, one tile above the floor
+    from src.level.room_data import Door
+    
+    # Entrance door (left side)
+    entrance_pos = (1, floor_y - 1)
+    entrance_door = Door(
+        door_id="A",
+        position=entrance_pos,
+        door_type="entrance"
+    )
+    room.doors["A"] = entrance_door
+    room.grid[entrance_pos] = TileCell(tile_type=TileType.DOOR, flags={"PCG_DOOR"})
+    
+    # Exit door (right side)
+    exit_pos = (fallback_width - 2, floor_y - 1)
+    exit_door = Door(
+        door_id="B",
+        position=exit_pos,
+        door_type="exit"
+    )
+    room.doors["B"] = exit_door
+    room.grid[exit_pos] = TileCell(tile_type=TileType.DOOR, flags={"PCG_DOOR"})
     
     # Set player spawn in center of room, one tile above floor
     room.player_spawn = (fallback_width // 2, floor_y - 2)

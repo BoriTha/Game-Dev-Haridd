@@ -11,6 +11,7 @@ class TileType(IntEnum):
     # Special tiles
     PLATFORM = 2
     BREAKABLE_WALL = 3
+    DOOR = 4  # NEW: PCG door tile
 
     @property
     def is_solid(self) -> bool:
@@ -28,6 +29,10 @@ class TileType(IntEnum):
         return self in (TileType.BREAKABLE_WALL,)
 
     @property
+    def is_door(self) -> bool:
+        return self == TileType.DOOR
+
+    @property
     def has_collision(self) -> bool:
         """Return True if tile has any collision."""
         return self != TileType.AIR
@@ -40,4 +45,5 @@ class TileType(IntEnum):
             TileType.WALL: "Wall",
             TileType.PLATFORM: "Platform",
             TileType.BREAKABLE_WALL: "Breakable Wall",
+            TileType.DOOR: "Door",  # NEW
         }.get(self, f"Tile_{self.value}")

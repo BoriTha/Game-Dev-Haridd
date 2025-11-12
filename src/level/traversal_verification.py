@@ -30,7 +30,7 @@ def find_valid_ground_locations(room_data: RoomData, entity_width: int, entity_h
     for x in range(width):
         for y in range(height):
             ground_tile = room_data.grid.get((x, y), default_tile)
-            if ground_tile.t != "WALL":
+            if ground_tile.t != "Wall":
                 continue
 
             has_clearance = True
@@ -76,9 +76,8 @@ def verify_traversable(room_data: RoomData, movement_attrs: MovementAttributes) 
     """
 
 
-    # Require valid entrance/exit; PCG promises to set these via place_doors
-    if not room_data.entrance_coords or not room_data.exit_coords:
-
+    # Require at least one door for PCG system
+    if not room_data.doors:
         return False
 
     # Compute all valid ground nodes for current player size
@@ -88,10 +87,15 @@ def verify_traversable(room_data: RoomData, movement_attrs: MovementAttributes) 
         movement_attrs.player_height
     )
 
-
-    # Ground nodes directly under the door tiles (where player stands)
-    start_node = (room_data.entrance_coords[0], room_data.entrance_coords[1] + 1)
-    end_node = (room_data.exit_coords[0], room_data.exit_coords[1] + 1)
+    # For linear levels, use first door as start, last door as end
+    door_list = list(room_data.doors.values())
+    if len(door_list) < 1:
+        return False
+    
+    # For now, use first door for both start and end (single door rooms)
+    # This will be updated when we implement proper multi-door logic
+    start_node = (door_list[0].position[0], door_list[0].position[1] + 1)
+    end_node = (door_list[-1].position[0], door_list[-1].position[1] + 1)
 
 
 

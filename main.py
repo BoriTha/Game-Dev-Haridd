@@ -292,7 +292,7 @@ class Game:
         try:
             # Use PCG room data if available, otherwise fallback to static
             if room_data is not None:
-                lvl = Level(room_data=room_data)
+                lvl = Level(room_data=room_data, room_id=room_id)
             else:
                 # Fallback to static room if PCG fails
                 room_index = hash(room_id) % ROOM_COUNT if room_id else 0
@@ -459,19 +459,44 @@ class Game:
                 self.last_space_time = pygame.time.get_ticks()
             self._prev_space_pressed = space_pressed
 
-        for d in getattr(self.level, "doors", []):
-            if self.player.rect.colliderect(d):
-                # Boss gate logic preserved for legacy/boss-style levels
-                if getattr(self.level, 'is_boss_room', False):
-                    if any(getattr(e, 'alive', False) for e in self.enemies):
-                        # door locked; stay in room
-                        pass
+ # PCG Door Collision Detection
+        if self.use_procedural and hasattr(self.level, 'room_data'):
+            # Check PCG doors in procedural rooms
+            room_data = self.level.room_data
+            for door_id, door in room_data.doors.items():
+                # Create door rect for collision (tile-based)
+                door_rect = pygame.Rect(
+                    door.position[0] * TILE,
+                    door.position[1] * TILE,
+                    TILE,
+                    TILE
+                )
+                
+                if self.player.rect.colliderect(door_rect):
+                    # Check if door has destinations
+                    if door.destinations:
+                        # For linear levels, use first (default) destination
+                        choice_label = next(iter(door.destinations.keys()))
+                        target_room_id = door.destinations[choice_label]
+                        
+                        # Switch to target room
+                        self.switch_room(target_room_id=target_room_id)
+                        break
+        else:
+            # Legacy door system for static rooms
+            for d in getattr(self.level, "doors", []):
+                if self.player.rect.colliderect(d):
+                    # Boss gate logic preserved for legacy/boss-style levels
+                    if getattr(self.level, 'is_boss_room', False):
+                        if any(getattr(e, 'alive', False) for e in self.enemies):
+                            # door locked; stay in room
+                            pass
+                        else:
+                            self.switch_room(+1)
+                            break
                     else:
                         self.switch_room(+1)
                         break
-                else:
-                    self.switch_room(+1)
-                    break
 
         for e in self.enemies:
             e.tick(self.level, self.player)

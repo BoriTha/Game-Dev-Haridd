@@ -33,6 +33,97 @@ def generate_linear_graph(num_rooms: int) -> Dict[str, List[str]]:
     return graph
 
 
+def generate_pcg_linear_graph(num_rooms: int, entrance_doors: int = 1, exit_doors: int = 1) -> Dict[str, List[str]]:
+    """
+    Generate a PCG linear room graph with specified entrance/exit door counts.
+    
+    For linear levels, entrance_doors and exit_doors should typically be 1 each.
+    Each room (except last) connects to exactly one next room.
+    
+    Args:
+        num_rooms: Number of rooms
+        entrance_doors: Number of entrance doors per room
+        exit_doors: Number of exit doors per room
+    
+    Returns:
+        Adjacency list dictionary
+    """
+    # For linear levels, we expect 1 entrance and 1 exit door
+    # But the graph structure remains the same regardless of door counts
+    return generate_linear_graph(num_rooms)
+
+
+def generate_pcg_branching_graph(
+    num_rooms: int,
+    entrance_doors: int = 1,
+    exit_doors: int = 2,
+    rng: random.Random = random.Random()
+) -> Dict[str, List[str]]:
+    """
+    Generate a PCG branching room graph with specified entrance/exit door counts.
+    
+    For branching levels, entrance_doors should be 1 and exit_doors should be 1-2.
+    Creates a simple branching structure without loops.
+    
+    Args:
+        num_rooms: Number of rooms
+        entrance_doors: Number of entrance doors per room
+        exit_doors: Number of exit doors per room
+        rng: Random number generator
+    
+    Returns:
+        Adjacency list dictionary
+    """
+    if entrance_doors < 1 or entrance_doors > 2:
+        raise ValueError("Branching PCG graphs require entrance_doors = 1-2")
+    if exit_doors < 1 or exit_doors > 2:
+        raise ValueError("Branching PCG graphs require exit_doors = 1-2")
+    
+    graph = {}
+    room_counter = 0
+    
+    # Start with main path
+    main_path_length = max(2, num_rooms // 2)
+    
+    # Create main linear path
+    for i in range(main_path_length):
+        room_id = f"room_{room_counter}"
+        room_counter += 1
+        
+        if i < main_path_length - 1 and room_counter < num_rooms:
+            # Connect to next room on main path
+            next_room = f"room_{room_counter}"
+            graph[room_id] = [next_room]
+        elif i == main_path_length - 1:
+            # Last room on main path
+            graph[room_id] = []
+        else:
+            # We've reached the room limit
+            break
+    
+    # Add branch rooms if we have exit_doors > 1 and room slots remaining
+    if exit_doors > 1 and room_counter < num_rooms:
+        # Add branches from some main path rooms
+        branch_rooms_added = 0
+        max_branches = min(exit_doors - 1, num_rooms - room_counter)  # Limit branches
+        
+        for i in range(min(main_path_length - 1, len(graph.keys()))):
+            if branch_rooms_added >= max_branches:
+                break
+                
+            if rng.random() < 0.5:  # 50% chance to branch at each position
+                main_room_id = f"room_{i}"
+                branch_room_id = f"room_{room_counter}"
+                room_counter += 1
+                branch_rooms_added += 1
+                
+                # Add branch connection
+                graph[main_room_id].append(branch_room_id)
+                graph[branch_room_id] = []  # Branch rooms are dead ends
+    
+    return graph
+
+
 def generate_branching_graph(
     num_rooms: int,
     branch_probability: float,
@@ -141,11 +232,18 @@ def generate_level_graph(config: LevelGenerationConfig, seed: int) -> Dict[str, 
     rng = random.Random(seed)
     
     if config.layout_type == "linear":
-        return generate_linear_graph(config.num_rooms)
+        # Use PCG linear generation with separate entrance/exit door counts
+        return generate_pcg_linear_graph(
+            config.num_rooms, 
+            config.entrance_doors_per_room, 
+            config.exit_doors_per_room
+        )
     elif config.layout_type == "branching":
-        return generate_branching_graph(
+        # Use PCG branching generation with separate entrance/exit door counts
+        return generate_pcg_branching_graph(
             config.num_rooms,
-            config.branch_probability,
+            config.entrance_doors_per_room,
+            config.exit_doors_per_room,
             rng
         )
     elif config.layout_type == "looping":
@@ -155,8 +253,12 @@ def generate_level_graph(config: LevelGenerationConfig, seed: int) -> Dict[str, 
             rng
         )
     else:
-        # Default to linear
-        return generate_linear_graph(config.num_rooms)
+        # Default to linear PCG
+        return generate_pcg_linear_graph(
+            config.num_rooms, 
+            config.entrance_doors_per_room, 
+            config.exit_doors_per_room
+        )
 
 
 def generate_complete_level(
@@ -223,25 +325,35 @@ def generate_complete_level(
 
         level.add_room(room_id, room)
     
-    #  NEW: Create DoorLink objects for each connection
+    # Create DoorLink objects for each connection using PCG door system
     for from_room_id, neighbor_ids in graph.items():
         from_room = level.get_room(from_room_id)
         
-        if not from_room or not from_room.exit_coords:
+        if not from_room or not from_room.doors:
             continue
         
         for to_room_id in neighbor_ids:
             to_room = level.get_room(to_room_id)
             
-            if not to_room or not to_room.entrance_coords:
+            if not to_room or not to_room.doors:
                 continue
             
-            # Create physical door link
+            # Get first available door from each room
+            # For linear levels, each room should have exactly 1 door
+            from_door_id = next(iter(from_room.doors.keys()))
+            to_door_id = next(iter(to_room.doors.keys()))
+            
+            # Add destination to the from_room's door
+            from_door = from_room.doors[from_door_id]
+            from_door.add_destination("default", to_room_id)
+            
+            # Create PCG door link
             door_link = DoorLink(
                 from_room_id=from_room_id,
                 to_room_id=to_room_id,
-                from_door_pos=from_room.exit_coords,
-                to_door_pos=to_room.entrance_coords
+                from_door_id=from_door_id,
+                to_door_id=to_door_id,
+                choice_label="default"
             )
             
             level.door_links.append(door_link)
@@ -287,12 +399,21 @@ def generate_linear_fallback_level(
             from_room = level.get_room(from_room_id)
             to_room = level.get_room(to_room_id)
 
-            if from_room and from_room.exit_coords and to_room and to_room.entrance_coords:
+            if from_room and from_room.doors and to_room and to_room.doors:
+                # Get first available door from each room
+                from_door_id = next(iter(from_room.doors.keys()))
+                to_door_id = next(iter(to_room.doors.keys()))
+                
+                # Add destination to from_room's door
+                from_door = from_room.doors[from_door_id]
+                from_door.add_destination("default", to_room_id)
+                
                 door_link = DoorLink(
                     from_room_id=from_room_id,
                     to_room_id=to_room_id,
-                    from_door_pos=from_room.exit_coords,
-                    to_door_pos=to_room.entrance_coords
+                    from_door_id=from_door_id,
+                    to_door_id=to_door_id,
+                    choice_label="default"
                 )
                 level.door_links.append(door_link)
     

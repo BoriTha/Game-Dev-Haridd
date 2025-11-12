@@ -36,24 +36,6 @@ class TileCell:
         return f"TileCell({', '.join(parts)})"
 
 @dataclass
-class Door:
-    """Represents a door in PCG system with single or multiple destinations."""
-    door_id: str  # "A", "B", "C", etc.
-    position: Tuple[int, int]  # Tile coordinates
-    destinations: Dict[str, str] = field(default_factory=dict)  # choice_label -> room_id
-    is_locked: bool = False
-    door_type: str = "exit"  # "entrance" or "exit"
-    
-    def add_destination(self, choice_label: str, room_id: str) -> None:
-        self.destinations[choice_label] = room_id
-    
-    def get_destinations(self) -> Dict[str, str]:
-        return self.destinations.copy()
-    
-    def is_single_destination(self) -> bool:
-        return len(self.destinations) == 1
-
-@dataclass
 class RoomData:
     """
     Represents a single generated room using sparse grid representation.
@@ -62,7 +44,8 @@ class RoomData:
         size: Tuple of (width, height) in tiles
         default_tile: The TileCell used for coordinates not in the grid
         grid: Sparse dictionary mapping (x, y) -> TileCell
-        doors: Dictionary of PCG doors in this room
+        entrance_coords: Coordinate of the entrance door
+        exit_coords: Coordinate of the exit door
         spawn_areas: List of defined spawn zones
         difficulty_rating: Assigned difficulty score
         depth_from_start: Distance in rooms from level start
@@ -70,7 +53,8 @@ class RoomData:
     size: Tuple[int, int]
     default_tile: TileCell = field(default_factory=lambda: TileCell(TileType.AIR))
     grid: Dict[Tuple[int, int], TileCell] = field(default_factory=dict)
-    doors: Dict[str, Door] = field(default_factory=dict)
+    entrance_coords: Optional[Tuple[int, int]] = None
+    exit_coords: Optional[Tuple[int, int]] = None
     spawn_areas: List['SpawnArea'] = field(default_factory=list)
     difficulty_rating: int = 1
     depth_from_start: int = 0
@@ -94,41 +78,6 @@ class RoomData:
         (optimization to remove it can be done later).
         """
         self.grid[(x, y)] = tile
-
-    def add_door(self, door: Door) -> None:
-        self.doors[door.door_id] = door
-
-    def get_door(self, door_id: str) -> Optional[Door]:
-        return self.doors.get(door_id)
-
-    def get_exit_doors(self) -> List[Door]:
-        return [door for door in self.doors.values() if door.door_type == "exit"]
-
-    def get_entrance_doors(self) -> List[Door]:
-        return [door for door in self.doors.values() if door.door_type == "entrance"]
-
-    def has_pcg_doors(self) -> bool:
-        return len(self.doors) > 0
-
-    def check_door_collision(self, world_x: int, world_y: int, tile_size: int) -> Optional[Door]:
-        """Check if world position collides with any PCG door."""
-        tile_x = world_x // tile_size
-        tile_y = world_y // tile_size
-        
-        for door in self.doors.values():
-            if door.position == (tile_x, tile_y):
-                return door
-        return None
-
-    def get_door_at_world_position(self, world_x: int, world_y: int, tile_size: int) -> Optional[str]:
-        """Get door ID at world position."""
-        door = self.check_door_collision(world_x, world_y, tile_size)
-        return door.door_id if door else None
-
-    def get_door_destinations_at_position(self, world_x: int, world_y: int, tile_size: int) -> Dict[str, str]:
-        """Get destinations for door at world position."""
-        door = self.check_door_collision(world_x, world_y, tile_size)
-        return door.get_destinations() if door else {}
 
 @dataclass
 class MovementAttributes:

@@ -9,19 +9,12 @@ from src.level.room_data import RoomData
 
 @dataclass
 class DoorLink:
-    """
-    Represents a connection between two rooms via doors.
-    
-    Attributes:
-        from_room_id: ID of source room
-        to_room_id: ID of destination room
-        from_door_pos: (x, y) position of door in source room
-        to_door_pos: (x, y) position of door in destination room
-    """
+    """PCG door connection between specific doors."""
     from_room_id: str
     to_room_id: str
-    from_door_pos: Tuple[int, int]
-    to_door_pos: Tuple[int, int]
+    from_door_id: str  # PCG door identifier
+    to_door_id: str    # PCG door identifier
+    choice_label: str = "default"
 
 
 @dataclass
@@ -127,8 +120,12 @@ class LevelGenerationConfig:
         layout_type: Type of level layout ("linear", "branching", "looping")
         branch_probability: Chance of creating branches (for branching layout)
         loop_probability: Chance of creating loops (for looping layout)
+        entrance_doors_per_room: Number of entrance doors per room
+        exit_doors_per_room: Number of exit doors per room
     """
     num_rooms: int = 5
     layout_type: str = "linear"  # "linear", "branching", "looping"
     branch_probability: float = 0.3
     loop_probability: float = 0.2
+    entrance_doors_per_room: int = 1  # Number of entrance doors
+    exit_doors_per_room: int = 1     # Number of exit doors
