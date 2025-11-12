@@ -28,6 +28,46 @@ from src.core.utils import bresenham_line
 # This function and its helpers are kept for compatibility but not called.
 
 
+def create_exclusion_zone(
+    room_data: RoomData,
+    center_x: int,
+    center_y: int,
+    width: int,
+    height: int,
+    exclusion_type: str = "PROTECTED"
+) -> set:
+    """
+    Create exclusion zone for rectangular area.
+    
+    Args:
+        room_data: Room to modify
+        center_x: Center X coordinate
+        center_y: Center Y coordinate  
+        width: Width of protected area
+        height: Height of protected area
+        exclusion_type: Type flag for protected tiles
+        
+    Returns:
+        Set of protected tile coordinates
+    """
+    protected_tiles = set()
+    half_width = width // 2
+    half_height = height // 2
+    
+    for dx in range(-half_width, half_width + (width % 2)):
+        for dy in range(-half_height, half_height + (height % 2)):
+            tile_x = center_x + dx
+            tile_y = center_y + dy
+            
+            if room_data.is_in_bounds(tile_x, tile_y):
+                # Mark existing tile as protected
+                existing_tile = room_data.get_tile(tile_x, tile_y)
+                existing_tile.flags.add(exclusion_type)
+                protected_tiles.add((tile_x, tile_y))
+    
+    return protected_tiles
+
+
 def calculate_spawn_density(
     room_data: RoomData,
     config: GenerationConfig
@@ -342,10 +382,14 @@ def carve_corridor_block(
     start_y = center_y - half_height
     end_y = center_y + half_height + (height % 2)  # Add 1 if odd height
     
-    # Carve the block
+    # Carve the block, respecting protected tiles
     for x in range(start_x, end_x):
         for y in range(start_y, end_y):
             if room_data.is_in_bounds(x, y):
+                existing_tile = room_data.get_tile(x, y)
+                # Skip carving if tile has any protection flag
+                if any(flag in existing_tile.flags for flag in ["SPAWN_PLATFORM", "DOOR_PLATFORM", "PROTECTED"]):
+                    continue
                 room_data.set_tile(x, y, TileCell(t="AIR"))
 
 def flood_fill_find_regions(room_data: RoomData) -> List[Set[Tuple[int, int]]]:
@@ -491,34 +535,76 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
         config.movement_attributes.player_height
     )
     
-    # === NEW: Choose quadrant corner for 3x3 spawn area ===
-    # Define four interior corners (avoiding outer boundaries)
-    corners = [
-        (1, 1),                    # Top-left interior corner
-        (width - 2, 1),            # Top-right interior corner
-        (1, height - 2),            # Bottom-left interior corner
-        (width - 2, height - 2)     # Bottom-right interior corner
-    ]
+    # === NEW: Choose spawn position within 10-tile radius of corner ===
+    # Define 10x10 quadrant regions extending from each corner
+    corner_regions = []
     
-    # Randomly choose one corner
-    spawn_corner_x, spawn_corner_y = rng.choice(corners)
-    
-    # Adjust center to ensure 3x3 fits inside room boundaries
-    # Move 1 tile inward from corner to be safe center
-    if spawn_corner_x == 1:
-        spawn_center_x = 2
-    else:
-        spawn_center_x = width - 3
+    # Calculate quadrant size, ensuring room is large enough for 3x3 spawn area
+    min_room_size = 6  # Minimum size for 3x3 spawn area
+    if width >= min_room_size and height >= min_room_size:
+        # Top-left quadrant: (1,1) to (10,10) or room bounds
+        corner_regions.append({
+            'min_x': 1, 'max_x': min(10, width - 3),
+            'min_y': 1, 'max_y': min(10, height - 3)
+        })
         
-    if spawn_corner_y == 1:
-        spawn_center_y = 2
+        # Top-right quadrant: (width-10,1) to (width-1,10) or room bounds
+        corner_regions.append({
+            'min_x': max(width - 10, 2), 'max_x': width - 2,
+            'min_y': 1, 'max_y': min(10, height - 3)
+        })
+        
+        # Bottom-left quadrant: (1,height-10) to (10,height-1) or room bounds
+        corner_regions.append({
+            'min_x': 1, 'max_x': min(10, width - 3),
+            'min_y': max(height - 10, 2), 'max_y': height - 2
+        })
+        
+        # Bottom-right quadrant: (width-10,height-10) to (width-1,height-1) or room bounds
+        corner_regions.append({
+            'min_x': max(width - 10, 2), 'max_x': width - 2,
+            'min_y': max(height - 10, 2), 'max_y': height - 2
+        })
+    
+    # Generate random spawn position within chosen quadrant
+    if corner_regions:
+        chosen_region = rng.choice(corner_regions)
+        spawn_center_x = rng.randint(chosen_region['min_x'], chosen_region['max_x'])
+        spawn_center_y = rng.randint(chosen_region['min_y'], chosen_region['max_y'])
     else:
-        spawn_center_y = height - 3
+        # Fallback for very small rooms
+        spawn_center_x = max(2, min(width // 2, width - 3))
+        spawn_center_y = max(2, min(height // 2, height - 3))
+    
+    # === NEW: Boundary auto-adjustment to prevent out-of-bounds carving ===
+    # Check if 3x3 area would go out of bounds and adjust if needed
+    needs_adjustment = False
+    adjust_x = 0
+    adjust_y = 0
+
+    if spawn_center_x - 1 < 0:  # Would carve left boundary
+        adjust_x = 1 - spawn_center_x
+        needs_adjustment = True
+    elif spawn_center_x + 1 >= width:  # Would carve right boundary
+        adjust_x = (width - 1) - spawn_center_x
+        needs_adjustment = True
+
+    if spawn_center_y - 1 < 0:  # Would carve top boundary
+        adjust_y = 1 - spawn_center_y
+        needs_adjustment = True
+    elif spawn_center_y + 1 >= height:  # Would carve bottom boundary
+        adjust_y = (height - 1) - spawn_center_y
+        needs_adjustment = True
+
+    # Auto-adjust to nearest valid position
+    if needs_adjustment:
+        spawn_center_x += adjust_x
+        spawn_center_y += adjust_y
     
     # Store player spawn center for later use
     room.player_spawn = (spawn_center_x, spawn_center_y)
     
-    # === NEW: Carve 3x3 spawn area with ground support ===
+    # === NEW: Carve 3x3 spawn area (AIR space above ground) ===
     # Carve a 3x3 block of AIR tiles centered around spawn_center
     for dx in range(-1, 2):
         for dy in range(-1, 2):
@@ -527,19 +613,18 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
             if room.is_in_bounds(carve_x, carve_y):
                 room.set_tile(carve_x, carve_y, TileCell(t="AIR"))
     
-    # Place solid ground tile directly below the player spawn point
-    ground_y = spawn_center_y + 1
-    if room.is_in_bounds(spawn_center_x, ground_y):
-        room.set_tile(spawn_center_x, ground_y, TileCell(t="WALL"))
-    
-    # === NEW: Create exclusion zone for spawn area ===
+    # === NEW: Create exclusion zone for ground platform only ===
+    # Protect 3x1 ground platform below spawn area (existing WALL tiles)
     spawn_exclusion = set()
-    for dx in range(-1, 2):
-        for dy in range(-1, 2):
-            ex_x = spawn_center_x + dx
-            ex_y = spawn_center_y + dy
-            # Include ground tile in exclusion too
-            spawn_exclusion.add((ex_x, ex_y))
+    ground_platform_exclusion = create_exclusion_zone(
+        room_data=room,
+        center_x=spawn_center_x,
+        center_y=spawn_center_y + 2,  # One tile below 3x3 spawn area
+        width=3,
+        height=1,
+        exclusion_type="SPAWN_PLATFORM"
+    )
+    spawn_exclusion.update(ground_platform_exclusion)
     
     # Initialize walker at spawn center instead of room center
     walker_x = spawn_center_x
@@ -572,12 +657,14 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
         start_y = walker_y - half_height
         end_y = walker_y + half_height + (carve_height % 2)
 
-        # Carve corridor block, but skip any coordinates inside spawn_exclusion.
+        # Carve corridor block, but skip any coordinates with protection flags
         for carve_x in range(start_x, end_x):
             for carve_y in range(start_y, end_y):
-                if (carve_x, carve_y) in spawn_exclusion:
-                    continue
                 if room.is_in_bounds(carve_x, carve_y):
+                    existing_tile = room.get_tile(carve_x, carve_y)
+                    # Skip carving if tile has any protection flag
+                    if any(flag in existing_tile.flags for flag in ["SPAWN_PLATFORM", "DOOR_PLATFORM", "PROTECTED"]):
+                        continue
                     room.set_tile(carve_x, carve_y, TileCell(t="AIR"))
         
         # Count carved tiles for stopping condition
@@ -675,6 +762,28 @@ def generate_validated_room(
         # This establishes the *real* entrance/exit coords.
         if not place_doors(room, movement_attrs):
             continue
+        
+        # Phase 2.5: Create exclusion zones for door ground platforms
+        # This ensures doors always have solid ground to stand on
+        if room.entrance_coords:
+            create_exclusion_zone(
+                room_data=room,
+                center_x=room.entrance_coords[0],
+                center_y=room.entrance_coords[1] + 1,  # Below door
+                width=3,
+                height=1,
+                exclusion_type="DOOR_PLATFORM"
+            )
+        
+        if room.exit_coords:
+            create_exclusion_zone(
+                room_data=room,
+                center_x=room.exit_coords[0],
+                center_y=room.exit_coords[1] + 1,  # Below door
+                width=3,
+                height=1,
+                exclusion_type="DOOR_PLATFORM"
+            )
         
         # Phase 3: REMOVED - Platforms are no longer placed
         # Corridors and spawn area provide sufficient traversability
