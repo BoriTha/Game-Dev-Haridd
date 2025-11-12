@@ -44,8 +44,8 @@ class Game:
         self.use_procedural = True  # Set to False to use static rooms
         
         self.movement_attrs = MovementAttributes(
-            max_jump_height=4,  # Adjust based on your player jump
-            max_jump_distance=6,
+            max_jump_height=12,  # Match actual player jump capability
+            max_jump_distance=10,
             player_width=1,
             player_height=2
         )
@@ -143,6 +143,40 @@ class Game:
         self.inventory = Inventory(self)
         self.inventory._refresh_inventory_defaults()
         self.shop = Shop(self)
+
+    def reset_game_state(self):
+        """
+        Reset game state to initial state (similar to constructor logic).
+        This is used when returning to main menu from death screen.
+        """
+        print(f"[DEBUG] reset_game_state called!")
+        
+        # Reset level tracking
+        self.level_index = 0
+        self.current_level_number = 1
+        self.current_level_data = None
+        
+        # Clear transient collections
+        hitboxes.clear()
+        floating.clear()
+        
+        # Initialize first level (same logic as constructor)
+        initial_level = 0 if not self.use_procedural else 1
+        self._load_level(level_number=initial_level, initial=True)
+        
+        # create player with chosen class
+        sx, sy = self.level.spawn
+        self.player = Player(sx, sy, cls=self.selected_class)
+        self.enemies = self.level.enemies
+        
+        # Reset inventory & shop
+        if hasattr(self, "inventory") and self.inventory is not None:
+            self.inventory._refresh_inventory_defaults()
+        
+        # Reset camera
+        self.camera = Camera()
+        
+        print(f"[DEBUG] Game state reset complete")
 
     def toggle_procedural_generation(self):
         """Toggles procedural generation on/off."""
@@ -246,7 +280,7 @@ class Game:
                 seed=level_seed
             )
             
-            self.current_level_number = level_number
+            self.current_level_number = level_number if level_number is not None else 1
             
             # Start at first room
             room_id = room_id or self.current_level_data.start_room_id
@@ -256,19 +290,17 @@ class Game:
         if room_id is None:
             room_id = self.current_level_data.start_room_id if self.current_level_data else "room_0"
         
-        room_data = self.current_level_data.get_room(room_id) if self.current_level_data else None
+        room_data = self.current_level_data.get_room(room_id) if self.current_level_data and room_id else None
         
         if room_data is None:
             print(f"[ERROR] Room {room_id} not found in level!")
             return
         
         try:
-            # Create Level from RoomData
-            lvl = Level(
-                room_data=room_data,
-                level_data=self.current_level_data,
-                room_id=room_id
-            )
+            # For now, use static room system since procedural Level constructor doesn't exist
+            # Use room_id hash to determine which static room to load
+            room_index = hash(room_id) % ROOM_COUNT if room_id else 0
+            lvl = Level(room_index)
         except Exception as e:
             print(f"[CRITICAL ERROR] Failed to load room {room_id}: {e}")
             import traceback
@@ -340,7 +372,8 @@ class Game:
                     # No more rooms - reached goal!
                     
                     # Generate next level
-                    self._load_level(level_number=self.current_level_number + 1)
+                    next_level = self.current_level_number + 1
+                    self._load_level(level_number=next_level)
                     
                     # Reset player position
                     sx, sy = self.level.spawn
@@ -1458,12 +1491,13 @@ class Game:
                     # Developer cheats / debug tools
                     elif ev.key == pygame.K_F1:
                         # toggle god mode (invincibility only)
-                        self.player.god = not getattr(self.player, 'god', False)
+                        current_god = getattr(self.player, 'god', False)
+                        setattr(self.player, 'god', not current_god)
                         floating.append(DamageNumber(
                             self.player.rect.centerx,
                             self.player.rect.top - 12,
-                            f"God Mode {'ON' if self.player.god else 'OFF'}!",
-                            (255, 200, 80) if self.player.god else (200, 200, 200)
+                            f"God Mode {'ON' if not current_god else 'OFF'}!",
+                            (255, 200, 80) if not current_god else (200, 200, 200)
                         ))
                     elif ev.key == pygame.K_F2:
                         # refill consumables

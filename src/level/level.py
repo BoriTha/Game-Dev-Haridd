@@ -1,12 +1,9 @@
 import pygame
-from typing import Optional, List
-from config import TILE, TILE_COL, CYAN, WIDTH, HEIGHT
+from typing import List
+from config import TILE, CYAN, WIDTH, HEIGHT
 from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
 from ..tiles import TileParser, TileRenderer, TileRegistry, TileType
 from ..tiles.tile_collision import TileCollision
-from src.level.room_data import GenerationConfig, MovementAttributes, RoomData
-from src.level.level_data import LevelData, LevelGenerationConfig
-from src.level.graph_generator import generate_complete_level
 
 # Rooms (tilemaps). Legend:
 #   Tiles: # wall, . air/empty, _ platform, @ breakable wall, % breakable floor
@@ -149,26 +146,15 @@ ROOMS = [
 ROOM_COUNT = len(ROOMS)
 
 class Level:
-    def __init__(
-        self,
-        index: int = 0,
-        room_data: Optional[RoomData] = None,
-        level_data: Optional[LevelData] = None,
-        room_id: Optional[str] = None,
-    ):
+    def __init__(self, index: int = 0):
         """
-        Initialize a level, either from static rooms (legacy) or procedural generation.
-
+        Initialize a level from static ASCII rooms.
+        
         Args:
-            index: Legacy room index (unused if room_data provided)
-            room_data: Procedurally generated room (new tile system, RoomData/TileCell)
-            level_data: Complete level data for multi-room dungeons
-            room_id: Which room in level_data to load
+            index: Room index to load from ROOMS array
         """
-        self.index = index
-        self.level_data = level_data  # Store for room transitions
-        self.current_room_id = room_id  # Track current room in level
-
+        self.index = index % len(ROOMS)
+        
         # Core containers
         self.solids: List[pygame.Rect] = []
         self.enemies: List = []
@@ -181,33 +167,21 @@ class Level:
         self.tile_registry = TileRegistry()
         self.tile_collision = TileCollision(TILE)
 
-        # Decide initialization path:
-        # - Procedural RoomData: use new tile system directly (NO ASCII, NO TileParser).
-        # - Legacy static ROOMS: parse ASCII via TileParser.
-        if room_data is not None:
-            # Procedural path (new system)
-            self.procedural = True
-            self._init_from_roomdata(room_data)
-        else:
-            # Legacy path (ASCII ROOMS)
-            self.procedural = False
-            self._init_from_legacy_rooms(index)
+        # Parse ASCII room
+        self._init_from_ascii()
 
         # Level dimensions based on numeric grid
         self.w = len(self.grid[0]) * TILE if self.grid else 0
         self.h = len(self.grid) * TILE
 
-        # Final spawn safety adjustment
+        # Validate spawn position
         self.spawn = self._validate_spawn_position(self.spawn)
     
-    def _init_from_legacy_rooms(self, index: int) -> None:
+    def _init_from_ascii(self) -> None:
         """
-        Initialize level state from legacy ASCII ROOMS using TileParser.
-        ASCII is ONLY used for this legacy path.
+        Initialize level state from ASCII ROOMS using TileParser.
         """
-        # Clamp index and get ASCII room definition
-        self.index = index % len(ROOMS)
-        # When index is 0, ensure we load ROOMS[0] (Room 1)
+        # Get ASCII room definition
         raw = ROOMS[self.index]
 
         # Parse ASCII as legacy
@@ -222,87 +196,11 @@ class Level:
         # Build solids from tile collision data
         self._update_solids_from_grid()
 
-    def _init_from_roomdata(self, room_data: RoomData) -> None:
-        """
-        Initialize level state directly from RoomData/TileCell (procedural path).
-
-        No ASCII conversion, no TileParser usage.
-        """
-        width, height = room_data.size
-
-        # Build numeric grid based on TileCell + TileRegistry
-        self.grid = []
-        for y in range(height):
-            row: List[int] = []
-            for x in range(width):
-                tile_cell = room_data.get_tile(x, y)
-
-                # Map TileCell.t/flags to TileType via registry:
-                # - "AIR" => TileType.AIR
-                # - "WALL" (PLATFORM flag) => platform tile if registered, else solid wall
-                # - "WALL" => solid wall
-                # - Anything unknown => AIR (non-blocking)
-                tile_type = None
-
-                if tile_cell.t == "AIR":
-                    from ..tiles.tile_types import TileType as _TT
-                    tile_type = _TT.AIR
-                elif tile_cell.t == "WALL":
-                    from ..tiles.tile_types import TileType as _TT
-                    # Prefer a platform tile if flagged; fallback to normal wall
-                    if "PLATFORM" in tile_cell.flags:
-                        # If a dedicated PLATFORM tile exists in registry, use it; else use WALL.
-                        platform_candidate = None
-                        try:
-                            # Common name for platform-like tile; adjust if your enum differs.
-                            from ..tiles.tile_types import TileType as __TT
-                            if hasattr(__TT, "PLATFORM"):
-                                platform_candidate = __TT.PLATFORM
-                        except Exception:
-                            platform_candidate = None
-
-                        if platform_candidate and self.tile_registry.get_tile(platform_candidate):
-                            tile_type = platform_candidate
-                        else:
-                            tile_type = _TT.WALL
-                    else:
-                        tile_type = _TT.WALL
-                else:
-                    # Unknown semantic type → treat as AIR for now
-                    from ..tiles.tile_types import TileType as _TT
-                    tile_type = _TT.AIR
-
-                row.append(tile_type.value)
-            self.grid.append(row)
-
-        # Derive doors directly from RoomData (no ASCII markers)
-        self._init_doors_from_roomdata(room_data)
-
-        # Use RoomData.player_spawn if provided and not None; otherwise keep default and let validation adjust
-        player_spawn = getattr(room_data, "player_spawn", None)
-        if player_spawn is not None:
-            spawn_x, spawn_y = player_spawn
-            self.spawn = (spawn_x * TILE, spawn_y * TILE)
-            print(f"[LEVEL DEBUG] Using procedural player spawn at ({spawn_x}, {spawn_y}) -> world {self.spawn}")
-
-        # Build solids from new grid
-        self._update_solids_from_grid()
-
-    def _init_doors_from_roomdata(self, room_data: RoomData) -> None:
-        """
-        Create door rectangles based on RoomData entrance/exit coordinates.
-        """
-        self.doors = []
-        for coord in (room_data.entrance_coords, room_data.exit_coords):
-            if coord:
-                x, y = coord
-                rect = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
-                self.doors.append(rect)
+    
 
     def _load_entities(self, entity_positions: dict):
         """
-        Load enemies and special objects from parsed positions.
-        Used ONLY for legacy ASCII rooms; procedural rooms use RoomData directly.
+        Load enemies and special objects from parsed ASCII positions.
         """
         # Check if boss is present
         boss_present = 'enemy_boss' in entity_positions or len(entity_positions.get('boss', [])) > 0
@@ -348,7 +246,7 @@ class Level:
                     self.doors.append(rect)
 
     def _update_solids_from_grid(self):
-        """Update solids list from tile grid for backward compatibility."""
+        """Update solids list from tile grid."""
         self.solids = []
         for y, row in enumerate(self.grid):
             for x, tile_value in enumerate(row):

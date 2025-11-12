@@ -186,7 +186,7 @@ class Menu:
                     pygame.quit(); sys.exit()
                 elif ev.type == pygame.KEYDOWN:
                     # Direct hotkeys for convenience (preserve legacy behavior)
-                    if ev.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                    if ev.key in (pygame.K_r,):  # Remove Enter and Space keys
                         # Restart run via centralized logic so behavior is consistent.
                         print(f"[DEBUG GAME_OVER] Restart selected via hotkey")
                         print(f"[DEBUG GAME_OVER] Before restart: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
@@ -208,20 +208,9 @@ class Menu:
                         return
                     elif ev.key in (pygame.K_2, pygame.K_e):
                         # Hotkey: 2 or E => Main Menu
-                        # Mirror pause_menu "Main Menu" behavior:
-                        # - Go back to title_screen()
-                        # - Then reset to level 0 and recreate player/inventory/camera.
+                        # Go back to title_screen(), then reset game state properly
                         self.title_screen()
-                        # After returning from title screen, reset to level 0 respecting current PCG setting
-                        initial_level = 0 if not self.game.use_procedural else 1
-                        self.game._load_level(initial_level, initial=True)
-                        sx, sy = self.game.level.spawn
-                        self.game.player = Player(sx, sy, cls=self.game.selected_class)
-                        self.game.enemies = self.game.level.enemies
-                        self.game.inventory._refresh_inventory_defaults()
-                        hitboxes.clear()
-                        floating.clear()
-                        self.game.camera = Camera()
+                        self.game.reset_game_state()
                         return
                     elif ev.key in (pygame.K_3,):
                         # Hotkey: 3 => Quit
@@ -236,16 +225,7 @@ class Menu:
                             return
                         elif choice == "Main Menu":
                             self.title_screen()
-                            # After returning from title screen, reset to level 0 respecting current PCG setting
-                            initial_level = 0 if not self.game.use_procedural else 1
-                            self.game._load_level(initial_level, initial=True)
-                            sx, sy = self.game.level.spawn
-                            self.game.player = Player(sx, sy, cls=self.game.selected_class)
-                            self.game.enemies = self.game.level.enemies
-                            self.game.inventory._refresh_inventory_defaults()
-                            hitboxes.clear()
-                            floating.clear()
-                            self.game.camera = Camera()
+                            self.game.reset_game_state()
                             return
                         elif choice == "Quit":
                             pygame.quit(); sys.exit()
@@ -291,17 +271,9 @@ class Menu:
                             self.settings_screen()
                         elif choice == "Main Menu":
                             # Go back to title menu, allow user to adjust options,
-                            # then start fresh level 0 respecting user_wants_procedural.
+                            # then reset game state properly
                             self.title_screen()
-                            # After returning from title screen, reset to level 0 respecting current PCG setting
-                            initial_level = 0 if not self.game.use_procedural else 1
-                            self.game._load_level(initial_level, initial=True)
-                            sx, sy = self.game.level.spawn
-                            self.game.player = Player(sx, sy, cls=self.game.selected_class)
-                            self.game.enemies = self.game.level.enemies
-                            self.game.inventory._refresh_inventory_defaults()
-                            hitboxes.clear(); floating.clear()
-                            self.game.camera = Camera()
+                            self.game.reset_game_state()
                             return
                         elif choice == "Quit":
                             pygame.quit(); sys.exit()
