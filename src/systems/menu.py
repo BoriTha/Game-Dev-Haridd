@@ -361,11 +361,7 @@ class Menu:
                         elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                             choice = options[idx]
                             if choice == "Toggle PCG":
-                                print(f"[DEBUG MENU] Toggle PCG selected")
-                                print(f"[DEBUG MENU] Before toggle: use_procedural={self.game.use_procedural}")
                                 self.game.toggle_procedural_generation()
-                                print(f"[DEBUG MENU] After toggle: use_procedural={self.game.use_procedural}")
-                                print(f"[DEBUG MENU] PCG toggle will apply when starting a new run from the main menu.")
                             elif choice == "Set Custom Seed":
                                 input_active = True
                                 input_text = str(self.game.get_current_seed() or "") # Pre-fill with current seed
@@ -402,7 +398,6 @@ class Menu:
                 pygame.draw.rect(self.screen, (200,200,220), input_rect, 2)
                 draw_text(self.screen, input_text, (input_rect.x + 10, input_rect.y + 10), (255,255,255), size=20)
                 draw_text(self.screen, "Enter seed (integer)", (WIDTH//2 - 150, input_rect.y - 30), (180,180,200), size=16)
-
 
             draw_text(self.screen, "Use Up/Down, Enter to select, Esc to return", (WIDTH//2 - 210, HEIGHT-64), (160,160,180), size=16)
             pygame.display.flip()
