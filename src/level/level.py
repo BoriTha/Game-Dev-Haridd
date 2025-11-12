@@ -149,111 +149,165 @@ ROOMS = [
 ROOM_COUNT = len(ROOMS)
 
 class Level:
-    def __init__(self, index=0, room_data: Optional[RoomData] = None, level_data: Optional[LevelData] = None, room_id: Optional[str] = None):
+    def __init__(
+        self,
+        index: int = 0,
+        room_data: Optional[RoomData] = None,
+        level_data: Optional[LevelData] = None,
+        room_id: Optional[str] = None,
+    ):
         """
         Initialize a level, either from static rooms (legacy) or procedural generation.
-        
+
         Args:
             index: Legacy room index (unused if room_data provided)
-            room_data: Procedurally generated room (new system)
+            room_data: Procedurally generated room (new tile system, RoomData/TileCell)
             level_data: Complete level data for multi-room dungeons
             room_id: Which room in level_data to load
         """
         self.index = index
         self.level_data = level_data  # Store for room transitions
         self.current_room_id = room_id  # Track current room in level
-        
-        # NEW: Use procedural room if provided
-        if room_data is not None:
-            raw = self._convert_roomdata_to_ascii(room_data)
-            print("\n[DEBUG] Generated Room ASCII:")
-            for line in raw:
-                print(line)
-            print("[DEBUG] End Room ASCII\n")
-            self.procedural = True
-            
-            # NEW: Use player_spawn from procedural room when entering fresh level
-            if hasattr(room_data, 'player_spawn') and room_data.player_spawn:
-                # Convert procedural spawn center to world coordinates
-                spawn_x, spawn_y = room_data.player_spawn
-                self.spawn = (spawn_x * TILE, spawn_y * TILE)
-                print(f"[LEVEL DEBUG] Using procedural player spawn at ({spawn_x}, {spawn_y}) -> world {self.spawn}")
-        else:
-            # LEGACY: Use static rooms
-            self.index = index % len(ROOMS)
-            raw = ROOMS[self.index]
-            self.procedural = False
-        
-        self.solids = []
-        self.enemies = []
-        self.doors = []
+
+        # Core containers
+        self.solids: List[pygame.Rect] = []
+        self.enemies: List = []
+        self.doors: List[pygame.Rect] = []
         self.spawn = (TILE * 2, TILE * 2)
-        
-        # Initialize tile system
+
+        # Initialize tile/physics systems
         self.tile_parser = TileParser()
         self.tile_renderer = TileRenderer(TILE)
         self.tile_registry = TileRegistry()
-        
-        # Parse ASCII (legacy mode for static rooms, normal mode for procedural)
-        self.grid, entity_positions = self.tile_parser.parse_ascii_level(
-            raw, 
-            legacy=(not self.procedural)
-        )
-        
-        # Load entities
-        self._load_entities(entity_positions)
-        self._update_solids_from_grid()
-        
-        # Level dimensions
+        self.tile_collision = TileCollision(TILE)
+
+        # Decide initialization path:
+        # - Procedural RoomData: use new tile system directly (NO ASCII, NO TileParser).
+        # - Legacy static ROOMS: parse ASCII via TileParser.
+        if room_data is not None:
+            # Procedural path (new system)
+            self.procedural = True
+            self._init_from_roomdata(room_data)
+        else:
+            # Legacy path (ASCII ROOMS)
+            self.procedural = False
+            self._init_from_legacy_rooms(index)
+
+        # Level dimensions based on numeric grid
         self.w = len(self.grid[0]) * TILE if self.grid else 0
         self.h = len(self.grid) * TILE
-        
-        self.tile_collision = TileCollision(TILE)
+
+        # Final spawn safety adjustment
         self.spawn = self._validate_spawn_position(self.spawn)
     
-    def _convert_roomdata_to_ascii(self, room_data: RoomData) -> List[str]:
+    def _init_from_legacy_rooms(self, index: int) -> None:
         """
-        Convert RoomData (sparse grid) to ASCII format for TileParser.
-        
-        Returns:
-            List of strings, one per row
+        Initialize level state from legacy ASCII ROOMS using TileParser.
+        ASCII is ONLY used for this legacy path.
+        """
+        # Clamp index and get ASCII room definition
+        self.index = index % len(ROOMS)
+        raw = ROOMS[self.index]
+
+        # Parse ASCII as legacy
+        self.grid, entity_positions = self.tile_parser.parse_ascii_level(
+            raw,
+            legacy=True,
+        )
+
+        # Load entities/doors from parsed markers
+        self._load_entities(entity_positions)
+
+        # Build solids from tile collision data
+        self._update_solids_from_grid()
+
+    def _init_from_roomdata(self, room_data: RoomData) -> None:
+        """
+        Initialize level state directly from RoomData/TileCell (procedural path).
+
+        No ASCII conversion, no TileParser usage.
         """
         width, height = room_data.size
-        ascii_rows = []
-        
-        for y in range(height):
-            row = []
-            for x in range(width):
-                tile = room_data.get_tile(x, y)
-                
-                # Map tile types to ASCII characters
-                if tile.t == "WALL":
-                    if "PLATFORM" in tile.flags:
-                        row.append('_')  # Platform (can jump through from below)
-                    else:
-                        row.append('#')  # Solid wall
-                elif tile.t == "AIR":
-                    # Check for doors
-                    if (x, y) == room_data.entrance_coords:
-                        row.append('S')  # Spawn/entrance
-                    elif (x, y) == room_data.exit_coords:
-                        row.append('D')  # Door/exit
-                    else:
-                        row.append('.')  # Empty air
-                else:
-                    row.append('.')  # Unknown → air
-            
-            ascii_rows.append(''.join(row))
-        
-        return ascii_rows
 
-    def _load_entities(self, entity_positions):
-        """Load enemies and special objects from parsed positions."""
+        # Build numeric grid based on TileCell + TileRegistry
+        self.grid = []
+        for y in range(height):
+            row: List[int] = []
+            for x in range(width):
+                tile_cell = room_data.get_tile(x, y)
+
+                # Map TileCell.t/flags to TileType via registry:
+                # - "AIR" => TileType.AIR
+                # - "WALL" (PLATFORM flag) => platform tile if registered, else solid wall
+                # - "WALL" => solid wall
+                # - Anything unknown => AIR (non-blocking)
+                tile_type = None
+
+                if tile_cell.t == "AIR":
+                    from ..tiles.tile_types import TileType as _TT
+                    tile_type = _TT.AIR
+                elif tile_cell.t == "WALL":
+                    from ..tiles.tile_types import TileType as _TT
+                    # Prefer a platform tile if flagged; fallback to normal wall
+                    if "PLATFORM" in tile_cell.flags:
+                        # If a dedicated PLATFORM tile exists in registry, use it; else use WALL.
+                        platform_candidate = None
+                        try:
+                            # Common name for platform-like tile; adjust if your enum differs.
+                            from ..tiles.tile_types import TileType as __TT
+                            if hasattr(__TT, "PLATFORM"):
+                                platform_candidate = __TT.PLATFORM
+                        except Exception:
+                            platform_candidate = None
+
+                        if platform_candidate and self.tile_registry.get_tile(platform_candidate):
+                            tile_type = platform_candidate
+                        else:
+                            tile_type = _TT.WALL
+                    else:
+                        tile_type = _TT.WALL
+                else:
+                    # Unknown semantic type → treat as AIR for now
+                    from ..tiles.tile_types import TileType as _TT
+                    tile_type = _TT.AIR
+
+                row.append(tile_type.value)
+            self.grid.append(row)
+
+        # Derive doors directly from RoomData (no ASCII markers)
+        self._init_doors_from_roomdata(room_data)
+
+        # Use RoomData.player_spawn if provided and not None; otherwise keep default and let validation adjust
+        player_spawn = getattr(room_data, "player_spawn", None)
+        if player_spawn is not None:
+            spawn_x, spawn_y = player_spawn
+            self.spawn = (spawn_x * TILE, spawn_y * TILE)
+            print(f"[LEVEL DEBUG] Using procedural player spawn at ({spawn_x}, {spawn_y}) -> world {self.spawn}")
+
+        # Build solids from new grid
+        self._update_solids_from_grid()
+
+    def _init_doors_from_roomdata(self, room_data: RoomData) -> None:
+        """
+        Create door rectangles based on RoomData entrance/exit coordinates.
+        """
+        self.doors = []
+        for coord in (room_data.entrance_coords, room_data.exit_coords):
+            if coord:
+                x, y = coord
+                rect = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
+                self.doors.append(rect)
+
+    def _load_entities(self, entity_positions: dict):
+        """
+        Load enemies and special objects from parsed positions.
+        Used ONLY for legacy ASCII rooms; procedural rooms use RoomData directly.
+        """
         # Check if boss is present
         boss_present = 'enemy_boss' in entity_positions or len(entity_positions.get('boss', [])) > 0
         self.is_boss_room = boss_present
 
-        # Load spawn point
+        # Load spawn point (legacy 'S' markers)
         if 'spawn' in entity_positions:
             for x, y in entity_positions['spawn']:
                 # Position player's feet at the spawn point, accounting for player height
@@ -264,7 +318,7 @@ class Level:
 
         print(f"[LEVEL DEBUG] Final spawn before validation: {self.spawn}")
 
-        # Load enemies
+        # Load enemies from legacy markers
         for entity_type, positions in entity_positions.items():
             for x, y in positions:
                 world_x = x * TILE
