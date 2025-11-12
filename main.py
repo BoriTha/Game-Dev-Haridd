@@ -15,7 +15,8 @@ from config import (
 )
 from src.core.utils import draw_text, get_font
 from src.systems.camera import Camera
-from src.level.level import Level, ROOM_COUNT
+from src.level.level import Level
+from src.level.legacy_level import LegacyLevel, ROOM_COUNT
 from src.entities.entities import Player, hitboxes, floating, DamageNumber
 from src.systems.inventory import Inventory
 from src.systems.menu import Menu
@@ -320,8 +321,8 @@ class Game:
 
         
         try:
-            # Use room_index (not index) to pass the intended room number to Level constructor
-            lvl = Level(room_index)
+            # Use LegacyLevel for old static room system
+            lvl = LegacyLevel(room_index)
         except Exception as e:
 
             return

@@ -8,7 +8,8 @@ sys.path.insert(0, root_dir)
 import pygame
 from config import WIDTH, HEIGHT, FPS
 from src.core.utils import draw_text, get_font
-from src.level.level import Level, ROOM_COUNT
+from src.level.level import Level
+from src.level.legacy_level import LegacyLevel, ROOM_COUNT
 from src.entities.entities import Player, hitboxes, floating
 from src.systems.camera import Camera
 
