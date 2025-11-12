@@ -1,6 +1,7 @@
 from typing import List, Tuple
 from src.level.room_data import RoomData, MovementAttributes
 from src.core.utils import bresenham_line
+from src.tiles.tile_types import TileType
 
 def check_jump_arc_clear(room_data: RoomData, start_pos: Tuple[int, int], end_pos: Tuple[int, int], player_height: int) -> bool:
     """
@@ -13,7 +14,7 @@ def check_jump_arc_clear(room_data: RoomData, start_pos: Tuple[int, int], end_po
             check_y = y - h
             tile = room_data.grid.get((x, check_y), room_data.default_tile)
             
-            if tile.t == "WALL":
+            if tile.tile_type == TileType.WALL:
                 return False
                 
     return True
@@ -40,7 +41,7 @@ def find_valid_ground_locations(room_data: RoomData, entity_width: int, entity_h
                         has_clearance = False
                         break
                     above_tile = room_data.grid.get(check_pos, default_tile)
-                    if above_tile.t == "WALL":
+                    if above_tile.tile_type == TileType.WALL:
                         has_clearance = False
                         break
                 if not has_clearance:
@@ -73,13 +74,11 @@ def verify_traversable(room_data: RoomData, movement_attrs: MovementAttributes) 
     - No assumptions about spawn areas; only doors and walkable ground matter.
     - Uses MovementAttributes (player size / jump) and carved tiles only.
     """
-    print(f"[TRAVERSAL DEBUG] Verifying traversability for room size {room_data.size}")
-    print(f"[TRAVERSAL DEBUG] Entrance: {room_data.entrance_coords}, Exit: {room_data.exit_coords}")
-    print(f"[TRAVERSAL DEBUG] Movement Attributes: max_jump_height={movement_attrs.max_jump_height}, max_jump_distance={movement_attrs.max_jump_distance}, player_height={movement_attrs.player_height}")
+
 
     # Require valid entrance/exit; PCG promises to set these via place_doors
     if not room_data.entrance_coords or not room_data.exit_coords:
-        print("[TRAVERSAL DEBUG] Entrance or Exit coords not set.")
+
         return False
 
     # Compute all valid ground nodes for current player size
@@ -88,21 +87,20 @@ def verify_traversable(room_data: RoomData, movement_attrs: MovementAttributes) 
         movement_attrs.player_width,
         movement_attrs.player_height
     )
-    print(f"[TRAVERSAL DEBUG] Found {len(all_ground_nodes)} valid ground locations.")
+
 
     # Ground nodes directly under the door tiles (where player stands)
     start_node = (room_data.entrance_coords[0], room_data.entrance_coords[1] + 1)
     end_node = (room_data.exit_coords[0], room_data.exit_coords[1] + 1)
 
-    print(f"[TRAVERSAL DEBUG] Start Node (ground below entrance): {start_node}")
-    print(f"[TRAVERSAL DEBUG] End Node (ground below exit): {end_node}")
+
 
     # If either door does not sit above valid ground, this layout is invalid
     if start_node not in all_ground_nodes:
-        print(f"[TRAVERSAL DEBUG] Start node {start_node} not in valid ground locations.")
+
         return False
     if end_node not in all_ground_nodes:
-        print(f"[TRAVERSAL DEBUG] End node {end_node} not in valid ground locations.")
+
         return False
 
     queue = [start_node]
@@ -110,10 +108,10 @@ def verify_traversable(room_data: RoomData, movement_attrs: MovementAttributes) 
     
     while queue:
         current_node = queue.pop(0)
-        print(f"[TRAVERSAL DEBUG] Exploring from {current_node}")
+
         
         if current_node == end_node:
-            print(f"[TRAVERSAL DEBUG] Path found to end node {end_node}!")
+
             return True
             
         for potential_neighbor in all_ground_nodes:
@@ -142,11 +140,11 @@ def verify_traversable(room_data: RoomData, movement_attrs: MovementAttributes) 
             )
             
             if is_clear:
-                print(f"[TRAVERSAL DEBUG]   {current_node} -> {potential_neighbor}: Reachable and clear. Adding to queue.")
+
                 visited.add(potential_neighbor)
                 queue.append(potential_neighbor)
             # else:
                 # print(f"[TRAVERSAL DEBUG]   {current_node} -> {potential_neighbor}: Physically reachable but path blocked.")
                 
-    print("[TRAVERSAL DEBUG] No path found to exit.")
+
     return False

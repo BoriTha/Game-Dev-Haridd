@@ -7,6 +7,7 @@ from src.level.room_data import RoomData, TileCell, GenerationConfig, MovementAt
 # Removed: Platform import since platforms are no longer used
 from src.level.traversal_verification import find_valid_ground_locations, verify_traversable
 from src.core.utils import bresenham_line
+from src.tiles.tile_types import TileType
 
 
 # All legacy platform-related types and helpers (Platform/add/remove/generate/exclusion)
@@ -334,8 +335,18 @@ def place_doors(room: RoomData, movement_attrs: MovementAttributes):
     """
     valid_ground = find_valid_ground_locations(room, movement_attrs.player_width, movement_attrs.player_height)
     
-    left_edge_candidates = [pos for pos in valid_ground if pos[0] == 1]
-    right_edge_candidates = [pos for pos in valid_ground if pos[0] == room.size[0] - 2]
+    # Look for ground specifically at door platform height (height - 5)
+    door_platform_y = room.size[1] - 5
+    edge_ground_at_platform = [pos for pos in valid_ground if pos[1] == door_platform_y]
+    
+    left_edge_candidates = [pos for pos in edge_ground_at_platform if pos[0] == 1]
+    right_edge_candidates = [pos for pos in edge_ground_at_platform if pos[0] == room.size[0] - 2]
+
+    # If no ground at platform height, fall back to any edge ground
+    if not left_edge_candidates:
+        left_edge_candidates = [pos for pos in valid_ground if pos[0] == 1]
+    if not right_edge_candidates:
+        right_edge_candidates = [pos for pos in valid_ground if pos[0] == room.size[0] - 2]
 
     if not left_edge_candidates or not right_edge_candidates:
         return False # Not a valid room for doors
@@ -343,12 +354,12 @@ def place_doors(room: RoomData, movement_attrs: MovementAttributes):
     # Place entrance door (AIR tile above the ground)
     entrance_ground = random.choice(left_edge_candidates)
     room.entrance_coords = (entrance_ground[0], entrance_ground[1] - 1)
-    room.grid[room.entrance_coords] = TileCell(t="AIR", flags={"DOOR_ENTRANCE"})
+    room.grid[room.entrance_coords] = TileCell(tile_type=TileType.AIR, flags={"DOOR_ENTRANCE"})
 
     # Place exit door (AIR tile above the ground)
     exit_ground = random.choice(right_edge_candidates)
     room.exit_coords = (exit_ground[0], exit_ground[1] - 1)
-    room.grid[room.exit_coords] = TileCell(t="AIR", flags={"DOOR_EXIT"})
+    room.grid[room.exit_coords] = TileCell(tile_type=TileType.AIR, flags={"DOOR_EXIT"})
     
     return True
 
@@ -357,7 +368,8 @@ def carve_corridor_block(
     center_x: int,
     center_y: int,
     width: int,
-    height: int
+    height: int,
+    force_carve: bool = False  # NEW: Override protection for reconnection
 ) -> None:
     """
     Carve a rectangular block of AIR tiles centered at (center_x, center_y).
@@ -370,6 +382,7 @@ def carve_corridor_block(
         center_y: Y coordinate of block center
         width: Width of block to carve (in tiles)
         height: Height of block to carve (in tiles)
+        force_carve: If True, override protection flags (for reconnection)
     
     Modifies room_data.grid in place.
     """
@@ -382,15 +395,21 @@ def carve_corridor_block(
     start_y = center_y - half_height
     end_y = center_y + half_height + (height % 2)  # Add 1 if odd height
     
-    # Carve the block, respecting protected tiles
+    carved_count = 0
+    # Carve block, respecting protected tiles unless force_carve
     for x in range(start_x, end_x):
         for y in range(start_y, end_y):
             if room_data.is_in_bounds(x, y):
                 existing_tile = room_data.get_tile(x, y)
-                # Skip carving if tile has any protection flag
-                if any(flag in existing_tile.flags for flag in ["SPAWN_PLATFORM", "DOOR_PLATFORM", "PROTECTED"]):
+                # Skip carving if tile has protection flags, unless force_carve
+                if not force_carve and any(flag in existing_tile.flags for flag in ["SPAWN_PLATFORM", "DOOR_PLATFORM", "PROTECTED"]):
                     continue
-                room_data.set_tile(x, y, TileCell(t="AIR"))
+                # Force carve: create new AIR tile, ignoring flags
+                room_data.set_tile(x, y, TileCell(tile_type=TileType.AIR))
+                carved_count += 1
+            else:
+                pass
+
 
 def flood_fill_find_regions(room_data: RoomData) -> List[Set[Tuple[int, int]]]:
     """
@@ -409,7 +428,7 @@ def flood_fill_find_regions(room_data: RoomData) -> List[Set[Tuple[int, int]]]:
     air_tiles = set()
     for y in range(room_data.size[1]):
         for x in range(room_data.size[0]):
-            if room_data.get_tile(x, y).t == "AIR":
+            if room_data.get_tile(x, y).tile_type == TileType.AIR:
                 air_tiles.add((x, y))
     
     if not air_tiles:
@@ -492,7 +511,8 @@ def reconnect_isolated_regions(
                 center_x=x,
                 center_y=y,
                 width=max(config.min_corridor_width, config.movement_attributes.player_width),
-                height=config.movement_attributes.min_corridor_height
+                height=config.movement_attributes.min_corridor_height,
+                force_carve=True  # Override protection for reconnection
             )
     
     return False
@@ -520,7 +540,7 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
     # Create room filled with WALL (sparse: empty grid with WALL default)
     room = RoomData(
         size=(width, height),
-        default_tile=TileCell(t="WALL"),
+        default_tile=TileCell(tile_type=TileType.WALL),
         grid={}
     )
     
@@ -611,7 +631,7 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
             carve_x = spawn_center_x + dx
             carve_y = spawn_center_y + dy
             if room.is_in_bounds(carve_x, carve_y):
-                room.set_tile(carve_x, carve_y, TileCell(t="AIR"))
+                room.set_tile(carve_x, carve_y, TileCell(tile_type=TileType.AIR))
     
     # === NEW: Create exclusion zone for ground platform only ===
     # Protect 3x1 ground platform below spawn area (existing WALL tiles)
@@ -665,10 +685,10 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
                     # Skip carving if tile has any protection flag
                     if any(flag in existing_tile.flags for flag in ["SPAWN_PLATFORM", "DOOR_PLATFORM", "PROTECTED"]):
                         continue
-                    room.set_tile(carve_x, carve_y, TileCell(t="AIR"))
+                    room.set_tile(carve_x, carve_y, TileCell(tile_type=TileType.AIR))
         
         # Count carved tiles for stopping condition
-        carved_tiles = len([t for t in room.grid.values() if t.t == "AIR"])
+        carved_tiles = len([t for t in room.grid.values() if t.tile_type == TileType.AIR])
         if carved_tiles >= target_carved:
             break
         
@@ -687,17 +707,17 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
     if door_ground_y > player_height: # Ensure it's not too high
         # Carve a 3-wide platform for the entrance
         for x_offset in range(3):
-            room.set_tile(1 + x_offset, door_ground_y, TileCell(t="WALL"))
+            room.set_tile(1 + x_offset, door_ground_y, TileCell(tile_type=TileType.WALL))
             # Carve clearance above it
             for y_offset in range(1, player_height + 2):
-                 room.set_tile(1 + x_offset, door_ground_y - y_offset, TileCell(t="AIR"))
+                 room.set_tile(1 + x_offset, door_ground_y - y_offset, TileCell(tile_type=TileType.AIR))
 
         # Carve a 3-wide platform for the exit
         for x_offset in range(3):
-            room.set_tile(width - 4 + x_offset, door_ground_y, TileCell(t="WALL"))
+            room.set_tile(width - 4 + x_offset, door_ground_y, TileCell(tile_type=TileType.WALL))
             # Carve clearance above it
             for y_offset in range(1, player_height + 2):
-                 room.set_tile(width - 4 + x_offset, door_ground_y - y_offset, TileCell(t="AIR"))
+                 room.set_tile(width - 4 + x_offset, door_ground_y - y_offset, TileCell(tile_type=TileType.AIR))
 
     # --- END ADDED SECTION ---
 
@@ -718,12 +738,12 @@ def carve_path(room: RoomData, start_pos: Tuple[int, int], end_pos: Tuple[int, i
     
     for (x, y) in path:
         # Place a solid floor tile
-        room.grid[(x, y)] = TileCell(t="WALL")
+        room.grid[(x, y)] = TileCell(tile_type=TileType.WALL)
         
         # Carve out space above for the player
         for h in range(1, player_height + 1):
             if y - h > 0: # Check bounds
-                room.grid[(x, y - h)] = TileCell(t="AIR")
+                room.grid[(x, y - h)] = TileCell(tile_type=TileType.AIR)
 
 
 def generate_validated_room(
@@ -735,16 +755,23 @@ def generate_validated_room(
     
     for attempt in range(config.max_room_generation_attempts):
         # Phase 1: Generate basic layout
+
         room = generate_room_layout(config)
+
         
         # Phase 1.5: Full connectivity check and repair
+
         regions = flood_fill_find_regions(room)
         if len(regions) > 1:
             # Multiple disconnected regions - try to reconnect
+
             if not reconnect_isolated_regions(room, config):  #  Pass config
+
                 continue  # Reconnection failed, try new room
             #  REMOVED redundant check_connectivity_basic call
             # If reconnection succeeded, we're guaranteed to be connected!
+        
+
         
         #  HOWEVER: Still verify entrance/exit are accessible
         # (They might be in WALL tiles initially)
@@ -762,6 +789,7 @@ def generate_validated_room(
         # This establishes the *real* entrance/exit coords.
         if not place_doors(room, movement_attrs):
             continue
+
         
         # Phase 2.5: Create exclusion zones for door ground platforms
         # This ensures doors always have solid ground to stand on
@@ -785,6 +813,8 @@ def generate_validated_room(
                 exclusion_type="DOOR_PLATFORM"
             )
         
+
+        
         # Phase 3: REMOVED - Platforms are no longer placed
         # Corridors and spawn area provide sufficient traversability
         
@@ -793,6 +823,7 @@ def generate_validated_room(
             # Phase 5: Configure difficulty
             configure_room_difficulty(room, depth_from_start, config)
             
+
             # Phase 6: Spawn areas disabled for PCG step flow; return validated room as-is
             return room
     
@@ -813,21 +844,24 @@ def generate_fallback_room(config: GenerationConfig) -> RoomData:
 
     room = RoomData(
         size=(fallback_width, fallback_height),
-        default_tile=TileCell(t="AIR"),
+        default_tile=TileCell(tile_type=TileType.AIR),
         grid={}
     )
 
     # Create solid floor at the bottom
     floor_y = fallback_height - 1
     for x in range(fallback_width):
-        room.grid[(x, floor_y)] = TileCell(t="WALL")
+        room.grid[(x, floor_y)] = TileCell(tile_type=TileType.WALL)
 
     # Place entrance and exit on opposite sides, one tile above the floor
     room.entrance_coords = (1, floor_y - 1)
     room.exit_coords = (fallback_width - 2, floor_y - 1)
 
     # Ensure the entrance and exit spots are AIR (door openings)
-    room.grid[room.entrance_coords] = TileCell(t="AIR", flags={"DOOR_ENTRANCE"})
-    room.grid[room.exit_coords] = TileCell(t="AIR", flags={"DOOR_EXIT"})
+    room.grid[room.entrance_coords] = TileCell(tile_type=TileType.AIR, flags={"DOOR_ENTRANCE"})
+    room.grid[room.exit_coords] = TileCell(tile_type=TileType.AIR, flags={"DOOR_EXIT"})
+    
+    # Set player spawn in center of room, one tile above floor
+    room.player_spawn = (fallback_width // 2, floor_y - 2)
 
     return room

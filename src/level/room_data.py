@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Tuple, Dict, Set, Optional, Any, List
+from ..tiles.tile_types import TileType
 
 @dataclass
 class TileCell:
@@ -9,18 +10,23 @@ class TileCell:
     TileCell objects are treated as IMMUTABLE.
     
     Attributes:
-        t: Tile type string (e.g., "WALL", "AIR")
+        tile_type: Tile type enum (e.g., TileType.WALL, TileType.AIR)
         flags: Set of property flags
         entity_id: Optional reference to an entity occupying this tile
         metadata: Additional tile-specific data (for special tile types)
     """
-    t: str = "AIR"
+    tile_type: TileType = TileType.AIR
     flags: Set[str] = field(default_factory=set)
     entity_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     
+    @property
+    def t(self) -> str:
+        """Backward compatibility property - returns tile type name as string."""
+        return self.tile_type.name
+    
     def __repr__(self) -> str:
-        parts = [f"t='{self.t}'"]
+        parts = [f"tile_type={self.tile_type.name}"]
         if self.flags:
             parts.append(f"flags={self.flags}")
         if self.entity_id:
@@ -45,7 +51,7 @@ class RoomData:
         depth_from_start: Distance in rooms from level start
     """
     size: Tuple[int, int]
-    default_tile: TileCell
+    default_tile: TileCell = field(default_factory=lambda: TileCell(TileType.AIR))
     grid: Dict[Tuple[int, int], TileCell] = field(default_factory=dict)
     entrance_coords: Optional[Tuple[int, int]] = None
     exit_coords: Optional[Tuple[int, int]] = None

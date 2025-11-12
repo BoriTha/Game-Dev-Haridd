@@ -705,11 +705,7 @@ class Player:
         # Update all combat timers and states
         self.combat.update()
 
-        # DEBUG: Track upward pull issue
-        frame_debug_count = getattr(self, '_physics_debug_count', 0)
-        if frame_debug_count < 5:  # Log first 5 frames
-            print(f"[PHYSICS DEBUG #{frame_debug_count+1}] Before physics: pos=({self.rect.x}, {self.rect.y}), vx={self.vx}, vy={self.vy}, on_ground={self.on_ground}")
-            self._physics_debug_count = frame_debug_count + 1
+
 
         # Tick shared mobility cooldown
         if self.mobility_cd > 0:
@@ -828,11 +824,9 @@ class Player:
                 try:
                     entity_rect = self.rect.copy()
                     velocity = pygame.math.Vector2(self.vx, self.vy)
-                    if frame_debug_count < 5: print(f"[COLLISION DEBUG #{frame_debug_count+1}] Before collision: rect={entity_rect}, vel={velocity}")
+
                     new_rect, new_velocity, collision_info_list = tile_collision.resolve_collisions(entity_rect, velocity, level.grid, dt)
-                    if frame_debug_count < 5:
-                        print(f"[COLLISION DEBUG #{frame_debug_count+1}] After collision: rect={new_rect}, vel={new_velocity}, collisions={len(collision_info_list)}")
-                        for i, col in enumerate(collision_info_list): print(f"  Collision {i}: side={col.get('side')}, tile={col.get('tile_type')}")
+
                     self.rect = new_rect
                     self.vx = float(new_velocity.x)
                     self.vy = float(new_velocity.y)
@@ -864,7 +858,7 @@ class Player:
 
         try:
             self.last_tile_collisions = list(collisions) if collisions else []
-            if frame_debug_count < 5: print(f"[PHYSICS DEBUG #{frame_debug_count+1}] Final state: pos=({self.rect.x}, {self.rect.y}), vx={self.vx}, vy={self.vy}, on_ground={self.on_ground}")
+
         except Exception:
             self.last_tile_collisions = []
 

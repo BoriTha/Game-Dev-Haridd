@@ -144,8 +144,6 @@ class TileCollision:
         
         # DEBUG: Track collision resolution
         debug_enabled = False  # Set to True to enable detailed logging
-        if debug_enabled:
-            print(f"[TILE COLLISION DEBUG] Starting collision resolution for rect={entity_rect}, vel={velocity}")
 
         if not tile_grid or len(tile_grid) == 0:
             return entity_rect, velocity, collision_info_list
@@ -181,8 +179,7 @@ class TileCollision:
 
             collision_type = tile_data.collision.collision_type
             
-            if debug_enabled:
-                print(f"[TILE COLLISION DEBUG] Found collision with tile {tile_type}, type={collision_type}")
+
 
             if collision_type == "full":
                 overlap_left = entity_rect.right - tile_rect.left
@@ -193,8 +190,7 @@ class TileCollision:
                     if velocity.x > 0:
                         entity_rect.right = tile_rect.left
                         velocity.x = 0
-                        if debug_enabled:
-                            print(f"[TILE COLLISION DEBUG] Resolved LEFT collision")
+
                         collision_info_list.append({
                             "tile_type": tile_type,
                             "side": "left",
@@ -205,8 +201,7 @@ class TileCollision:
                     if velocity.x < 0:
                         entity_rect.left = tile_rect.right
                         velocity.x = 0
-                        if debug_enabled:
-                            print(f"[TILE COLLISION DEBUG] Resolved RIGHT collision")
+
                         collision_info_list.append({
                             "tile_type": tile_type,
                             "side": "right",
@@ -249,8 +244,7 @@ class TileCollision:
                 if velocity.y > 0:
                     entity_rect.bottom = tile_rect.top
                     velocity.y = 0
-                    if debug_enabled:
-                        print(f"[TILE COLLISION DEBUG] Resolved TOP_ONLY collision (platform)")
+
                     collision_info_list.append({
                         "tile_type": tile_type,
                         "side": "top",
@@ -270,8 +264,7 @@ class TileCollision:
                 if overlap_top > 0 and overlap_top <= overlap_bottom and velocity.y >= 0:
                     entity_rect.bottom = tile_rect.top
                     velocity.y = 0
-                    if debug_enabled:
-                        print(f"[TILE COLLISION DEBUG] Resolved FULL TOP collision (floor)")
+
                     collision_info_list.append({
                         "tile_type": tile_type,
                         "side": "top",
@@ -282,16 +275,14 @@ class TileCollision:
                 elif overlap_bottom > 0 and overlap_bottom < overlap_top and velocity.y < 0:
                     entity_rect.top = tile_rect.bottom
                     velocity.y = 0
-                    if debug_enabled:
-                        print(f"[TILE COLLISION DEBUG] Resolved FULL BOTTOM collision (ceiling)")
+
                     collision_info_list.append({
                         "tile_type": tile_type,
                         "side": "bottom",
                         "tile_data": tile_data,
                     })
 
-        if debug_enabled:
-            print(f"[TILE COLLISION DEBUG] Final result: rect={entity_rect}, vel={velocity}, collisions={len(collision_info_list)}")
+
         
         return entity_rect, velocity, collision_info_list
 

@@ -1,4 +1,5 @@
 from src.level.procedural_generator import GenerationConfig, generate_procedural_room, TileCell
+from src.tiles.tile_types import TileType
 
 def print_room(room):
     """Prints a textual representation of the room."""
@@ -15,9 +16,9 @@ def print_room(room):
                 row.append("E")
             elif (x, y) == room.exit_coords:
                 row.append("X")
-            elif tile.t == "WALL":
+            elif tile.tile_type == TileType.WALL:
                 row.append("#")
-            elif tile.t == "AIR":
+            elif tile.tile_type == TileType.AIR:
                 row.append(".")
             else:
                 row.append("?") # Unknown tile type

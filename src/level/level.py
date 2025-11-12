@@ -1,9 +1,11 @@
 import pygame
-from typing import List
+import random
+from typing import List, Optional
 from config import TILE, CYAN, WIDTH, HEIGHT
 from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
 from ..tiles import TileParser, TileRenderer, TileRegistry, TileType
 from ..tiles.tile_collision import TileCollision
+from ..level.room_data import RoomData
 
 # Rooms (tilemaps). Legend:
 #   Tiles: # wall, . air/empty, _ platform, @ breakable wall, % breakable floor
@@ -146,18 +148,17 @@ ROOMS = [
 ROOM_COUNT = len(ROOMS)
 
 class Level:
-    def __init__(self, index: int = 0):
+    def __init__(self, index: Optional[int] = None, room_data: Optional[RoomData] = None):
         """
-        Initialize a level from static ASCII rooms.
+        Initialize a level from static ASCII rooms or PCG RoomData.
         
         Args:
-            index: Room index to load from ROOMS array
+            index: Room index to load from ROOMS array (for static rooms)
+            room_data: RoomData object from PCG system
         """
-        self.index = index % len(ROOMS)
-        
         # Core containers
         self.solids: List[pygame.Rect] = []
-        self.enemies: List = []
+        self.enemies: List[object] = []  # Can contain any enemy type
         self.doors: List[pygame.Rect] = []
         self.spawn = (TILE * 2, TILE * 2)
 
@@ -167,8 +168,14 @@ class Level:
         self.tile_registry = TileRegistry()
         self.tile_collision = TileCollision(TILE)
 
-        # Parse ASCII room
-        self._init_from_ascii()
+        # Choose initialization method
+        if room_data is not None:
+            self.current_room_id = getattr(room_data, 'room_id', 'pcg_room')
+            self._init_from_room_data(room_data)
+        else:
+            self.index = (index or 0) % len(ROOMS)
+            self.current_room_id = f'static_room_{self.index}'
+            self._init_from_ascii()
 
         # Level dimensions based on numeric grid
         self.w = len(self.grid[0]) * TILE if self.grid else 0
@@ -196,7 +203,72 @@ class Level:
         # Build solids from tile collision data
         self._update_solids_from_grid()
 
-    
+    def _init_from_room_data(self, room_data: RoomData) -> None:
+        """
+        Initialize level state from PCG RoomData object.
+        """
+        # Convert RoomData sparse grid to dense grid expected by Level
+        width, height = room_data.size
+        self.grid = [[TileType.AIR.value for _ in range(width)] for _ in range(height)]
+        
+        # Convert TileCell objects to TileType integers
+        for (x, y), tile_cell in room_data.grid.items():
+            if room_data.is_in_bounds(x, y):
+                self.grid[y][x] = tile_cell.tile_type.value
+        
+        # Set spawn position from RoomData
+        if room_data.player_spawn:
+            self.spawn = (room_data.player_spawn[0] * TILE, room_data.player_spawn[1] * TILE)
+        elif room_data.entrance_coords:
+            self.spawn = (room_data.entrance_coords[0] * TILE, room_data.entrance_coords[1] * TILE)
+        else:
+            self.spawn = (TILE * 2, TILE * 2)  # Fallback
+        
+        # Set doors from RoomData
+        if room_data.entrance_coords:
+            x, y = room_data.entrance_coords
+            self.doors.append(pygame.Rect(x * TILE, y * TILE, TILE, TILE))
+        
+        if room_data.exit_coords:
+            x, y = room_data.exit_coords  
+            self.doors.append(pygame.Rect(x * TILE, y * TILE, TILE, TILE))
+        
+        # Spawn enemies from spawn areas
+        self._spawn_enemies_from_areas(room_data)
+        
+        # Build solids from converted grid
+        self._update_solids_from_grid()
+
+    def _spawn_enemies_from_areas(self, room_data: RoomData) -> None:
+        """
+        Spawn enemies based on RoomData spawn areas.
+        """
+        for spawn_area in room_data.spawn_areas:
+            if not spawn_area.spawn_rules.get('allow_enemies', True):
+                continue
+                
+            max_enemies = spawn_area.spawn_rules.get('max_enemies', 1)
+            difficulty = spawn_area.spawn_rules.get('difficulty_level', 1)
+            
+            # Simple enemy spawning based on difficulty
+            enemy_types = [Bug]  # Start with basic enemies
+            if difficulty > 3:
+                enemy_types.append(Frog)  # type: ignore
+            if difficulty > 5:
+                enemy_types.append(Archer)  # type: ignore
+            if difficulty > 7:
+                enemy_types.append(WizardCaster)  # type: ignore
+            
+            for i in range(min(max_enemies, len(enemy_types))):
+                # Random position within spawn area
+                x = spawn_area.position[0] + random.randint(0, spawn_area.size[0] - 1)
+                y = spawn_area.position[1] + random.randint(0, spawn_area.size[1] - 1)
+                
+                enemy_class = random.choice(enemy_types)
+                world_x = x * TILE
+                world_y = y * TILE
+                
+                self.enemies.append(enemy_class(world_x, world_y))
 
     def _load_entities(self, entity_positions: dict):
         """
@@ -209,13 +281,10 @@ class Level:
         # Load spawn point (legacy 'S' markers)
         if 'spawn' in entity_positions:
             for x, y in entity_positions['spawn']:
-                # Position player's feet at the spawn point, accounting for player height
+                # Position player's feet at spawn point, accounting for player height
                 # Player height is 30px, so we offset by player height to place feet on tile
                 raw_spawn = (x * TILE, y * TILE)
-                print(f"[LEVEL DEBUG] Raw spawn position from 'S': ({x}, {y}) -> {raw_spawn}")
                 self.spawn = raw_spawn
-
-        print(f"[LEVEL DEBUG] Final spawn before validation: {self.spawn}")
 
         # Load enemies from legacy markers
         for entity_type, positions in entity_positions.items():
@@ -263,36 +332,31 @@ class Level:
     def _validate_spawn_position(self, spawn_pos):
         """Validate and adjust spawn position to prevent spawning inside walls."""
         x, y = spawn_pos
-        print(f"[SPAWN VALIDATION] Validating spawn at ({x}, {y})")
         player_rect = pygame.Rect(x, y, 18, 30)  # Player dimensions: 18x30
-        print(f"[SPAWN VALIDATION] Player rect: {player_rect}")
 
         # Check if spawn position is inside a solid tile
         tiles_in_rect = self.tile_collision.get_tiles_in_rect(player_rect, self.grid)
-        print(f"[SPAWN VALIDATION] Tiles in player rect: {len(tiles_in_rect)}")
         for tile_type, tile_x, tile_y in tiles_in_rect:
             tile_data = self.tile_registry.get_tile(tile_type)
-            print(f"[SPAWN VALIDATION] Found tile {tile_type} at ({tile_x}, {tile_y}): collision_type={getattr(tile_data.collision, 'collision_type', 'none') if tile_data else 'no data'}")
             if tile_data and tile_data.collision.collision_type == "full":
                 # Spawn position is inside a solid tile, find a better position
-                # Try to spawn below this tile
+                # Try to spawn above this tile (not below - we want player standing on top)
                 new_y = tile_y * TILE - 30  # Player's top at tile_y * TILE - player_height
-                print(f"[SPAWN VALIDATION] Spawn inside solid! Adjusting to ({x}, {new_y})")
                 return (x, new_y)
 
-        # Also check if there's a solid tile directly below the player's feet
+        # Also check if there's a solid tile directly below player's feet
         feet_y = y + 30
         tile_below = self.tile_collision.get_tile_at_pos(x + 9, feet_y + 1, self.grid)  # Center of player's feet
-        print(f"[SPAWN VALIDATION] Tile below feet at ({x+9}, {feet_y+1}): {tile_below}")
         if tile_below:
             tile_data = self.tile_registry.get_tile(tile_below)
             if tile_data and tile_data.collision.collision_type != "none":
                 # Player is on solid ground, this spawn is valid
-                print(f"[SPAWN VALIDATION] Valid spawn on solid ground")
                 return (x, y)
 
+
+
         # If no solid ground below, try to find the nearest solid ground below
-        print(f"[SPAWN VALIDATION] No ground below, searching for ground...")
+
         for check_y in range(int(feet_y), self.h, TILE):
             tile_at_y = self.tile_collision.get_tile_at_pos(x + 9, check_y, self.grid)
             if tile_at_y:
@@ -300,11 +364,11 @@ class Level:
                 if tile_data and tile_data.collision.collision_type != "none":
                     # Found solid ground, adjust spawn position
                     new_y = check_y - 30
-                    print(f"[SPAWN VALIDATION] Found ground at y={check_y}, adjusted to ({x}, {new_y})")
+
                     return (x, new_y)
 
         # If no solid ground found, return original position
-        print(f"[SPAWN VALIDATION] No ground found, using original position")
+
         return (x, y)
 
     def get_tile_at(self, x: int, y: int) -> int:

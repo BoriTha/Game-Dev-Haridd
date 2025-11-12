@@ -220,6 +220,7 @@ def generate_complete_level(
             depth_from_start=depth
         )
         
+
         level.add_room(room_id, room)
     
     #  NEW: Create DoorLink objects for each connection

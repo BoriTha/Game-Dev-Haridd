@@ -188,8 +188,7 @@ class Menu:
                     # Direct hotkeys for convenience (preserve legacy behavior)
                     if ev.key in (pygame.K_r,):  # Remove Enter and Space keys
                         # Restart run via centralized logic so behavior is consistent.
-                        print(f"[DEBUG GAME_OVER] Restart selected via hotkey")
-                        print(f"[DEBUG GAME_OVER] Before restart: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
+
                         self.game.restart_run()
                         return
                     elif ev.key in (pygame.K_q, pygame.K_ESCAPE):
@@ -202,8 +201,7 @@ class Menu:
                         idx = (idx + 1) % len(options)
                     elif ev.key in (pygame.K_1,):
                         # Hotkey: 1 => Restart
-                        print(f"[DEBUG GAME_OVER] Restart selected via hotkey 1")
-                        print(f"[DEBUG GAME_OVER] Before restart: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
+
                         self.game.restart_run()
                         return
                     elif ev.key in (pygame.K_2, pygame.K_e):
@@ -219,8 +217,7 @@ class Menu:
                         # Handle based on selected menu entry
                         choice = options[idx]
                         if choice == "Restart":
-                            print(f"[DEBUG GAME_OVER] Restart selected via menu")
-                            print(f"[DEBUG GAME_OVER] Before restart: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
+
                             self.game.restart_run()
                             return
                         elif choice == "Main Menu":
