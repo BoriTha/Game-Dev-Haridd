@@ -15,18 +15,12 @@ from config import (
 )
 from src.core.utils import draw_text, get_font
 from src.systems.camera import Camera
-from src.level.level import Level
 from src.level.legacy_level import LegacyLevel, ROOM_COUNT
 from src.entities.entities import Player, hitboxes, floating, DamageNumber
 from src.systems.inventory import Inventory
 from src.systems.menu import Menu
 from src.systems.shop import Shop
 from typing import Optional
-from src.level.procedural_generator import GenerationConfig, MovementAttributes
-from src.level.traversal_verification import verify_traversable
-from src.level.room_data import RoomData
-from src.level.level_data import LevelData, LevelGenerationConfig
-from src.level.graph_generator import generate_complete_level
 
 
 
@@ -41,37 +35,7 @@ class Game:
         self.font_big = get_font(32, bold=True)
         self.camera = Camera()
 
-        # NEW: Procedural generation config
-        self.use_procedural = True  # Set to False to use static rooms
-        
-        self.movement_attrs = MovementAttributes(
-            max_jump_height=12,  # Match actual player jump capability
-            max_jump_distance=10,
-            player_width=1,
-            player_height=2
-        )
-        
-        self.room_gen_config = GenerationConfig(
-            min_room_size=40,  # Adjust to match your tile size
-            max_room_size=60,
-            min_corridor_width=3,
-            platform_placement_attempts=15,
-            movement_attributes=self.movement_attrs, # CRITICAL: Pass here
-            seed=None  # None = random, or set int for reproducible levels
-        )
-        
-        self.level_gen_config = LevelGenerationConfig(
-            num_rooms=5,  # 5 rooms per level
-            layout_type="branching",  # or "linear", "looping"
-            branch_probability=0.3
-        )
-
-        # Seed management for procedural generation
-        self.user_seed: Optional[int] = None # Stores user-set seed, None for random
-        self.current_active_seed: Optional[int] = None # The seed actually used for current level
-
         # Track current level
-        self.current_level_data: Optional[LevelData] = None
         self.current_level_number = 1
         
         # Level configuration: static layout only (procedural disabled)
@@ -124,9 +88,8 @@ class Game:
         
         # Initialize first level
         try:
-            # For static mode (PCG OFF), use 0-based index to start at Room 1 (ROOMS[0])
-            # For procedural mode (PCG ON), use 1-based level_number
-            initial_level = 0 if not self.use_procedural else 1
+            # Use 0-based index to start at Room 1 (ROOMS[0])
+            initial_level = 0
             self._load_level(level_number=initial_level, initial=True)
         except Exception as e:
             import traceback
@@ -160,7 +123,7 @@ class Game:
         floating.clear()
         
         # Initialize first level (same logic as constructor)
-        initial_level = 0 if not self.use_procedural else 1
+        initial_level = 0
         self._load_level(level_number=initial_level, initial=True)
         
         # create player with chosen class
@@ -177,23 +140,7 @@ class Game:
         
 
 
-    def toggle_procedural_generation(self):
-        """Toggles procedural generation on/off."""
-        self.use_procedural = not self.use_procedural
-
-    def set_custom_seed(self, seed: int):
-        """Sets a custom seed for procedural generation."""
-        self.user_seed = seed
-
-    def generate_random_seed(self):
-        """Clears the custom seed and forces new random seed generation."""
-        self.user_seed = None
-        # Force regeneration of current level with new random seed
-        self.current_active_seed = None  # Clear cached seed to force regeneration
-
-    def get_current_seed(self) -> Optional[int]:
-        """Returns the currently active seed (user-set or the one used for current level)."""
-        return self.user_seed if self.user_seed is not None else self.current_active_seed
+    
 
     # === Level Management (static rooms only) ===
 
@@ -203,13 +150,8 @@ class Game:
         """
 
         
-        # FIXED: Preserve current level instead of resetting to level 0
-        if self.use_procedural:
-            # PCG mode: restart from current level number (1-based)
-            level_to_restart = self.current_level_number
-        else:
-            # Legacy mode: restart from current level index (0-based)
-            level_to_restart = self.level_index
+        # Legacy mode: restart from current level index (0-based)
+        level_to_restart = self.level_index
         
 
 
@@ -238,93 +180,16 @@ class Game:
 
     def _load_level(self, level_number: Optional[int] = None, room_id: Optional[str] = None, initial: bool = False):
         """
-        Load a level - either generate new procedural level or load specific room.
+        Load a level - load specific room from legacy system.
         
         Args:
-            level_number: Which level to load (generates new if different from current)
+            level_number: Which level to load
             room_id: Which room in current level to load (for room transitions)
             initial: Is this the first load?
         """
-
         
-        if not self.use_procedural:
-            # LEGACY: Use old static room system
-            self._load_static_level(level_number or 0, initial)
-            return
-        
-        # PROCEDURAL SYSTEM
-        
-        # Generate new level if needed (first load or new level number requested)
-        if self.current_level_data is None or (level_number is not None and level_number != self.current_level_number) or self.current_active_seed is None:
-            
-            # Determine seed for reproducible levels
-            if self.user_seed is not None:
-                level_seed = self.user_seed
-            else:
-                # If no user seed, generate a new random one for this level
-                # Use multiple entropy sources for better randomness
-                import random
-                import time
-                import os
-                
-                # Combine multiple entropy sources for better random seed generation
-                time_component = int(time.time() * 1000) & 0xFFFFFFFF  # Current time in milliseconds
-                random_component = random.randint(0, 2**31)  # Random component
-                os_component = int.from_bytes(os.urandom(4), 'little') & 0xFFFFFFFF  # OS entropy
-                
-                # Combine components using XOR for better distribution
-                level_seed = (time_component ^ random_component ^ os_component) % 1000000000
-                
-                # Ensure positive seed
-                level_seed = abs(level_seed)
-            
-            self.current_active_seed = level_seed # Store the seed actually used
-            
-            # Generate complete multi-room level
-            self.current_level_data = generate_complete_level(
-                self.room_gen_config,
-                self.level_gen_config,
-                self.movement_attrs,
-                seed=level_seed
-            )
-            
-            self.current_level_number = level_number if level_number is not None else 1
-            
-            # Start at first room
-            room_id = room_id or self.current_level_data.start_room_id
-            
-        
-        # Load specific room
-        if room_id is None:
-            room_id = self.current_level_data.start_room_id if self.current_level_data else "room_0"
-        
-        room_data = self.current_level_data.get_room(room_id) if self.current_level_data and room_id else None
-        
-        if room_data is None:
-
-            return
-        
-        try:
-            # Use PCG room data if available, otherwise fallback to static
-            if room_data is not None:
-                lvl = Level(room_data=room_data, room_id=room_id)
-            else:
-                # Fallback to static room if PCG fails
-                room_index = hash(room_id) % ROOM_COUNT if room_id else 0
-                lvl = Level(room_index)
-
-        except Exception as e:
-
-            import traceback
-            traceback.print_exc()
-            return
-        
-        self.level = lvl
-        self.enemies = lvl.enemies
-        
-        if not initial:
-            hitboxes.clear()
-            floating.clear()
+        # Use old static room system
+        self._load_static_level(level_number or 0, initial)
 
     def _load_static_level(self, index: int, initial: bool = False):
         """Legacy static room loading (for backwards compatibility)."""
@@ -352,62 +217,18 @@ class Game:
 
     def switch_room(self, delta: Optional[int] = None, target_room_id: Optional[str] = None):
         """
-        Switch to next room in procedural level or next level.
+        Switch to next room.
         
         Args:
-            delta: +1 for next room (legacy compatibility)
-            target_room_id: Specific room to switch to
+            delta: +1 for next room
+            target_room_id: Specific room to switch to (not used in legacy system)
         """
-        if not self.use_procedural:
-            # Legacy static room switching
-            new_index = max(0, self.level_index + (delta or 1))
-            self._load_level(new_index)
-            sx, sy = self.level.spawn
-            self.player.rect.topleft = (sx, sy)
-            self.enemies = getattr(self.level, "enemies", [])
-            self.shop.open_shop()
-            return
-        
-        # PROCEDURAL SYSTEM
-        
-        current_room_id = getattr(self.level, 'current_room_id', 'room_0')
-        
-        # Determine next room
-        if target_room_id:
-            next_room_id = target_room_id
-        else:
-            # Get next room from graph
-            if self.current_level_data and self.current_level_data.internal_graph:
-                neighbors = self.current_level_data.internal_graph.get(current_room_id, [])
-                
-                if not neighbors:
-                    # No more rooms - reached goal!
-                    
-                    # Generate next level
-                    next_level = self.current_level_number + 1
-                    self._load_level(level_number=next_level)
-                    
-                    # Reset player position
-                    sx, sy = self.level.spawn
-                    self.player.rect.topleft = (sx, sy)
-                    self.enemies = getattr(self.level, "enemies", [])
-                    
-                    # Open shop between levels
-                    self.shop.open_shop()
-                    return
-                
-                # If multiple neighbors, use first (later: let player choose)
-                next_room_id = neighbors[0]
-            else:
-                next_room_id = current_room_id
-        
-        # Load next room
-        self._load_level(room_id=next_room_id)
-        
-        # Reset player position
+        # Legacy static room switching
+        new_index = max(0, self.level_index + (delta or 1))
+        self._load_level(new_index)
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)
-        self.enemies = getattr(self.level, "enemies", [])
+        
 
     def goto_room(self, index: int):
         """
@@ -474,44 +295,20 @@ class Game:
                 self.last_space_time = pygame.time.get_ticks()
             self._prev_space_pressed = space_pressed
 
- # PCG Door Collision Detection
-        if self.use_procedural and hasattr(self.level, 'room_data'):
-            # Check PCG doors in procedural rooms
-            room_data = self.level.room_data
-            for door_id, door in room_data.doors.items():
-                # Create door rect for collision (tile-based)
-                door_rect = pygame.Rect(
-                    door.position[0] * TILE,
-                    door.position[1] * TILE,
-                    TILE,
-                    TILE
-                )
-                
-                if self.player.rect.colliderect(door_rect):
-                    # Check if door has destinations
-                    if door.destinations:
-                        # For linear levels, use first (default) destination
-                        choice_label = next(iter(door.destinations.keys()))
-                        target_room_id = door.destinations[choice_label]
-                        
-                        # Switch to target room
-                        self.switch_room(target_room_id=target_room_id)
-                        break
-        else:
-            # Legacy door system for static rooms
-            for d in getattr(self.level, "doors", []):
-                if self.player.rect.colliderect(d):
-                    # Boss gate logic preserved for legacy/boss-style levels
-                    if getattr(self.level, 'is_boss_room', False):
-                        if any(getattr(e, 'alive', False) for e in self.enemies):
-                            # door locked; stay in room
-                            pass
-                        else:
-                            self.switch_room(+1)
-                            break
+ # Legacy door system for static rooms
+        for d in getattr(self.level, "doors", []):
+            if self.player.rect.colliderect(d):
+                # Boss gate logic preserved for legacy/boss-style levels
+                if getattr(self.level, 'is_boss_room', False):
+                    if any(getattr(e, 'alive', False) for e in self.enemies):
+                        # door locked; stay in room
+                        pass
                     else:
                         self.switch_room(+1)
                         break
+                else:
+                    self.switch_room(+1)
+                    break
 
         for e in self.enemies:
             e.tick(self.level, self.player)
@@ -1069,58 +866,7 @@ class Game:
             except Exception:
                 pass
 
-            # Door-specific debug: show PCG door type/flags
-            try:
-                # Only if this tile is the DOOR tile type
-                if hasattr(tile_type, "is_door") and tile_type.is_door:
-                    level_obj = getattr(self, "level", None)
-                    room_data = getattr(level_obj, "room_data", None)
 
-                    # Prefer PCG RoomData door metadata when available
-                    doors = getattr(room_data, "doors", {}) if room_data else {}
-
-                    door_match = None
-                    for d in doors.values():
-                        pos = getattr(d, "position", None)
-                        if pos == (grid_x, grid_y):
-                            door_match = d
-                            break
-
-                    if door_match is not None:
-                        # Core flag you asked for: which type of door is this
-                        door_id = getattr(door_match, "door_id", "?")
-                        door_type_str = getattr(door_match, "door_type", "unknown")
-                        is_locked = getattr(door_match, "is_locked", False)
-
-                        lines.append("[DOOR]")
-                        lines.append(f"id={door_id} type={door_type_str} locked={is_locked}")
-
-                        # Optional but useful: show destinations summary
-                        dests = getattr(door_match, "destinations", {}) or {}
-                        if dests:
-                            if len(dests) == 1:
-                                k, v = next(iter(dests.items()))
-                                lines.append(f"dest={k}->{v}")
-                            else:
-                                lines.append(
-                                    "destinations="
-                                    + ", ".join(f"{k}->{v}" for k, v in dests.items())
-                                )
-                        else:
-                            lines.append("destinations=NONE")
-
-                        # Show TileCell flags from original RoomData if available
-                        if room_data and hasattr(room_data, "grid"):
-                            tile_cell = room_data.grid.get((grid_x, grid_y))
-                            if tile_cell and hasattr(tile_cell, "flags"):
-                                flags = getattr(tile_cell, "flags", set())
-                                if flags:
-                                    lines.append(f"flags={flags}")
-                                else:
-                                    lines.append("flags=NONE")
-            except Exception:
-                # Never let this crash the inspector
-                pass
 
             draw_panel(lines)
         except Exception:

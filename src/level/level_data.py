@@ -3,18 +3,7 @@ Level data structures for multi-room dungeon generation.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Set
-from src.level.room_data import RoomData
-
-
-@dataclass
-class DoorLink:
-    """PCG door connection between specific doors."""
-    from_room_id: str
-    to_room_id: str
-    from_door_id: str  # PCG door identifier
-    to_door_id: str    # PCG door identifier
-    choice_label: str = "default"
+from typing import Dict, List, Optional, Any
 
 
 @dataclass
@@ -23,25 +12,21 @@ class LevelData:
     Represents a complete multi-room level.
     
     Attributes:
-        rooms: Dictionary mapping room IDs to RoomData objects
-        door_links: List of connections between rooms
+        rooms: Dictionary mapping room IDs to room data
         internal_graph: Adjacency list of room connections
         start_room_id: ID of the starting room
         goal_room_id: ID of the final/goal room
-        level_seed: Random seed used for generation
     """
-    rooms: Dict[str, RoomData] = field(default_factory=dict)
-    door_links: List[DoorLink] = field(default_factory=list)
+    rooms: Dict[str, Any] = field(default_factory=dict)
     internal_graph: Dict[str, List[str]] = field(default_factory=dict)
     start_room_id: Optional[str] = None
     goal_room_id: Optional[str] = None
-    level_seed: Optional[int] = None
     
-    def get_room(self, room_id: str) -> Optional[RoomData]:
+    def get_room(self, room_id: str) -> Optional[Any]:
         """Get room by ID."""
         return self.rooms.get(room_id)
     
-    def add_room(self, room_id: str, room: RoomData) -> None:
+    def add_room(self, room_id: str, room: Any) -> None:
         """Add a room to the level."""
         self.rooms[room_id] = room
         if room_id not in self.internal_graph:
