@@ -25,4 +25,8 @@ Thumbs.db
 *.log
 .pytest_cache/
 .claude
+<<<<<<< HEAD
 AGENTS.md
+=======
+AGENTS.md
+>>>>>>> menubug

@@ -18,30 +18,65 @@ Hotkeys (during gameplay):
 - F5  — Open Debugger Menu
   - Opens the comprehensive debug menu with additional options.
 
-- F6  — Go to Room 1
-- F7  — Go to Room 2
-- F8  — Go to Room 3
-- F9  — Go to Room 4
-- F10 — Go to Room 5
+- F6  — Toggle Shop
+  - Opens/closes the shop interface for purchasing items with money.
+
+- F7  — Add 1000 Money
+  - Instantly adds 1000 coins to the player for testing shop purchases.
+
+- F8  — Toggle Tile Inspector
+  - Shows/hides tile information overlay for debugging level geometry.
+
+- F10 — Toggle No-clip Mode
+  - Allows player to move through walls and obstacles (debug only).
+  - When combined with God Mode, use WASD to float in any direction.
+
+- F11 — Reserved (no-op)
+  - Previously used for procedural regeneration; now disabled.
+
+- F12 — Go to Boss Room
+  - Instantly teleports to Room 6 (boss room) for testing.
 
 Notes:
 - Active cheats are shown on the HUD (top-right):
-  - GOD (God Mode), IM (Infinite Mana), ZCD (Zero Cooldown)
+  - GOD (God Mode), IM (Infinite Mana), ZCD (Zero Cooldown), NOCLIP
 - You can still pause with Esc; choosing Main Menu returns to Title.
 - Boss rooms keep doors locked until the boss is defeated.
+- No-clip mode requires God Mode for floating controls (WASD).
 
 Debugger Menu Features:
-- Toggle God Mode, Infinite Mana, and Zero Cooldown
+- Toggle God Mode, Infinite Mana, Zero Cooldown, and No-clip Mode
 - Teleport to any room via level picker
 - Give items and equipment directly to inventory
 - Refill all consumables instantly
-- Toggle enemy vision rays
-- Toggle enemy nametags
+- Toggle enemy vision rays and nametags
+- Access additional debug options
+
+Shop System (F6):
+- Purchase consumables and equipment with money
+- Random inventory selection (3 consumables, 3 equipment)
+- Stock limits prevent unlimited consumable purchases
+- Equipment purchases are permanent per shop visit
+
+Tile Inspector (F8):
+- Shows tile type information at cursor position
+- Displays collision properties and tile metadata
+- Useful for debugging level geometry and collision issues
+
+Procedural Generation:
+- Can be toggled on/off via the game menu system
+- When enabled, generates random levels instead of static rooms
+- Uses advanced algorithms for room placement and connectivity
 
 Where implemented:
 - main.py
   - Toggle handling: Game.run() KEYDOWN branch
   - Effects applied: Game.update() (mana/cooldowns), Player.god flag
+  - Shop system: Shop class integration
+  - No-clip physics: Player.update() movement overrides
+  - Tile inspector: Game.render() overlay rendering
 
 Tip:
 - If you add new skills with cooldowns, include their cooldown attributes in the zero-cooldown section in Game.update().
+- Use the tile inspector when debugging collision issues with new tile types.
+- Combine God Mode + No-clip for rapid level testing and navigation.

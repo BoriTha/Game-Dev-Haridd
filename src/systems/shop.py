@@ -219,22 +219,86 @@ class Shop:
         # This method is kept for compatibility but should not be used
         pass
     
+    def _selection_to_coords(self, selection):
+        """Convert linear selection to grid coordinates"""
+        if selection < 6:  # Shop items (0-5)
+            return selection // 2, selection % 2  # row, col
+        else:  # Exit button (6)
+            return 3, 0  # row 3, col 0
+    
+    def _coords_to_selection(self, row, col):
+        """Convert grid coordinates to linear selection"""
+        if row == 3:  # Exit button
+            return 6
+        else:  # Shop items
+            return row * 2 + col
+    
+    def _move_up(self, row, col):
+        """Handle up movement from current position"""
+        if row == 0:  # Top row - go to exit button
+            return 3, 0
+        elif row == 3:  # Exit button - go to bottom-right item
+            return 2, 1
+        else:  # Middle or bottom row - move up
+            return row - 1, col
+    
+    def _move_down(self, row, col):
+        """Handle down movement from current position"""
+        if row == 2:  # Bottom row - go to exit button
+            return 3, 0
+        elif row == 3:  # Exit button - go to top-left item
+            return 0, 0
+        else:  # Top or middle row - move down
+            return row + 1, col
+    
+    def _move_left(self, row, col):
+        """Handle left movement from current position"""
+        if row == 3:  # Exit button - go to bottom-right item
+            return 2, 1
+        elif col == 0:  # Left column - wrap to previous row's right column
+            if row == 0:  # Top row - wrap to exit button
+                return 3, 0
+            else:  # Other rows - wrap to previous row's right column
+                return row - 1, 1
+        else:  # Right column - move left
+            return row, col - 1
+    
+    def _move_right(self, row, col):
+        """Handle right movement from current position"""
+        if row == 3:  # Exit button - go to top-left item
+            return 0, 0
+        elif col == 1:  # Right column - wrap to next row's left column
+            if row == 2:  # Bottom row - wrap to exit button
+                return 3, 0
+            else:  # Other rows - wrap to next row's left column
+                return row + 1, 0
+        else:  # Left column - move right
+            return row, col + 1
+
     def handle_event(self, event):
         """Handle shop events properly using event-based input"""
         if event.type == pygame.KEYDOWN:
-            # Navigation - support both arrow keys and WASD
-            if event.key in [pygame.K_UP, pygame.K_w]:
-                self.selection = (self.selection - 1) % len(self.shop_items)
-            elif event.key in [pygame.K_DOWN, pygame.K_s]:
-                self.selection = (self.selection + 1) % len(self.shop_items)
-            elif event.key in [pygame.K_LEFT, pygame.K_a]:
-                self.selection = (self.selection - 1) % len(self.shop_items)
-            elif event.key in [pygame.K_RIGHT, pygame.K_d]:
-                self.selection = (self.selection + 1) % len(self.shop_items)
+            # Navigation - support both arrow keys and WASD with grid-based movement
+            current_row, current_col = self._selection_to_coords(self.selection)
             
-            # Purchase
+            if event.key in [pygame.K_UP, pygame.K_w]:
+                new_row, new_col = self._move_up(current_row, current_col)
+                self.selection = self._coords_to_selection(new_row, new_col)
+            elif event.key in [pygame.K_DOWN, pygame.K_s]:
+                new_row, new_col = self._move_down(current_row, current_col)
+                self.selection = self._coords_to_selection(new_row, new_col)
+            elif event.key in [pygame.K_LEFT, pygame.K_a]:
+                new_row, new_col = self._move_left(current_row, current_col)
+                self.selection = self._coords_to_selection(new_row, new_col)
+            elif event.key in [pygame.K_RIGHT, pygame.K_d]:
+                new_row, new_col = self._move_right(current_row, current_col)
+                self.selection = self._coords_to_selection(new_row, new_col)
+            
+            # Purchase/Select action
             elif event.key in [pygame.K_RETURN, pygame.K_SPACE]:
-                if self.selection < len(self.shop_items):
+                if self.selection == 6:  # Exit button
+                    self.close_shop()
+                elif self.selection < len(self.shop_items):  # Shop items
                     item = self.shop_items[self.selection]
                     self.purchase_item(item)
             
@@ -470,10 +534,15 @@ class Shop:
         # Check if mouse is hovering over exit button
         mouse_pos = pygame.mouse.get_pos()
         is_exit_hovering = exit_button_rect.collidepoint(mouse_pos)
+        is_exit_selected = self.selection == 6  # Check if exit button is selected via keyboard
         
-        # Exit button color: gray normally, red on hover
-        exit_button_color = (150, 150, 150) if not is_exit_hovering else (200, 50, 50)  # Gray -> Red
-        exit_border_color = (200, 150, 150) if not is_exit_hovering else (255, 100, 100)
+        # Exit button color: gray normally, red on hover or when selected
+        if is_exit_selected or is_exit_hovering:
+            exit_button_color = (200, 50, 50)  # Red for both keyboard selection and mouse hover
+            exit_border_color = (255, 100, 100)
+        else:
+            exit_button_color = (150, 150, 150)  # Gray normally
+            exit_border_color = (200, 150, 150)
         
         pygame.draw.rect(screen, exit_button_color, exit_button_rect, border_radius=6)
         pygame.draw.rect(screen, exit_border_color, exit_button_rect, width=2, border_radius=6)

@@ -15,17 +15,12 @@ from config import (
 )
 from src.core.utils import draw_text, get_font
 from src.systems.camera import Camera
-from src.level.level import Level, ROOM_COUNT
+from src.level.legacy_level import LegacyLevel, ROOM_COUNT
 from src.entities.entities import Player, hitboxes, floating, DamageNumber
 from src.systems.inventory import Inventory
 from src.systems.menu import Menu
 from src.systems.shop import Shop
 from typing import Optional
-from src.level.procedural_generator import GenerationConfig, MovementAttributes
-from src.level.traversal_verification import verify_traversable
-from src.level.room_data import RoomData
-from src.level.level_data import LevelData, LevelGenerationConfig
-from src.level.graph_generator import generate_complete_level
 
 
 
@@ -40,37 +35,7 @@ class Game:
         self.font_big = get_font(32, bold=True)
         self.camera = Camera()
 
-        # NEW: Procedural generation config
-        self.use_procedural = True  # Set to False to use static rooms
-        
-        self.movement_attrs = MovementAttributes(
-            max_jump_height=12,  # Match actual player jump capability
-            max_jump_distance=10,
-            player_width=1,
-            player_height=2
-        )
-        
-        self.room_gen_config = GenerationConfig(
-            min_room_size=40,  # Adjust to match your tile size
-            max_room_size=60,
-            min_corridor_width=3,
-            platform_placement_attempts=15,
-            movement_attributes=self.movement_attrs, # CRITICAL: Pass here
-            seed=None  # None = random, or set int for reproducible levels
-        )
-        
-        self.level_gen_config = LevelGenerationConfig(
-            num_rooms=5,  # 5 rooms per level
-            layout_type="branching",  # or "linear", "looping"
-            branch_probability=0.3
-        )
-
-        # Seed management for procedural generation
-        self.user_seed: Optional[int] = None # Stores user-set seed, None for random
-        self.current_active_seed: Optional[int] = None # The seed actually used for current level
-
         # Track current level
-        self.current_level_data: Optional[LevelData] = None
         self.current_level_number = 1
         
         # Level configuration: static layout only (procedural disabled)
@@ -118,18 +83,15 @@ class Game:
         try:
             self.menu.title_screen()
         except Exception as e:
-            print(f"[ERROR] Exception in title_screen: {e}")
             import traceback
             traceback.print_exc()
         
         # Initialize first level
         try:
-            # For static mode (PCG OFF), use 0-based index to start at Room 1 (ROOMS[0])
-            # For procedural mode (PCG ON), use 1-based level_number
-            initial_level = 0 if not self.use_procedural else 1
+            # Use 0-based index to start at Room 1 (ROOMS[0])
+            initial_level = 0
             self._load_level(level_number=initial_level, initial=True)
         except Exception as e:
-            print(f"[ERROR] Exception in _load_level: {e}")
             import traceback
             traceback.print_exc()
             return
@@ -149,7 +111,7 @@ class Game:
         Reset game state to initial state (similar to constructor logic).
         This is used when returning to main menu from death screen.
         """
-        print(f"[DEBUG] reset_game_state called!")
+
         
         # Reset level tracking
         self.level_index = 0
@@ -161,7 +123,7 @@ class Game:
         floating.clear()
         
         # Initialize first level (same logic as constructor)
-        initial_level = 0 if not self.use_procedural else 1
+        initial_level = 0
         self._load_level(level_number=initial_level, initial=True)
         
         # create player with chosen class
@@ -176,26 +138,9 @@ class Game:
         # Reset camera
         self.camera = Camera()
         
-        print(f"[DEBUG] Game state reset complete")
 
-    def toggle_procedural_generation(self):
-        """Toggles procedural generation on/off."""
-        print(f"[DEBUG] Toggling PCG: {self.use_procedural} -> {not self.use_procedural}")
-        print(f"[DEBUG] Current state: level_index={self.level_index}, current_level_number={self.current_level_number}")
-        self.use_procedural = not self.use_procedural
-        print(f"[DEBUG] After toggle: use_procedural={self.use_procedural}")
 
-    def set_custom_seed(self, seed: int):
-        """Sets a custom seed for procedural generation."""
-        self.user_seed = seed
-
-    def generate_random_seed(self):
-        """Clears the custom seed, allowing random generation."""
-        self.user_seed = None
-
-    def get_current_seed(self) -> Optional[int]:
-        """Returns the currently active seed (user-set or the one used for current level)."""
-        return self.user_seed if self.user_seed is not None else self.current_active_seed
+    
 
     # === Level Management (static rooms only) ===
 
@@ -203,18 +148,12 @@ class Game:
         """
         Restart from the current level (preserving level progress).
         """
-        print(f"[DEBUG] restart_run called!")
-        print(f"[DEBUG] Before restart: level_index={self.level_index}, current_level_number={self.current_level_number}, use_procedural={self.use_procedural}")
+
         
-        # FIXED: Preserve current level instead of resetting to level 0
-        if self.use_procedural:
-            # PCG mode: restart from current level number (1-based)
-            level_to_restart = self.current_level_number
-        else:
-            # Legacy mode: restart from current level index (0-based)
-            level_to_restart = self.level_index
+        # Legacy mode: restart from current level index (0-based)
+        level_to_restart = self.level_index
         
-        print(f"[DEBUG] Restarting from level: {level_to_restart}")
+
 
         # Load the current level
         self._load_level(level_to_restart, initial=True)
@@ -237,96 +176,34 @@ class Game:
         # Reset camera
         self.camera = Camera()
         
-        print(f"[DEBUG] After restart: level_index={self.level_index}, current_level_number={self.current_level_number}")
+
 
     def _load_level(self, level_number: Optional[int] = None, room_id: Optional[str] = None, initial: bool = False):
         """
-        Load a level - either generate new procedural level or load specific room.
+        Load a level - load specific room from legacy system.
         
         Args:
-            level_number: Which level to load (generates new if different from current)
+            level_number: Which level to load
             room_id: Which room in current level to load (for room transitions)
             initial: Is this the first load?
         """
-        print(f"[DEBUG] _load_level called: level_number={level_number}, room_id={room_id}, initial={initial}, use_procedural={self.use_procedural}")
-        print(f"[DEBUG] Current state: level_index={self.level_index}, current_level_number={self.current_level_number}")
         
-        if not self.use_procedural:
-            # LEGACY: Use old static room system
-            self._load_static_level(level_number or 0, initial)
-            return
-        
-        # PROCEDURAL SYSTEM
-        
-        # Generate new level if needed (first load or new level number requested)
-        if self.current_level_data is None or (level_number is not None and level_number != self.current_level_number):
-            
-            # Determine seed for reproducible levels
-            if self.user_seed is not None:
-                level_seed = self.user_seed
-            else:
-                # If no user seed, generate a new random one for this level
-                # or use a deterministic one based on level_number if that's desired behavior
-                import random
-                level_seed = random.randint(0, 1000000) # Generate a truly random seed
-            
-            self.current_active_seed = level_seed # Store the seed actually used
-            
-            # Generate complete multi-room level
-            self.current_level_data = generate_complete_level(
-                self.room_gen_config,
-                self.level_gen_config,
-                self.movement_attrs,
-                seed=level_seed
-            )
-            
-            self.current_level_number = level_number if level_number is not None else 1
-            
-            # Start at first room
-            room_id = room_id or self.current_level_data.start_room_id
-            
-        
-        # Load specific room
-        if room_id is None:
-            room_id = self.current_level_data.start_room_id if self.current_level_data else "room_0"
-        
-        room_data = self.current_level_data.get_room(room_id) if self.current_level_data and room_id else None
-        
-        if room_data is None:
-            print(f"[ERROR] Room {room_id} not found in level!")
-            return
-        
-        try:
-            # For now, use static room system since procedural Level constructor doesn't exist
-            # Use room_id hash to determine which static room to load
-            room_index = hash(room_id) % ROOM_COUNT if room_id else 0
-            lvl = Level(room_index)
-        except Exception as e:
-            print(f"[CRITICAL ERROR] Failed to load room {room_id}: {e}")
-            import traceback
-            traceback.print_exc()
-            return
-        
-        self.level = lvl
-        self.enemies = lvl.enemies
-        
-        if not initial:
-            hitboxes.clear()
-            floating.clear()
+        # Use old static room system
+        self._load_static_level(level_number or 0, initial)
 
     def _load_static_level(self, index: int, initial: bool = False):
         """Legacy static room loading (for backwards compatibility)."""
-        print(f"[DEBUG] _load_static_level called: index={index}, initial={initial}")
+
         self.level_index = index
         room_index = index % ROOM_COUNT
         
-        print(f"[DEBUG] Loading static room: room_index={room_index} ( ROOMS[{room_index}] = Room {room_index + 1} )")
+
         
         try:
-            # Use room_index (not index) to pass the intended room number to Level constructor
-            lvl = Level(room_index)
+            # Use LegacyLevel for old static room system
+            lvl = LegacyLevel(room_index)
         except Exception as e:
-            print(f"[CRITICAL ERROR] Failed to load static room {room_index}: {e}")
+
             return
         
         self.level = lvl
@@ -336,66 +213,22 @@ class Game:
             hitboxes.clear()
             floating.clear()
             
-        print(f"[DEBUG] Static level loaded: level_index={self.level_index}")
+
 
     def switch_room(self, delta: Optional[int] = None, target_room_id: Optional[str] = None):
         """
-        Switch to next room in procedural level or next level.
+        Switch to next room.
         
         Args:
-            delta: +1 for next room (legacy compatibility)
-            target_room_id: Specific room to switch to
+            delta: +1 for next room
+            target_room_id: Specific room to switch to (not used in legacy system)
         """
-        if not self.use_procedural:
-            # Legacy static room switching
-            new_index = max(0, self.level_index + (delta or 1))
-            self._load_level(new_index)
-            sx, sy = self.level.spawn
-            self.player.rect.topleft = (sx, sy)
-            self.enemies = getattr(self.level, "enemies", [])
-            self.shop.open_shop()
-            return
-        
-        # PROCEDURAL SYSTEM
-        
-        current_room_id = getattr(self.level, 'current_room_id', 'room_0')
-        
-        # Determine next room
-        if target_room_id:
-            next_room_id = target_room_id
-        else:
-            # Get next room from graph
-            if self.current_level_data and self.current_level_data.internal_graph:
-                neighbors = self.current_level_data.internal_graph.get(current_room_id, [])
-                
-                if not neighbors:
-                    # No more rooms - reached goal!
-                    
-                    # Generate next level
-                    next_level = self.current_level_number + 1
-                    self._load_level(level_number=next_level)
-                    
-                    # Reset player position
-                    sx, sy = self.level.spawn
-                    self.player.rect.topleft = (sx, sy)
-                    self.enemies = getattr(self.level, "enemies", [])
-                    
-                    # Open shop between levels
-                    self.shop.open_shop()
-                    return
-                
-                # If multiple neighbors, use first (later: let player choose)
-                next_room_id = neighbors[0]
-            else:
-                next_room_id = current_room_id
-        
-        # Load next room
-        self._load_level(room_id=next_room_id)
-        
-        # Reset player position
+        # Legacy static room switching
+        new_index = max(0, self.level_index + (delta or 1))
+        self._load_level(new_index)
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)
-        self.enemies = getattr(self.level, "enemies", [])
+        
 
     def goto_room(self, index: int):
         """
@@ -462,6 +295,7 @@ class Game:
                 self.last_space_time = pygame.time.get_ticks()
             self._prev_space_pressed = space_pressed
 
+ # Legacy door system for static rooms
         for d in getattr(self.level, "doors", []):
             if self.player.rect.colliderect(d):
                 # Boss gate logic preserved for legacy/boss-style levels
@@ -1031,6 +865,8 @@ class Game:
                 )
             except Exception:
                 pass
+
+
 
             draw_panel(lines)
         except Exception:

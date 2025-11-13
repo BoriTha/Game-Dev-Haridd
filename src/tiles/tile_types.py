@@ -27,6 +27,8 @@ class TileType(IntEnum):
         """Return True if tile can be destroyed."""
         return self in (TileType.BREAKABLE_WALL,)
 
+    
+
     @property
     def has_collision(self) -> bool:
         """Return True if tile has any collision."""
