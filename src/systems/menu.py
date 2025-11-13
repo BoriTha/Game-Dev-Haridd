@@ -7,7 +7,7 @@ sys.path.insert(0, root_dir)
 
 import pygame
 from config import WIDTH, HEIGHT, FPS
-from src.core.utils import draw_text, get_font
+from src.core.utils import draw_text, get_font, draw_centered_text
 from src.level.legacy_level import LegacyLevel, ROOM_COUNT
 from src.entities.entities import Player, hitboxes, floating
 from src.systems.camera import Camera
@@ -148,24 +148,72 @@ class Menu:
                     elif ev.key in (pygame.K_5, pygame.K_q): # Hotkey for Quit
                         pygame.quit(); sys.exit()
 
-            # draw title menu
+            # draw title menu with centered layout
             self.screen.fill((8, 8, 12))
-            draw_text(self.screen, "HARIDD", (WIDTH//2 - 120, 60), (255,220,140), size=60, bold=True)
-            draw_text(self.screen, "A tiny action roguelite", (WIDTH//2 - 150, 112), (180,180,200), size=20)
+
+            # layout configuration
+            title_y = 80
+            subtitle_y = title_y + 48
+            first_option_y = subtitle_y + 64
+            option_spacing = 40
+            bottom_hint_y = HEIGHT - 64
+            bottom_summary_y = bottom_hint_y - 28
+
+            # title & subtitle
+            draw_centered_text(self.screen, "HARIDD", (WIDTH // 2, title_y), (255,220,140), size=60, bold=True)
+            draw_centered_text(self.screen, "A tiny action roguelite", (WIDTH // 2, subtitle_y), (180,180,200), size=20)
+
+            # options: numbers and labels in aligned columns, block centered
+            option_font_size = 28
+            font = get_font(size=option_font_size, bold=False)
+
+            # measure widest label so we can align nicely
+            max_label_width = 0
+            for opt in options:
+                label_surface = font.render(opt, True, (0, 0, 0))
+                max_label_width = max(max_label_width, label_surface.get_width())
+
+            # fixed width for number column (e.g. "5.") + small space
+            num_col_width = font.render("5.", True, (0, 0, 0)).get_width() + 16
+            total_block_width = num_col_width + max_label_width
+
+            # left edge so the whole block is horizontally centered
+            block_left_x = WIDTH // 2 - total_block_width // 2
+
             for i, opt in enumerate(options):
-                y = 200 + i*52
+                y = first_option_y + i * option_spacing
                 col = (255,220,140) if i == idx else (200,200,200)
-                draw_text(self.screen, f"{i+1}. {opt}", (WIDTH//2 - 160, y), col, size=28)
+
+                num_text = f"{i+1}."
+                label_text = opt
+
+                # positions: numbers share same left, labels share same left
+                num_x = block_left_x
+                label_x = block_left_x + num_col_width
+
+                num_surface = font.render(num_text, True, col)
+                label_surface = font.render(label_text, True, col)
+
+                num_rect = num_surface.get_rect(midleft=(num_x, y))
+                label_rect = label_surface.get_rect(midleft=(label_x, y))
+
+                self.screen.blit(num_surface, num_rect)
+                self.screen.blit(label_surface, label_rect)
+
             # Summary line with current class and PCG status/seed
             from src.level.config_loader import load_pcg_runtime_config
             runtime = load_pcg_runtime_config()
             mode = "PCG" if runtime.use_pcg else "Legacy"
-            draw_text(self.screen,
-                      f"Class: {self.game.selected_class} | Mode: {mode} | Seed: {runtime.seed}",
-                      (WIDTH//2 - 260, HEIGHT-96), (180,200,220), size=18)
-            draw_text(self.screen,
-                      "Use Up/Down, Enter to select • 1-5 hotkeys",
-                      (WIDTH//2 - 260, HEIGHT-64), (160,160,180), size=16)
+            summary = f"Class: {self.game.selected_class} | Mode: {mode} | Seed: {runtime.seed}"
+            draw_centered_text(self.screen, summary, (WIDTH // 2, bottom_summary_y), (180,200,220), size=18)
+
+            # bottom helper text
+            draw_centered_text(self.screen,
+                               "Use Up/Down, Enter to select  1-5 hotkeys",
+                               (WIDTH // 2, bottom_hint_y),
+                               (160,160,180),
+                               size=16)
+
             pygame.display.flip()
 
     def game_over_screen(self):

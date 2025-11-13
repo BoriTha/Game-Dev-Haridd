@@ -73,6 +73,14 @@ def draw_text(surf, text, pos, col=WHITE, size=18, bold=False):
     font = get_font(size=size, bold=bold)
     surf.blit(font.render(text, True, col), pos)
 
+
+def draw_centered_text(surf, text, center_pos, col=WHITE, size=18, bold=False):
+    """Draw text centered at the given (x, y) position."""
+    font = get_font(size=size, bold=bold)
+    rendered = font.render(text, True, col)
+    rect = rendered.get_rect(center=center_pos)
+    surf.blit(rendered, rect)
+
 def sign(x):
     return (x > 0) - (x < 0)
 

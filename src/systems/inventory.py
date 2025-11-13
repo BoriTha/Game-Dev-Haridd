@@ -121,6 +121,78 @@ class Inventory:
                 return info
         return None
 
+    def _scroll_stock(self, delta: int) -> None:
+        """Scroll current stock panel by delta pixels (positive = down, negative = up)."""
+        if not self.inventory_open or self.inventory_stock_mode not in ("gear", "consumable"):
+            return
+
+        # Reconstruct the same geometry used in draw_inventory_overlay for the stock panel
+        margin = 40
+        max_panel_w = WIDTH - (margin * 2)
+        max_panel_h = HEIGHT - (margin * 2)
+        panel_w = min(800, max_panel_w)
+        panel_h = min(600, max_panel_h)
+        panel_rect = pygame.Rect(
+            (WIDTH - panel_w) // 2,
+            (HEIGHT - panel_h) // 2 + 20,
+            panel_w,
+            panel_h,
+        )
+
+        left_pane_width = 280
+        right_pane_width = panel_w - left_pane_width - 60
+        right_pane_rect = pygame.Rect(
+            panel_rect.x + 20 + left_pane_width + 20,
+            panel_rect.y + 70,
+            right_pane_width,
+            panel_h - 100,
+        )
+
+        slot_w, slot_spacing = 56, 12
+        grid_padding = 10
+
+        # Match stock_panel_y / height from draw_inventory_overlay
+        equipped_slots_y = right_pane_rect.y + 20 + 26
+        stock_panel_y = equipped_slots_y + slot_w + 30
+        stock_panel_height = right_pane_rect.bottom - stock_panel_y - 20
+        stock_panel_rect = pygame.Rect(
+            right_pane_rect.x + 20,
+            stock_panel_y,
+            right_pane_width - 40,
+            stock_panel_height,
+        )
+
+        header_height = 40
+        grid_start_y = 10  # Must match grid_start_y_in_surface in draw_inventory_overlay
+        max_grid_width = stock_panel_rect.width - grid_padding * 2 - 25
+        cols = max(1, max_grid_width // (slot_w + slot_spacing))
+        row_height = slot_w + slot_spacing
+        # viewport is the scrollable body height minus top padding
+        viewport_height = stock_panel_rect.height - header_height - grid_start_y
+
+        if self.inventory_stock_mode == "gear":
+            keys = [*self.armament_order, self.UNEQUIP_GEAR_KEY]
+        else:
+            available_consumables = []
+            for key in self.consumable_order:
+                if self._storage_count(key) > 0:
+                    available_consumables.append(key)
+            keys = [*available_consumables, self.UNEQUIP_CONSUMABLE_KEY]
+
+        if not keys:
+            return
+
+        num_rows = (len(keys) + cols - 1) // cols
+        total_content_height = num_rows * row_height
+        max_scroll = max(0, total_content_height - viewport_height)
+        # Always keep scroll within [0, max_scroll]; if content shorter than viewport,
+        # clamp to 0 so items never overlap the fixed header text.
+
+        if self.inventory_stock_mode == "gear":
+            self.armament_scroll_offset = max(0, min(max_scroll, self.armament_scroll_offset + delta))
+        else:
+            self.consumable_scroll_offset = max(0, min(max_scroll, self.consumable_scroll_offset + delta))
+
     def _find_gear_slot_with_key(self, key):
         for idx, slot_key in enumerate(self.gear_slots):
             if slot_key == key:
@@ -556,7 +628,7 @@ class Inventory:
         draw_text(self.game.screen, "Inventory", (panel_rect.x + 32, panel_rect.y + 20), (240,220,190), size=30, bold=True)
         footer_font = get_font(18)
         footer_surface = footer_font.render("Press I or Esc to close", True, (180,180,195))
-        footer_rect = footer_surface.get_rect(midbottom=(panel_rect.centerx, panel_rect.bottom - 18))
+        footer_rect = footer_surface.get_rect(midbottom=(panel_rect.centerx, panel_rect.bottom - 8))
         self.game.screen.blit(footer_surface, footer_rect)
 
         # Define main panes
@@ -669,11 +741,26 @@ class Inventory:
         stock_panel_height = right_pane_rect.bottom - stock_panel_y - 20
         stock_panel_rect = pygame.Rect(right_pane_rect.x + 20, stock_panel_y, right_pane_width - 40, stock_panel_height)
         
-        pygame.draw.rect(self.game.screen, (35, 30, 45), stock_panel_rect, border_radius=10) # Outline for stock area
-        pygame.draw.rect(self.game.screen, (100, 100, 120), stock_panel_rect, width=1, border_radius=10)
+        # Split stock area into fixed header and scrollable body
+        header_height = 40
+        header_rect = pygame.Rect(stock_panel_rect.x, stock_panel_rect.y, stock_panel_rect.width, header_height)
+        body_rect = pygame.Rect(stock_panel_rect.x, stock_panel_rect.y + header_height, stock_panel_rect.width, stock_panel_rect.height - header_height)
 
-        # Clipping surface for scrolling
-        stock_surface = pygame.Surface(stock_panel_rect.size, pygame.SRCALPHA)
+        # Header box (title area)
+        pygame.draw.rect(self.game.screen, (40, 35, 55), header_rect, border_radius=8)
+        pygame.draw.rect(self.game.screen, (120, 110, 150), header_rect, width=1, border_radius=8)
+
+        header_title = "Armory Stock" if self.inventory_stock_mode == 'gear' else "Consumable Stock" if self.inventory_stock_mode == 'consumable' else "Stock"
+        header_font = get_font(18, bold=True)
+        header_surf = header_font.render(header_title, True, (235, 220, 210))
+        self.game.screen.blit(header_surf, (header_rect.x + 12, header_rect.y + 10))
+
+        # Scrollable body box
+        pygame.draw.rect(self.game.screen, (35, 30, 45), body_rect, border_radius=10)
+        pygame.draw.rect(self.game.screen, (100, 100, 120), body_rect, width=1, border_radius=10)
+
+        # Clipping surface for scrolling (only for body area, header is fixed)
+        stock_surface = pygame.Surface(body_rect.size, pygame.SRCALPHA)
         stock_surface.fill((0,0,0,0)) # Transparent background
 
         grid_padding = 10
@@ -685,7 +772,6 @@ class Inventory:
             available_gear = list(self.armament_order)
             keys_to_draw = [*available_gear, self.UNEQUIP_GEAR_KEY]
             current_scroll_offset = self.armament_scroll_offset
-            draw_text(stock_surface, "Armory Stock", (10, 10), (210, 200, 170), size=18)
         elif self.inventory_stock_mode == 'consumable':
             # Only show consumables that have additional stock available beyond what's equipped
             available_consumables = []
@@ -698,27 +784,42 @@ class Inventory:
                     available_consumables.append(key)
             keys_to_draw = [*available_consumables, self.UNEQUIP_CONSUMABLE_KEY]
             current_scroll_offset = self.consumable_scroll_offset
-            draw_text(stock_surface, "Consumable Stock", (10, 10), (210, 200, 170), size=18)
         else:
             keys_to_draw = [] # Should not happen with default 'gear'
 
-        grid_start_y_in_surface = 40 # Offset for title
-        available_grid_width = max(1, stock_panel_rect.width - grid_padding * 2)
-        cols = max(1, (available_grid_width + slot_spacing) // (slot_w + slot_spacing))
+        # Start grid directly under header inside body surface
+        grid_start_y_in_surface = 10
+        # Compute columns so the stock grid ends exactly at the scrollbar track.
+        # Scrollbar is 20px wide and starts 5px from the right edge of stock_panel_rect.
+        # We pack whole cells from left padding up to (right - 25) with no overlap.
+        max_grid_width = stock_panel_rect.width - grid_padding * 2 - 25
+        cols = max(1, max_grid_width // (slot_w + slot_spacing))
+        # Left-align grid within the reserved area before the scrollbar track for predictable hitboxes.
+        grid_offset_x = grid_padding
         
         total_content_height = 0
         if keys_to_draw:
             num_rows = (len(keys_to_draw) + cols - 1) // cols
             total_content_height = num_rows * (slot_w + slot_spacing)
 
-        # Draw items onto the stock_surface
+        # Clamp scroll so items never overlap the fixed header band
+        viewport_height = body_rect.height - grid_start_y_in_surface
+        max_scroll = max(0, total_content_height - viewport_height)
+        if self.inventory_stock_mode == 'gear':
+            current_scroll_offset = max(0, min(max_scroll, self.armament_scroll_offset))
+            self.armament_scroll_offset = current_scroll_offset
+        elif self.inventory_stock_mode == 'consumable':
+            current_scroll_offset = max(0, min(max_scroll, self.consumable_scroll_offset))
+            self.consumable_scroll_offset = current_scroll_offset
+
+        # Draw items onto the stock_surface (header stays fixed at top)
         y_offset_in_surface = grid_start_y_in_surface - current_scroll_offset
         
         for i, key in enumerate(keys_to_draw):
             row = i // cols
             col = i % cols
             
-            cell_x = col * (slot_w + slot_spacing) + grid_padding
+            cell_x = col * (slot_w + slot_spacing) + grid_offset_x
             cell_y = y_offset_in_surface + row * (slot_w + slot_spacing)
             
             cell = pygame.Rect(cell_x, cell_y, slot_w, slot_w)
@@ -726,7 +827,8 @@ class Inventory:
             # Only draw if visible within the stock_surface
             if cell.bottom > grid_start_y_in_surface and cell.top < stock_panel_rect.height:
                 if self.inventory_stock_mode == 'gear':
-                    self._register_inventory_region(cell.move(stock_panel_rect.topleft), 'gear_pool', key=key)
+                    # Map from body surface to screen coords for hit regions
+                    self._register_inventory_region(cell.move(body_rect.topleft), 'gear_pool', key=key)
                     if key == self.UNEQUIP_GEAR_KEY:
                         highlighted = bool(selection and selection.get('kind') == 'gear_pool' and selection.get('key') == key)
                         self._draw_unequip_stock_cell(stock_surface, cell, 'gear', icon_font, highlighted)
@@ -746,7 +848,8 @@ class Inventory:
                     icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))
                     stock_surface.blit(icon_surface, icon_surface.get_rect(center=cell.center))
                 elif self.inventory_stock_mode == 'consumable':
-                    self._register_inventory_region(cell.move(stock_panel_rect.topleft), 'consumable_pool', key=key)
+                    # Map from body surface to screen coords for hit regions
+                    self._register_inventory_region(cell.move(body_rect.topleft), 'consumable_pool', key=key)
                     if key == self.UNEQUIP_CONSUMABLE_KEY:
                         highlighted = bool(selection and selection.get('kind') == 'consumable_pool' and selection.get('key') == key)
                         self._draw_unequip_stock_cell(stock_surface, cell, 'consumable', icon_font, highlighted)
@@ -773,15 +876,17 @@ class Inventory:
         
 
         
-        self.game.screen.blit(stock_surface, stock_panel_rect.topleft)
+        # Blit scrollable content just under the fixed header
+        self.game.screen.blit(stock_surface, body_rect.topleft)
 
-        # Scrollbar (simple up/down arrows)
-        viewport_height = stock_panel_rect.height - grid_start_y_in_surface
+        # Scrollbar (simple up/down arrows) inside item body only
+        # Use body_rect height for viewport since header is fixed
+        viewport_height = body_rect.height - grid_start_y_in_surface
         if total_content_height > viewport_height:
             scrollbar_width = 20
-            scrollbar_height_area = stock_panel_rect.height - grid_start_y_in_surface - 10 # 10 for padding
-            scrollbar_x = stock_panel_rect.right - scrollbar_width - 5
-            scrollbar_y = stock_panel_rect.y + grid_start_y_in_surface + 5
+            scrollbar_height_area = body_rect.height - grid_start_y_in_surface - 10  # 10 for padding
+            scrollbar_x = body_rect.right - scrollbar_width - 5
+            scrollbar_y = body_rect.y + grid_start_y_in_surface + 5
 
             # Scrollbar background
             pygame.draw.rect(self.game.screen, (60, 60, 80), (scrollbar_x, scrollbar_y, scrollbar_width, scrollbar_height_area), border_radius=5)
@@ -794,7 +899,7 @@ class Inventory:
                 up_arrow_rect,
                 'scroll_up',
                 mode=self.inventory_stock_mode,
-                stock_rect=stock_panel_rect,
+                stock_rect=body_rect,
                 grid_start_y=grid_start_y_in_surface,
                 grid_padding=grid_padding,
                 slot_size=slot_w,
@@ -810,7 +915,7 @@ class Inventory:
                 down_arrow_rect,
                 'scroll_down',
                 mode=self.inventory_stock_mode,
-                stock_rect=stock_panel_rect,
+                stock_rect=body_rect,
                 grid_start_y=grid_start_y_in_surface,
                 grid_padding=grid_padding,
                 slot_size=slot_w,

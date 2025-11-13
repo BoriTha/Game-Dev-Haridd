@@ -1293,7 +1293,16 @@ class Game:
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
                 elif ev.type == pygame.MOUSEBUTTONDOWN:
-                    if ev.button == 1:  # Left click
+                    # Mouse wheel scroll for inventory stock panel
+                    if self.inventory.inventory_open:
+                        if ev.button == 4:  # Wheel up
+                            self.inventory._scroll_stock(-50)
+                            continue
+                        elif ev.button == 5:  # Wheel down
+                            self.inventory._scroll_stock(50)
+                            continue
+                    # Left click handling
+                    if ev.button == 1:
                         if self.inventory.inventory_open:
                             self.inventory._handle_inventory_click(ev.pos)
                         elif self.shop.shop_open:
