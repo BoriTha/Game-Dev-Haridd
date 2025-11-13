@@ -1183,8 +1183,7 @@ class Game:
         # selected class
         draw_text(self.screen, f"Class: {getattr(self.player, 'cls', 'Unknown')}", (WIDTH-220, 28), (200,200,200), size=16)
 
-        # Static level label (no procedural progression metadata)
-        draw_text(self.screen, f"Level {self.level_index + 1}", (16, 56), (220, 200, 160), size=16)
+
 
         # Skill bar (MOBA-style): show 1/2/3 cooldowns and active highlights
         sbx, sby = 16, HEIGHT - 80
