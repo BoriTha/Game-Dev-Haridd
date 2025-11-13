@@ -1,6 +1,6 @@
 {
   "pcg_config": {
-    "use_pcg": true,
+    "use_pcg": false,
     "seed_mode": "fixed",
     "seed": 45805229,
     "num_levels": 3,
