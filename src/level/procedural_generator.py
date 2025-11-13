@@ -1038,22 +1038,14 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
             if room.is_in_bounds(carve_x, carve_y):
                 room.set_tile(carve_x, carve_y, TileCell(tile_type=TileType.AIR))
     
-    # === NEW: Create exclusion zone for ground platform only ===
-    # Protect 3x1 ground platform below spawn area (existing WALL tiles)
-    spawn_exclusion = set()
-    ground_platform_exclusion = create_exclusion_zone(
-        room_data=room,
-        center_x=spawn_center_x,
-        center_y=spawn_center_y + 2,  # One tile below 3x3 spawn area
-        width=3,
-        height=1,
-        exclusion_type="SPAWN_PLATFORM"
-    )
-    spawn_exclusion.update(ground_platform_exclusion)
+    # === REMOVED: Spawn exclusion zone ===
+    # Don't create exclusion zones for spawn area - let walker carve freely
+    # The actual spawn area tiles will be protected by their existing flags
     
-    # Initialize walker at spawn center instead of room center
-    walker_x = spawn_center_x
-    walker_y = spawn_center_y
+    # Initialize walker away from spawn area to avoid getting stuck in protected zone
+    # Start in center of room instead
+    walker_x = width // 2
+    walker_y = height // 2
     
     # Drunkard's Walk parameters
     max_steps = width * height // 2  # Carve ~50% of room
@@ -1089,6 +1081,9 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
                     existing_tile = room.get_tile(carve_x, carve_y)
                     # Skip carving if tile has any protection flag
                     if any(flag in existing_tile.flags for flag in ["SPAWN_PLATFORM", "DOOR_PLATFORM", "PROTECTED"]):
+                        continue
+                    # Also skip if already air (don't double-count)
+                    if existing_tile.tile_type == TileType.AIR:
                         continue
                     room.set_tile(carve_x, carve_y, TileCell(tile_type=TileType.AIR))
         
