@@ -48,20 +48,44 @@ class DoorSystem:
             self.current_tiles = tiles
             logger.debug("DoorSystem load_room: %s -> (%s, %s)", prev, self.current_level_id, self.current_room_code)
             
-            # Place entrance door if this room has an entrance
+            # Place entrance/exit tiles from room.placed_doors if present
             from src.level.level_loader import level_loader
             room = level_loader.get_room(level_id, room_code)
-            if room and room.entrance_from:
-                self._place_entrance_door(room.entrance_from)
-            else:
-                # Ensure left door tile cleared if no entrance
-                if self.current_tiles:
+            placed = None
+            if room is not None:
+                placed = getattr(room, 'placed_doors', None)
+
+            if placed:
+                # Apply each recorded placed door into current_tiles
+                try:
                     h = len(self.current_tiles)
                     w = len(self.current_tiles[0]) if h > 0 else 0
-                    entrance_y = h // 2
-                    if 0 < entrance_y < h - 1 and 1 < w - 1:
-                        from config import TILE_AIR
-                        self.current_tiles[entrance_y][1] = TILE_AIR
+                except Exception:
+                    h = 0
+                    w = 0
+
+                for pd in placed:
+                    try:
+                        tx = int(pd.get('tx'))
+                        ty = int(pd.get('ty'))
+                        tile_id = int(pd.get('tile'))
+                    except Exception:
+                        continue
+                    if 0 <= ty < h and 0 <= tx < w:
+                        self.current_tiles[ty][tx] = tile_id
+            else:
+                # Backwards-compatible behavior: place left entrance if room metadata has entrance_from
+                if room and room.entrance_from:
+                    self._place_entrance_door(room.entrance_from)
+                else:
+                    # Ensure left door tile cleared if no entrance
+                    if self.current_tiles:
+                        h = len(self.current_tiles)
+                        w = len(self.current_tiles[0]) if h > 0 else 0
+                        entrance_y = h // 2
+                        if 0 < entrance_y < h - 1 and 1 < w - 1:
+                            from config import TILE_AIR
+                            self.current_tiles[entrance_y][1] = TILE_AIR
             
             return True
         return False

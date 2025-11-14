@@ -255,6 +255,46 @@ def generate_simple_pcg_level_set(
     _wire_cross_level_doors(all_levels_rooms)
     _compute_entrances(all_levels_rooms)
 
+    # Place door tiles into room tile grids and record placed_doors metadata
+    try:
+        from src.level.door_utils import choose_wall_position, place_exit_with_metadata, place_entrance
+    except Exception:
+        # If helper not available, skip placement
+        choose_wall_position = None
+        place_exit_with_metadata = None
+        place_entrance = None
+
+    for level_rooms in all_levels_rooms:
+        for room in level_rooms:
+            # Ensure placed_doors is initialized
+            room.placed_doors = getattr(room, 'placed_doors', None)
+            if room.placed_doors is None:
+                room.placed_doors = []
+
+            # Place entrance if present
+            if room.entrance_from and choose_wall_position and place_entrance:
+                pos = choose_wall_position(room.tiles, "left", rng)
+                if pos:
+                    tx, ty = pos
+                    place_entrance(room, room.tiles, tx, ty, room.entrance_from)
+
+            # Place exits
+            if room.door_exits and choose_wall_position and place_exit_with_metadata:
+                for exit_key, target in room.door_exits.items():
+                    # Skip if we already placed this logical exit for the room
+                    already = False
+                    for pd in getattr(room, 'placed_doors', []) or []:
+                        if pd.get('exit_key') == exit_key:
+                            already = True
+                            break
+                    if already:
+                        continue
+
+                    pos = choose_wall_position(room.tiles, "right", rng)
+                    if pos:
+                        tx, ty = pos
+                        place_exit_with_metadata(room, room.tiles, tx, ty, exit_key, target)
+
     levels: List[LevelData] = []
     for level_id, rooms in enumerate(all_levels_rooms, start=1):
         levels.append(LevelData(level_id=level_id, rooms=rooms))

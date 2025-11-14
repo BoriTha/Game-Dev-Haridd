@@ -48,7 +48,9 @@ class RoomData:
     door_exits: Optional[Dict[str, Dict[str, object]]] = None  # Maps exit keys to structured targets
     # Optional areas metadata as a list of dicts (keeps JSON-compatible shape)
     areas: Optional[List[Dict[str, Any]]] = None
-    
+    # Optional placed doors metadata (populated by PCG generator)
+    placed_doors: Optional[List[Dict[str, Any]]] = None
+
     def __post_init__(self):
         if self.door_exits is None:
             self.door_exits = {}
