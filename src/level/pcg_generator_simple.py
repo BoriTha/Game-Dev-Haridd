@@ -46,20 +46,14 @@ def generate_simple_room_tiles(config: PCGConfig) -> List[List[int]]:
 
     Uses tile IDs from PCGConfig (loaded from config/pcg_config.json).
     """
-    width = config.room_width
-    height = config.room_height
-
-    grid: List[List[int]] = []
-    for y in range(height):
-        row: List[int] = []
-        for x in range(width):
-            if x == 0 or x == width - 1 or y == 0 or y == height - 1:
-                row.append(config.wall_tile_id)
-            else:
-                row.append(config.air_tile_id)
-        grid.append(row)
-
-    return grid
+    from src.level.pcg_level_data import generate_room_tiles
+    # Delegate to helper to keep generation logic centralized
+    return generate_room_tiles(
+        level_id=1, room_index=0, room_letter="A",
+        width=config.room_width,
+        height=config.room_height,
+        config=config
+    )
 
 
 def generate_rooms_for_level(
@@ -84,7 +78,16 @@ def generate_rooms_for_level(
 
         for letter in letters:
             room_code = f"{level_id}{slot}{letter}"
-            tiles = generate_simple_room_tiles(config)
+            # Generate tiles using the centralized helper so room tiles vary by room
+            from src.level.pcg_level_data import generate_room_tiles
+            tiles = generate_room_tiles(
+                level_id=level_id,
+                room_index=room_index,
+                room_letter=letter,
+                width=config.room_width,
+                height=config.room_height,
+                config=config,
+            )
 
             rooms.append(
                 RoomData(
@@ -146,9 +149,9 @@ def _wire_intra_level_doors(level_rooms: List[RoomData]) -> None:
         secondary = next_group[1] if len(next_group) > 1 else None
 
         for room in current_group:
-            room.door_exits["door_exit_1"] = primary.room_code
+            room.door_exits["door_exit_1"] = {"level_id": primary.level_id, "room_code": primary.room_code}
             if secondary is not None:
-                room.door_exits["door_exit_2"] = secondary.room_code
+                room.door_exits["door_exit_2"] = {"level_id": secondary.level_id, "room_code": secondary.room_code}
 
 
 def _wire_cross_level_doors(all_levels_rooms: List[List[RoomData]]) -> None:
@@ -193,9 +196,9 @@ def _wire_cross_level_doors(all_levels_rooms: List[List[RoomData]]) -> None:
         secondary = first_group[1] if len(first_group) > 1 else None
 
         for room in last_group:
-            room.door_exits["door_exit_1"] = primary.room_code
+            room.door_exits["door_exit_1"] = {"level_id": primary.level_id, "room_code": primary.room_code}
             if secondary is not None:
-                room.door_exits["door_exit_2"] = secondary.room_code
+                room.door_exits["door_exit_2"] = {"level_id": secondary.level_id, "room_code": secondary.room_code}
 
 
 def _compute_entrances(all_levels_rooms: List[List[RoomData]]) -> None:
@@ -214,7 +217,12 @@ def _compute_entrances(all_levels_rooms: List[List[RoomData]]) -> None:
     for source in code_to_room.values():
         if not source.door_exits:
             continue
-        for target_code in source.door_exits.values():
+        for target_entry in source.door_exits.values():
+            # target_entry may be a structured dict or legacy string
+            if isinstance(target_entry, dict):
+                target_code = target_entry.get('room_code')
+            else:
+                target_code = target_entry
             target = code_to_room.get(target_code)
             if target is not None and target.entrance_from is None:
                 target.entrance_from = source.room_code
@@ -265,18 +273,17 @@ def generate_and_save_simple_pcg(
 
 
 if __name__ == "__main__":
-    # Quick manual test: generate and print summary
+    import logging
+    logger = logging.getLogger(__name__)
+    # Quick manual test: generate and log summary
     ls = generate_and_save_simple_pcg()
     for level in ls.levels:
-        print(f"Level {level.level_id}: {len(level.rooms)} rooms")
+        logger.info("Level %d: %d rooms", level.level_id, len(level.rooms))
         # Show a couple of rooms for inspection
         shown = set()
         for room in level.rooms:
             if room.room_index not in shown:
-                print(
-                    f"  Room {room.room_code}: index={room.room_index}, "
-                    f"letter={room.room_letter}, "
-                    f"entrance_from={room.entrance_from}, exits={room.door_exits}"
-                )
+                logger.info("  Room %s: index=%d, letter=%s, entrance_from=%s, exits=%s",
+                            room.room_code, room.room_index, room.room_letter, room.entrance_from, room.door_exits)
                 shown.add(room.room_index)
-        print()
+        logger.info("")

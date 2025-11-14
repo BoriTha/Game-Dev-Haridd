@@ -260,12 +260,10 @@ class TileRenderer:
 
         DEBUG_TILE_RENDERER = False
         if DEBUG_TILE_RENDERER:
-            print(
-                f"[TileRenderer] zoom={zoom:.2f} "
-                f"screen=({screen_w}x{screen_h}) "
-                f"world=({world_left:.1f},{world_top:.1f})-"
-                f"({world_right:.1f},{world_bottom:.1f}) "
-                f"tiles_x=[{start_tx},{end_tx}) tiles_y=[{start_ty},{end_ty})"
+            import logging
+            logging.getLogger(__name__).debug(
+                "[TileRenderer] zoom=%0.2f screen=(%dx%d) world=(%0.1f,%0.1f)-(%0.1f,%0.1f) tiles_x=[%d,%d) tiles_y=[%d,%d)",
+                zoom, screen_w, screen_h, world_left, world_top, world_right, world_bottom, start_tx, end_tx, start_ty, end_ty
             )
 
         for ty in range(start_ty, end_ty):

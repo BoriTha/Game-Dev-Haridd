@@ -2612,8 +2612,14 @@
           ],
           "entrance_from": null,
           "door_exits": {
-            "door_exit_1": "12A",
-            "door_exit_2": "12B"
+            "door_exit_1": {
+              "level_id": 1,
+              "room_code": "12A"
+            },
+            "door_exit_2": {
+              "level_id": 1,
+              "room_code": "12B"
+            }
           }
         },
         {
@@ -5225,8 +5231,14 @@
           ],
           "entrance_from": null,
           "door_exits": {
-            "door_exit_1": "12A",
-            "door_exit_2": "12B"
+            "door_exit_1": {
+              "level_id": 1,
+              "room_code": "12A"
+            },
+            "door_exit_2": {
+              "level_id": 1,
+              "room_code": "12B"
+            }
           }
         },
         {
@@ -7838,7 +7850,10 @@
           ],
           "entrance_from": "11A",
           "door_exits": {
-            "door_exit_1": "13A"
+            "door_exit_1": {
+              "level_id": 1,
+              "room_code": "13A"
+            }
           }
         },
         {
@@ -10450,7 +10465,10 @@
           ],
           "entrance_from": "11A",
           "door_exits": {
-            "door_exit_1": "13A"
+            "door_exit_1": {
+              "level_id": 1,
+              "room_code": "13A"
+            }
           }
         },
         {
@@ -13062,7 +13080,10 @@
           ],
           "entrance_from": "12A",
           "door_exits": {
-            "door_exit_1": "14A"
+            "door_exit_1": {
+              "level_id": 1,
+              "room_code": "14A"
+            }
           }
         },
         {
@@ -15674,8 +15695,14 @@
           ],
           "entrance_from": "13A",
           "door_exits": {
-            "door_exit_1": "15A",
-            "door_exit_2": "15B"
+            "door_exit_1": {
+              "level_id": 1,
+              "room_code": "15A"
+            },
+            "door_exit_2": {
+              "level_id": 1,
+              "room_code": "15B"
+            }
           }
         },
         {
@@ -18287,7 +18314,10 @@
           ],
           "entrance_from": "14A",
           "door_exits": {
-            "door_exit_1": "16A"
+            "door_exit_1": {
+              "level_id": 1,
+              "room_code": "16A"
+            }
           }
         },
         {
@@ -20899,7 +20929,10 @@
           ],
           "entrance_from": "14A",
           "door_exits": {
-            "door_exit_1": "16A"
+            "door_exit_1": {
+              "level_id": 1,
+              "room_code": "16A"
+            }
           }
         },
         {
@@ -23511,8 +23544,14 @@
           ],
           "entrance_from": "15A",
           "door_exits": {
-            "door_exit_1": "21A",
-            "door_exit_2": "21B"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "21A"
+            },
+            "door_exit_2": {
+              "level_id": 2,
+              "room_code": "21B"
+            }
           }
         }
       ]
@@ -26129,8 +26168,14 @@
           ],
           "entrance_from": "16A",
           "door_exits": {
-            "door_exit_1": "22A",
-            "door_exit_2": "22B"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "22A"
+            },
+            "door_exit_2": {
+              "level_id": 2,
+              "room_code": "22B"
+            }
           }
         },
         {
@@ -28742,8 +28787,14 @@
           ],
           "entrance_from": "16A",
           "door_exits": {
-            "door_exit_1": "22A",
-            "door_exit_2": "22B"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "22A"
+            },
+            "door_exit_2": {
+              "level_id": 2,
+              "room_code": "22B"
+            }
           }
         },
         {
@@ -31355,7 +31406,10 @@
           ],
           "entrance_from": "21A",
           "door_exits": {
-            "door_exit_1": "23A"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "23A"
+            }
           }
         },
         {
@@ -33967,7 +34021,10 @@
           ],
           "entrance_from": "21A",
           "door_exits": {
-            "door_exit_1": "23A"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "23A"
+            }
           }
         },
         {
@@ -36579,7 +36636,10 @@
           ],
           "entrance_from": "22A",
           "door_exits": {
-            "door_exit_1": "24A"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "24A"
+            }
           }
         },
         {
@@ -39191,8 +39251,14 @@
           ],
           "entrance_from": "23A",
           "door_exits": {
-            "door_exit_1": "25A",
-            "door_exit_2": "25B"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "25A"
+            },
+            "door_exit_2": {
+              "level_id": 2,
+              "room_code": "25B"
+            }
           }
         },
         {
@@ -41804,7 +41870,10 @@
           ],
           "entrance_from": "24A",
           "door_exits": {
-            "door_exit_1": "26A"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "26A"
+            }
           }
         },
         {
@@ -44416,7 +44485,10 @@
           ],
           "entrance_from": "24A",
           "door_exits": {
-            "door_exit_1": "26A"
+            "door_exit_1": {
+              "level_id": 2,
+              "room_code": "26A"
+            }
           }
         },
         {
@@ -47028,8 +47100,14 @@
           ],
           "entrance_from": "25A",
           "door_exits": {
-            "door_exit_1": "31A",
-            "door_exit_2": "31B"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "31A"
+            },
+            "door_exit_2": {
+              "level_id": 3,
+              "room_code": "31B"
+            }
           }
         }
       ]
@@ -49646,8 +49724,14 @@
           ],
           "entrance_from": "26A",
           "door_exits": {
-            "door_exit_1": "32A",
-            "door_exit_2": "32B"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "32A"
+            },
+            "door_exit_2": {
+              "level_id": 3,
+              "room_code": "32B"
+            }
           }
         },
         {
@@ -52259,8 +52343,14 @@
           ],
           "entrance_from": "26A",
           "door_exits": {
-            "door_exit_1": "32A",
-            "door_exit_2": "32B"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "32A"
+            },
+            "door_exit_2": {
+              "level_id": 3,
+              "room_code": "32B"
+            }
           }
         },
         {
@@ -54872,8 +54962,14 @@
           ],
           "entrance_from": "31A",
           "door_exits": {
-            "door_exit_1": "33A",
-            "door_exit_2": "33B"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "33A"
+            },
+            "door_exit_2": {
+              "level_id": 3,
+              "room_code": "33B"
+            }
           }
         },
         {
@@ -57485,8 +57581,14 @@
           ],
           "entrance_from": "31A",
           "door_exits": {
-            "door_exit_1": "33A",
-            "door_exit_2": "33B"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "33A"
+            },
+            "door_exit_2": {
+              "level_id": 3,
+              "room_code": "33B"
+            }
           }
         },
         {
@@ -60098,7 +60200,10 @@
           ],
           "entrance_from": "32A",
           "door_exits": {
-            "door_exit_1": "34A"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "34A"
+            }
           }
         },
         {
@@ -62710,7 +62815,10 @@
           ],
           "entrance_from": "32A",
           "door_exits": {
-            "door_exit_1": "34A"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "34A"
+            }
           }
         },
         {
@@ -65322,7 +65430,10 @@
           ],
           "entrance_from": "33A",
           "door_exits": {
-            "door_exit_1": "35A"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "35A"
+            }
           }
         },
         {
@@ -67934,7 +68045,10 @@
           ],
           "entrance_from": "34A",
           "door_exits": {
-            "door_exit_1": "36A"
+            "door_exit_1": {
+              "level_id": 3,
+              "room_code": "36A"
+            }
           }
         },
         {

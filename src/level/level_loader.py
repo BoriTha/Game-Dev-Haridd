@@ -89,19 +89,39 @@ class LevelLoader:
         room = self.get_room(level_id, room_code)
         return room.tiles if room else None
     
-    def get_room_exits(self, level_id: int, room_code: str) -> Dict[str, str]:
+    def get_room_exits(self, level_id: int, room_code: str) -> Dict[str, Dict[str, object]]:
         """
         Get door exits mapping for a specific room.
-        
-        Args:
-            level_id: The level number (1-based)
-            room_code: Room code like "1A", "2B", etc.
-            
-        Returns:
-            Dict mapping "door_exit_1"/"door_exit_2" to target room codes
+
+        Normalized return format (strict):
+            {
+                "door_exit_1": {"level_id": 1, "room_code": "11A"},
+                "door_exit_2": {"level_id": 2, "room_code": "21A"}
+            }
+
+        This method expects exits to be structured objects in the JSON. If
+        legacy string targets are present, this method will raise a ValueError
+        so levels must be regenerated with structured exits.
         """
         room = self.get_room(level_id, room_code)
-        return room.door_exits if room else {}
+        if not room:
+            return {}
+
+        raw_exits = room.door_exits or {}
+        normalized: Dict[str, Dict[str, object]] = {}
+
+        for k, v in raw_exits.items():
+            if not isinstance(v, dict):
+                raise ValueError(f"Legacy string exit found for {level_id}/{room_code}: {k} -> {v}; regenerate levels with structured exits")
+            try:
+                lid = int(v["level_id"])
+                rcode = str(v["room_code"])
+            except Exception as e:
+                raise ValueError(f"Invalid structured exit for {level_id}/{room_code}: {k} -> {v}: {e}")
+            normalized[k] = {"level_id": lid, "room_code": rcode}
+
+        return normalized
+
     
     def get_room_entrance_from(self, level_id: int, room_code: str) -> Optional[str]:
         """
@@ -179,16 +199,12 @@ def get_starting_room(level_id: int) -> Optional[RoomData]:
     return level_loader.get_starting_room(level_id)
 
 
-def get_room_exits(level_id: int, room_code: str) -> Dict[str, str]:
+def get_room_exits(level_id: int, room_code: str) -> Dict[str, Dict[str, object]]:
     """
-    Convenience function to get room exits.
-    
-    Args:
-        level_id: The level number (1-based)
-        room_code: Room code like "1A", "2B", etc.
-        
-    Returns:
-        Dict mapping "door_exit_1"/"door_exit_2" to target room codes
+    Convenience function to get room exits (normalized form).
+
+    Returns a mapping where each exit key maps to a structured target:
+        {"door_exit_1": {"level_id": 1, "room_code": "11A"}, ...}
     """
     return level_loader.get_room_exits(level_id, room_code)
 

@@ -154,12 +154,14 @@ class TileParser:
 
     def print_legend(self):
         """Print a legend of all recognized characters."""
-        print("=== Tile Legend ===")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("=== Tile Legend ===")
         for char, tile_type in self.ascii_map.items():
-            print(f"  '{char}' : {tile_type.name}")
-        print("\n=== Entity Legend ===")
+            logger.info("  '%s' : %s", char, tile_type.name)
+        logger.info("\n=== Entity Legend ===")
         for char, entity_type in self.entity_markers.items():
-            print(f"  '{char}' : {entity_type}")
-        print("\n=== Legacy Aliases ===")
+            logger.info("  '%s' : %s", char, entity_type)
+        logger.info("\n=== Legacy Aliases ===")
         for char, target in LEGACY_CHAR_ALIASES.items():
-            print(f"  '{char}' : Alias for '{target}'")
+            logger.info("  '%s' : Alias for '%s'", char, target)

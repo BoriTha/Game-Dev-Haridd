@@ -843,7 +843,8 @@ class Player:
                     if self.on_ground: self.coyote = COYOTE_FRAMES
                     collisions = collision_info_list
                 except Exception as e:
-                    print(f"Tile collision error: {e}")
+                    import logging
+                    logging.getLogger(__name__).exception("Tile collision error: %s", e)
                     self.rect.x += int(self.vx)
                     self.rect.y += int(self.vy)
                     self.was_on_ground = self.on_ground

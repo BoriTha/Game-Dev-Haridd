@@ -28,7 +28,8 @@ def load_pcg_config(config_path: str = "config/pcg_config.json") -> PCGConfig:
         PCGConfig: Loaded configuration
     """
     if not os.path.exists(config_path):
-        print(f"Config file not found: {config_path}, using defaults")
+        import logging
+        logging.getLogger(__name__).warning("Config file not found: %s, using defaults", config_path)
         return PCGConfig()
     
     try:
@@ -47,7 +48,8 @@ def load_pcg_config(config_path: str = "config/pcg_config.json") -> PCGConfig:
         return PCGConfig(**filtered)
     
     except Exception as e:
-        print(f"Error loading config: {e}, using defaults")
+        import logging
+        logging.getLogger(__name__).warning("Error loading config: %s, using defaults", e)
         return PCGConfig()
 
 
@@ -147,7 +149,9 @@ def save_pcg_runtime_config(runtime: PCGRuntimeConfig, config_path: str = "confi
 
 
 if __name__ == "__main__":
+    import logging
+    logger = logging.getLogger(__name__)
     # Test configuration loading
     config = load_pcg_config()
-    print(f"Loaded config: {config.num_levels} levels, {config.rooms_per_level} rooms each")
-    print("Config working correctly!")
+    logger.info("Loaded config: %d levels, %d rooms each", config.num_levels, config.rooms_per_level)
+    logger.info("Config working correctly!")

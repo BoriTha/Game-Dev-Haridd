@@ -41,7 +41,7 @@ class RoomData:
     room_code: str
     tiles: List[List[int]]  # 2D grid of tile IDs
     entrance_from: Optional[str] = None  # Which room this room's entrance comes from
-    door_exits: Optional[Dict[str, str]] = None  # Maps "door_exit_1"/"door_exit_2" to target room codes
+    door_exits: Optional[Dict[str, Dict[str, object]]] = None  # Maps exit keys to structured targets
     
     def __post_init__(self):
         if self.door_exits is None:
@@ -133,154 +133,27 @@ def generate_room_tiles(
                 row.append(config.air_tile_id)
         grid.append(row)
     
-    # Add doors if enabled
-    if config.add_doors:
-        # Entrance door (left side, middle)
-        entrance_y = height // 2
-        if 0 < entrance_y < height - 1:
-            grid[entrance_y][1] = config.door_entrance_tile_id
-        
-        # Exit doors (right side, two exits)
-        exit1_y = height // 2 - 2  # Upper exit
-        exit2_y = height // 2 + 2  # Lower exit
-        
-        if 0 < exit1_y < height - 1:
-            grid[exit1_y][width - 2] = config.door_exit_1_tile_id
-        if 0 < exit2_y < height - 1:
-            grid[exit2_y][width - 2] = config.door_exit_2_tile_id
-    
+    # Do not place door tiles here. Door tiles are placed at load time
+    # based on the logical room.door_exits and room.entrance_from metadata.
     return grid
 
-
-def generate_level_set(config: PCGConfig) -> LevelSet:
-    """
-    Generate a complete set of levels with rooms and door routing.
-    
-    Returns:
-        LevelSet: Complete level data structure
-    """
-    levels: List[LevelData] = []
-    
-    # First pass: create all rooms without routing
-    all_rooms = []
-    for level_id in range(1, config.num_levels + 1):
-        for room_index in range(config.rooms_per_level):
-            room_letter = chr(ord("A") + room_index)
-            room_code = f"{level_id}{room_letter}"
-            
-            tiles = generate_room_tiles(
-                level_id=level_id,
-                room_index=room_index,
-                room_letter=room_letter,
-                width=config.room_width,
-                height=config.room_height,
-                config=config
-            )
-            
-            room = RoomData(
-                level_id=level_id,
-                room_index=room_index,
-                room_letter=room_letter,
-                room_code=room_code,
-                tiles=tiles
-            )
-            all_rooms.append(room)
-    
-    # Second pass: create routing connections
-    for room in all_rooms:
-        entrance_from, door_exits = create_room_routing(
-            room, all_rooms, config
-        )
-        room.entrance_from = entrance_from
-        room.door_exits = door_exits
-    
-    # Organize rooms by levels
-    for level_id in range(1, config.num_levels + 1):
-        level_rooms = [r for r in all_rooms if r.level_id == level_id]
-        levels.append(LevelData(level_id=level_id, rooms=level_rooms))
-    
-    return LevelSet(levels=levels)
-
-
-def create_room_routing(
-    room: 'RoomData', 
-    all_rooms: List['RoomData'], 
-    config: PCGConfig
-) -> tuple[Optional[str], Dict[str, str]]:
-    """
-    Create door routing for a room based on all rooms.
-    
-    Returns:
-        Tuple of (entrance_from, door_exits)
-    """
-    # Find which rooms point to this room
-    entrance_from = None
-    for other_room in all_rooms:
-        if other_room.door_exits:
-            if room.room_code in other_room.door_exits.values():
-                entrance_from = other_room.room_code
-                break
-    
-    # Create door exits mapping
-    door_exits = {}
-    
-    # Exit 1: goes to next room in same level
-    same_level_rooms = [r for r in all_rooms if r.level_id == room.level_id]
-    same_level_rooms.sort(key=lambda r: r.room_index)
-    
-    current_index = same_level_rooms.index(room)
-    next_index = (current_index + 1) % len(same_level_rooms)
-    next_room = same_level_rooms[next_index]
-    door_exits["door_exit_1"] = next_room.room_code
-    
-    # Exit 2: goes to first room of next level (or first room of same level if last level)
-    if room.level_id < config.num_levels:
-        next_level_rooms = [r for r in all_rooms if r.level_id == room.level_id + 1]
-        if next_level_rooms:
-            next_level_rooms.sort(key=lambda r: r.room_index)
-            door_exits["door_exit_2"] = next_level_rooms[0].room_code
-        else:
-            # Fallback to first room of current level
-            door_exits["door_exit_2"] = same_level_rooms[0].room_code
-    else:
-        # Last level - go to first room of current level
-        door_exits["door_exit_2"] = same_level_rooms[0].room_code
-    
-    return entrance_from, door_exits
-
-
-# Convenience function for quick generation
-def generate_and_save(
-    config: Optional[PCGConfig] = None,
-    output_path: str = "data/levels/generated_levels.json"
-) -> LevelSet:
-    """
-    Generate levels and save to file.
-    
-    Args:
-        config: PCG configuration (uses default if None)
-        output_path: Where to save the JSON file
-        
-    Returns:
-        LevelSet: The generated level set
-    """
-    if config is None:
-        config = PCGConfig()
-    
-    level_set = generate_level_set(config)
-    level_set.save_to_json(output_path)
-    print(f"Generated {config.num_levels} levels with {config.rooms_per_level} rooms each")
-    print(f"Saved to: {output_path}")
-    
-    return level_set
-
+# Generation orchestration removed from this module.
+# This file now provides dataclasses and helper functions only.
+# Use `src/level/pcg_generator_simple.py` for full generation.
 
 if __name__ == "__main__":
-    # Test generation when run directly
-    level_set = generate_and_save()
-    
-    # Print summary
-    for level in level_set.levels:
-        print(f"Level {level.level_id}: {len(level.rooms)} rooms")
-        for room in level.rooms[:2]:  # Show first 2 rooms
-            print(f"  Room {room.room_code}: {len(room.tiles)}x{len(room.tiles[0])} tiles")
+    import logging
+    logger = logging.getLogger(__name__)
+    # Test helpers when run directly (no full generation)
+    from src.level.config_loader import load_pcg_config
+    config = load_pcg_config()
+    tiles = generate_room_tiles(
+        level_id=1,
+        room_index=0,
+        room_letter="A",
+        width=config.room_width,
+        height=config.room_height,
+        config=config
+    )
+    logger.info("Generated test room tiles: %dx%d", len(tiles), len(tiles[0]))
+    logger.info("Helper functions work correctly.")

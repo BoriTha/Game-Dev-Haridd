@@ -2,6 +2,9 @@ import sys
 import random
 
 import pygame
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 from config import (
     WIDTH,
     HEIGHT,
@@ -13,6 +16,7 @@ from config import (
     WALL_JUMP_COOLDOWN,
     TILE,
 )
+
 from src.core.utils import draw_text, get_font
 from src.core.interaction import handle_proximity_interactions, find_spawn_point, parse_door_target
 from src.systems.camera import Camera
@@ -303,7 +307,7 @@ class Game:
         
         if room is None:
             # Fallback: if PCG broken, drop back to legacy so game still runs
-            print(f"PCG room not found (level {level_id}, room {room_id}), falling back to legacy")
+            logger.error("PCG room not found (level %s, room %s), falling back to legacy", level_id, room_id)
             self.use_pcg = False
             self._load_static_level(0, initial=True)
             return
@@ -366,24 +370,72 @@ class Game:
         if lvl.tiles:
             h = len(lvl.tiles)
             w = len(lvl.tiles[0]) if h > 0 else 0
-            
-            # Place entrance door on left wall if this room has an entrance
-            if room.entrance_from:
-                entrance_y = h // 2
-                if 0 < entrance_y < h - 1 and 1 < w - 1:
+
+            # First: clear any stale door tiles that may exist in saved grids
+            from src.tiles.tile_types import TileType as _TileType
+            from config import TILE_AIR
+            door_values = {
+                _TileType.DOOR_ENTRANCE.value,
+                _TileType.DOOR_EXIT_1.value,
+                _TileType.DOOR_EXIT_2.value,
+            }
+            for ty in range(h):
+                row = lvl.tiles[ty]
+                for tx in range(w):
+                    if row[tx] in door_values:
+                        row[tx] = TILE_AIR
+
+            # Entrance door position (left wall, middle)
+            entrance_y = h // 2
+            if 0 < entrance_y < h - 1 and 1 < w - 1:
+                if room.entrance_from:
                     lvl.tiles[entrance_y][1] = TileType.DOOR_ENTRANCE.value
-            
-            # Place exit doors on right wall based on door_exits
-            if room.door_exits:
-                exit_y1 = h // 2 - 2
-                exit_y2 = h // 2 + 2
-                
-                if "door_exit_1" in room.door_exits and 0 < exit_y1 < h - 1:
-                    lvl.tiles[exit_y1][w - 2] = TileType.DOOR_EXIT_1.value
-                    
-                if "door_exit_2" in room.door_exits and 0 < exit_y2 < h - 1:
-                    lvl.tiles[exit_y2][w - 2] = TileType.DOOR_EXIT_2.value
+
+            # Exit door positions (right wall)
+            exit_y1 = h // 2 - 2
+            exit_y2 = h // 2 + 2
+
+            # Use loader to get normalized exits and only place tiles for valid targets
+            try:
+                from src.level.level_loader import level_loader as _ll
+                normalized_exits = _ll.get_room_exits(room.level_id, room.room_code)
+            except Exception:
+                normalized_exits = {}
+
+            # Exit 1
+            if 0 < exit_y1 < h - 1:
+                target = normalized_exits.get('door_exit_1') if normalized_exits else None
+                if isinstance(target, dict):
+                    try:
+                        tlevel = int(target.get('level_id'))
+                        tcode = str(target.get('room_code'))
+                        if _ll.get_room(tlevel, tcode):
+                            lvl.tiles[exit_y1][w - 2] = TileType.DOOR_EXIT_1.value
+                    except Exception:
+                        pass
+
+            # Exit 2
+            if 0 < exit_y2 < h - 1:
+                target = normalized_exits.get('door_exit_2') if normalized_exits else None
+                if isinstance(target, dict):
+                    try:
+                        tlevel = int(target.get('level_id'))
+                        tcode = str(target.get('room_code'))
+                        if _ll.get_room(tlevel, tcode):
+                            lvl.tiles[exit_y2][w - 2] = TileType.DOOR_EXIT_2.value
+                    except Exception:
+                        pass
         
+        # Persist modified tiles back into the global level set so other systems
+        # (e.g., DoorSystem) see the same tile grid after we placed/cleared door tiles.
+        try:
+            from src.level.level_loader import level_loader
+            stored_room = level_loader.get_room(lvl.level_id, lvl.room_code)
+            if stored_room:
+                stored_room.tiles = lvl.tiles
+        except Exception:
+            pass
+
         self.level = lvl
         self.enemies = lvl.enemies
         
@@ -1353,7 +1405,27 @@ class Game:
 
         # show room info on HUD
         if self.use_pcg and hasattr(self.level, 'room_code'):
-            draw_text(self.screen, f"PCG: {self.level.room_code}", (WIDTH-220, 8), WHITE, size=16)
+            # Parse room_code like '11A' into level and room (e.g. Level:1 Room:1A)
+            try:
+                import re
+                code = str(self.level.room_code)
+                # Try to split the code into numeric level + slot+letter (slot is 1-6, letter A/B)
+                m = re.match(r"^(\d+?)([1-6][A-Za-z])$", code)
+                if m:
+                    lvl = int(m.group(1))
+                    room_str = m.group(2)
+                    draw_text(self.screen, f"Level:{lvl} Room:{room_str}", (WIDTH-220, 8), WHITE, size=16)
+                else:
+                    # Fallback: extract numeric prefix as level and remainder as room
+                    m2 = re.match(r"^(\d+)(.+)$", code)
+                    if m2:
+                        lvl = int(m2.group(1))
+                        room_str = m2.group(2)
+                        draw_text(self.screen, f"Level:{lvl} Room:{room_str}", (WIDTH-220, 8), WHITE, size=16)
+                    else:
+                        draw_text(self.screen, f"PCG: {self.level.room_code}", (WIDTH-220, 8), WHITE, size=16)
+            except Exception:
+                draw_text(self.screen, f"PCG: {self.level.room_code}", (WIDTH-220, 8), WHITE, size=16)
         else:
             draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (WIDTH-220, 8), WHITE, size=16)
 
@@ -1586,15 +1658,24 @@ class Game:
                             from src.level.level_loader import level_loader
                             room = level_loader.get_room(self.level.level_id, self.level.room_code)
                             if room and room.door_exits and 'door_exit_1' in room.door_exits:
-                                target_code = room.door_exits['door_exit_1']
-                                # Parse target level and room from code like "11A"
-                                if len(target_code) >= 2:
-                                    target_level_id = int(target_code[:-1])
-                                    target_room_code = target_code
+                                target = room.door_exits['door_exit_1']
+                                # target can be a dict ({'level_id', 'room_code'}) or a string like "11A"
+                                try:
+                                    if isinstance(target, dict):
+                                        target_level_id = int(target.get('level_id', 1))
+                                        target_room_code = str(target.get('room_code', '1A'))
+                                    else:
+                                        target_room_code = str(target)
+                                        if len(target_room_code) >= 2:
+                                            target_level_id = int(target_room_code[:-1])
+                                        else:
+                                            raise ValueError("Invalid room code")
                                     self._load_pcg_level(target_level_id, target_room_code, initial=False)
                                     # Position player at spawn
                                     sx, sy = self.level.spawn
                                     self.player.rect.topleft = (sx, sy)
+                                except Exception:
+                                    logger.exception("Failed to follow door_exit_1: %s", target)
                         continue
                     elif ev.key == pygame.K_F12:
                         if self.use_pcg and hasattr(self.level, 'room_code'):
@@ -1602,15 +1683,23 @@ class Game:
                             from src.level.level_loader import level_loader
                             room = level_loader.get_room(self.level.level_id, self.level.room_code)
                             if room and room.door_exits and 'door_exit_2' in room.door_exits:
-                                target_code = room.door_exits['door_exit_2']
-                                # Parse target level and room from code like "11A"
-                                if len(target_code) >= 2:
-                                    target_level_id = int(target_code[:-1])
-                                    target_room_code = target_code
+                                target = room.door_exits['door_exit_2']
+                                try:
+                                    if isinstance(target, dict):
+                                        target_level_id = int(target.get('level_id', 1))
+                                        target_room_code = str(target.get('room_code', '1A'))
+                                    else:
+                                        target_room_code = str(target)
+                                        if len(target_room_code) >= 2:
+                                            target_level_id = int(target_room_code[:-1])
+                                        else:
+                                            raise ValueError("Invalid room code")
                                     self._load_pcg_level(target_level_id, target_room_code, initial=False)
                                     # Position player at spawn
                                     sx, sy = self.level.spawn
                                     self.player.rect.topleft = (sx, sy)
+                                except Exception:
+                                    logger.exception("Failed to follow door_exit_2: %s", target)
                         else:
                             # Legacy: Teleport to room 6 (boss room) for debug
                             self.goto_room(5)
@@ -1855,19 +1944,28 @@ class Game:
                 
                 # If E was pressed and interaction succeeded, transition to new room
                 if is_e_pressed:
-                    # Get new room info from door system
-                    room_info = self._door_system.get_current_room_info()
-                    if room_info:
-                        # Load new room in main game (this places entrance doors correctly)
-                        self._load_pcg_level(room_info['level_id'], room_info['room_code'], initial=False)
-                        # Update door system to match new room
-                        self._door_system.load_room(room_info['level_id'], room_info['room_code'])
-                        # Move player to spawn point
-                        spawn_point = self._door_system.get_spawn_point()
-                        if spawn_point:
-                            spawn_x, spawn_y = spawn_point
-                            self.player.rect.centerx = spawn_x
-                            self.player.rect.centery = spawn_y
+                        # Get new room info from door system
+                        room_info = self._door_system.get_current_room_info()
+                        if room_info:
+                            # If the door interaction didn't actually change room, avoid reloading same room
+                            cur_code = getattr(self.level, 'room_code', None)
+                            cur_level_id = getattr(self.level, 'level_id', None)
+                            if cur_code == room_info.get('room_code') and cur_level_id == room_info.get('level_id'):
+                                logger.info("Door interaction target equals current room (%s/%s); ignoring reload", cur_level_id, cur_code)
+                            else:
+                                # Load new room in main game (this places entrance doors correctly)
+                                logger.info("Transitioning from %s to %s (level %s)", getattr(self.level,'room_code', None), room_info['room_code'], room_info['level_id'])
+                                self._load_pcg_level(room_info['level_id'], room_info['room_code'], initial=False)
+                                logger.info("Loaded room now %s", getattr(self.level,'room_code', None))
+                                # Update door system to match new room
+                                self._door_system.load_room(room_info['level_id'], room_info['room_code'])
+                                # Move player to spawn point
+                                spawn_point = self._door_system.get_spawn_point()
+                                if spawn_point:
+                                    spawn_x, spawn_y = spawn_point
+                                    self.player.rect.centerx = spawn_x
+                                    self.player.rect.centery = spawn_y
+
             else:
                 self.interaction_prompt = None
                 self.interaction_position = None
