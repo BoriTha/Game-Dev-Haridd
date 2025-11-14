@@ -7,7 +7,9 @@ import sys
 # Add project root to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.level.pcg_level_data import LevelSet, LevelData, RoomData
+from src.level.pcg_level_data import LevelSet, LevelData, RoomData, AreaRegion, AreaRect, room_areas_from_raw, build_tile_region_map, expand_rects_to_tiles, top_region_for_tile
+from typing import Tuple, Callable
+import random
 
 
 class LevelLoader:
@@ -165,6 +167,87 @@ class LevelLoader:
         level = self.get_level(level_id)
         if level and level.rooms:
             return level.rooms[0]
+        return None
+
+    # ----- Area / Region helpers -----
+    def get_room_areas(self, level_id: int, room_code: str) -> List[AreaRegion]:
+        """Return list of AreaRegion for a room (converts raw dicts to objects)."""
+        room = self.get_room(level_id, room_code)
+        if not room:
+            return []
+        raw = getattr(room, "areas", None)
+        return room_areas_from_raw(raw)
+
+    def find_regions_by_kind(self, level_id: int, room_code: str, kind: str) -> List[AreaRegion]:
+        return [r for r in self.get_room_areas(level_id, room_code) if r.kind == kind]
+
+    def build_room_tile_region_map(self, level_id: int, room_code: str) -> Dict[Tuple[int,int], List[AreaRegion]]:
+        regions = self.get_room_areas(level_id, room_code)
+        room = self.get_room(level_id, room_code)
+        if not room:
+            return {}
+        # width = number of columns (x), height = number of rows (y)
+        height = len(room.tiles) if room.tiles else 0
+        width = len(room.tiles[0]) if height > 0 else 0
+        return build_tile_region_map(width, height, regions)
+
+    def query_region_for_tile(self, level_id: int, room_code: str, x: int, y: int) -> Optional[AreaRegion]:
+        tile_map = self.build_room_tile_region_map(level_id, room_code)
+        return top_region_for_tile(tile_map, x, y)
+
+    def choose_spawn_tile(
+        self,
+        level_id: int,
+        room_code: str,
+        kind: str = "spawn",
+        rng: Optional[random.Random] = None,
+        walkable_check: Optional[Callable[[int,int], bool]] = None,
+        avoid_positions: Optional[List[Tuple[int,int]]] = None,
+        min_distance: int = 0,
+    ) -> Optional[Tuple[int,int]]:
+        """Choose a spawn tile from regions of type `kind` in the room.
+
+        - `walkable_check(x,y)` should return True when a tile is valid for spawn.
+        - `avoid_positions` is a list of tile positions to avoid (e.g., player).
+        - `min_distance` is Euclidean minimum distance in tiles to any avoid position.
+        """
+        rng = rng or random.Random()
+        regions = self.find_regions_by_kind(level_id, room_code, kind)
+        if not regions:
+            return None
+        weighted: List[Tuple[AreaRegion, float]] = []
+        for r in regions:
+            if r.properties.get("no_enemy_spawn"):
+                continue
+            weight = float(r.properties.get("spawn_weight", max(1, r.area_size())))
+            weighted.append((r, weight))
+        if not weighted:
+            return None
+        total = sum(w for _, w in weighted)
+        pick = rng.random() * total
+        upto = 0.0
+        chosen = weighted[-1][0]
+        for r, w in weighted:
+            upto += w
+            if pick <= upto:
+                chosen = r
+                break
+        candidate_tiles = expand_rects_to_tiles(chosen.rects)
+        rng.shuffle(candidate_tiles)
+        for x, y in candidate_tiles:
+            if walkable_check and not walkable_check(x, y):
+                continue
+            if avoid_positions:
+                bad = False
+                for ax, ay in avoid_positions:
+                    dx = ax - x
+                    dy = ay - y
+                    if dx * dx + dy * dy <= min_distance * min_distance:
+                        bad = True
+                        break
+                if bad:
+                    continue
+            return (x, y)
         return None
 
 

@@ -95,6 +95,8 @@ class Game:
 
         # Terrain/Area debug
         self.debug_show_area_overlay = False
+        # Area overlay opacity (0.0 - 1.0)
+        self.debug_area_overlay_opacity = 0.7
         # Whether we are currently in the dedicated terrain/area test level
         self.in_terrain_test_level = False
 
@@ -438,10 +440,31 @@ class Game:
 
         self.level = lvl
         self.enemies = lvl.enemies
+        # Update current level tracking
+        try:
+            self.current_level_number = int(lvl.level_id)
+        except Exception:
+            pass
+
+        # If door system exists, sync its internal tiles/state to the newly loaded room
+        try:
+            if hasattr(self, '_door_system') and getattr(self, '_door_system') is not None:
+                ds = self._door_system
+                ds.current_level_id = lvl.level_id
+                ds.current_room_code = lvl.room_code
+                # ensure door system sees the exact tile grid used for rendering
+                ds.current_tiles = lvl.tile_grid
+        except Exception:
+            logger.exception("Failed to sync DoorSystem after PCG level load")
         
         if not initial:
             hitboxes.clear()
             floating.clear()
+            # Center camera on player to make new room visible immediately
+            try:
+                self.camera.update(getattr(self, 'player').rect, 0)
+            except Exception:
+                pass
         
 
 
@@ -645,10 +668,125 @@ class Game:
     def _draw_area_overlay(self):
         """
         Debug: draw logical areas and terrain test info on top of current map.
-        Uses self.level.areas if present.
+        Uses PCG LevelLoader area metadata when available. Safe-fail.
+        Shows region properties on mouse hover.
         """
-        # Disabled: area system not fully implemented, causes import errors
-        pass
+        if not self.debug_show_area_overlay:
+            return
+        try:
+            # Only supported for PCG levels that expose level_id and room_code
+            lvl = getattr(self, 'level', None)
+            if not lvl or not hasattr(lvl, 'level_id') or not hasattr(lvl, 'room_code'):
+                return
+
+            # Get regions for the current room
+            from src.level.level_loader import level_loader
+            regions = level_loader.get_room_areas(lvl.level_id, lvl.room_code)
+            if not regions:
+                return
+
+            # Color mapping per kind (RGBA with alpha to be scaled by opacity)
+            kind_colors = {
+                'spawn': (50, 200, 50, 120),
+                'player_spawn': (50, 120, 240, 160),
+                'no_spawn': (200, 50, 50, 160),
+                'hazard': (220, 80, 80, 160),
+                'biome': (160, 220, 160, 110),
+                'door_proximity': (200, 200, 80, 140),
+                'safe_zone': (80, 200, 200, 110),
+            }
+
+            overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+
+            # Draw each region's rects
+            for region in regions:
+                base_color = kind_colors.get(region.kind, (180, 160, 220, 100))
+                # scale alpha by user opacity
+                rcol = (base_color[0], base_color[1], base_color[2], int(base_color[3] * max(0.0, min(1.0, self.debug_area_overlay_opacity))))
+                outline = (max(rcol[0]-40,0), max(rcol[1]-40,0), max(rcol[2]-40,0), min(255, 220))
+                for r in region.rects:
+                    # Convert tile coords to world px
+                    wx = r.x * TILE
+                    wy = r.y * TILE
+                    ww = r.w * TILE
+                    wh = r.h * TILE
+                    sx = int((wx - self.camera.x) * self.camera.zoom)
+                    sy = int((wy - self.camera.y) * self.camera.zoom)
+                    sw = int(ww * self.camera.zoom)
+                    sh = int(wh * self.camera.zoom)
+                    if sw <= 0 or sh <= 0:
+                        continue
+                    # Fill rect with translucent color
+                    rect_surf = pygame.Surface((sw, sh), pygame.SRCALPHA)
+                    rect_surf.fill(rcol)
+                    overlay.blit(rect_surf, (sx, sy))
+                    # Draw outline
+                    try:
+                        pygame.draw.rect(overlay, outline, pygame.Rect(sx, sy, sw, sh), width=2)
+                    except Exception:
+                        pass
+
+                # Draw region label near top-left of first rect (world->screen)
+                if region.rects:
+                    r0 = region.rects[0]
+                    wx = r0.x * TILE
+                    wy = r0.y * TILE
+                    sx = int((wx - self.camera.x) * self.camera.zoom)
+                    sy = int((wy - self.camera.y) * self.camera.zoom)
+                    label = f"{region.region_id} ({region.kind})"
+                    try:
+                        draw_text(overlay, label, (sx + 4, sy + 4), (235, 235, 235), size=14)
+                    except Exception:
+                        # fallback: pygame.font issues
+                        pass
+
+            # Blit overlay to screen
+            self.screen.blit(overlay, (0, 0))
+
+            # Mouse hover: show region properties under cursor
+            mx, my = pygame.mouse.get_pos()
+            world_x = (mx / self.camera.zoom) + self.camera.x
+            world_y = (my / self.camera.zoom) + self.camera.y
+            tx = int(world_x // TILE)
+            ty = int(world_y // TILE)
+
+            hover_regions = [r for r in regions if r.contains_tile(tx, ty)]
+            if hover_regions:
+                # show top-priority region first (regions are not guaranteed ordered)
+                hover_regions.sort(key=lambda r: r.priority, reverse=True)
+                top = hover_regions[0]
+                info_lines = [f"{top.region_id} ({top.kind})"]
+                # show simple properties
+                for k, v in top.properties.items():
+                    info_lines.append(f"{k}: {v}")
+                if top.allowed_enemy_types:
+                    info_lines.append("allowed: " + ",".join(top.allowed_enemy_types))
+                if top.banned_enemy_types:
+                    info_lines.append("banned: " + ",".join(top.banned_enemy_types))
+                if top.spawn_cap is not None:
+                    info_lines.append(f"spawn_cap: {top.spawn_cap}")
+
+                # Render info panel near mouse
+                panel_w = 300
+                font = get_font(14)
+                line_h = font.get_linesize()
+                panel_h = line_h * len(info_lines) + 10
+                px = mx + 16
+                py = my + 8
+                if px + panel_w > WIDTH:
+                    px = mx - panel_w - 16
+                if py + panel_h > HEIGHT:
+                    py = my - panel_h - 16
+                panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+                panel.fill((8, 12, 18, 220))
+                pygame.draw.rect(panel, (200, 200, 220, 200), panel.get_rect(), width=1)
+                for i, line in enumerate(info_lines):
+                    draw_text(panel, line, (8, 6 + i * line_h), (230, 230, 230), size=14)
+                self.screen.blit(panel, (px, py))
+
+        except Exception:
+            # Fail-safe: do not let overlay crash the game
+            return
 
     def _get_player_area_labels(self):
         """
@@ -1565,6 +1703,16 @@ class Game:
                     if ev.key == pygame.K_F9:
                         self.debug_collision_log = not self.debug_collision_log
                         continue
+                    elif ev.key == pygame.K_F10:
+                        # Toggle area overlay visualization
+                        self.debug_show_area_overlay = not self.debug_show_area_overlay
+                        floating.append(DamageNumber(
+                            self.player.rect.centerx,
+                            self.player.rect.top - 12,
+                            f"Area Overlay {'ON' if self.debug_show_area_overlay else 'OFF'}",
+                            (160, 220, 255) if self.debug_show_area_overlay else (200,200,200)
+                        ))
+                        continue
                     if ev.key == pygame.K_i:
                         if not self.shop.shop_open:
                             self.inventory.inventory_open = not self.inventory.inventory_open
@@ -1764,12 +1912,19 @@ class Game:
             {'label': "Enemy Nametags (F4)", 'type': 'toggle',
              'getter': lambda: self.debug_enemy_nametags,
              'setter': lambda v: setattr(self, 'debug_enemy_nametags', v)},
-{'label': "Infinite Mana", 'type': 'toggle',
-              'getter': lambda: self.cheat_infinite_mana,
-              'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
+            {'label': "Area Overlay (F10)", 'type': 'toggle',
+             'getter': lambda: self.debug_show_area_overlay,
+             'setter': lambda v: setattr(self, 'debug_show_area_overlay', v)},
+            {'label': "Overlay Opacity", 'type': 'info', 'getter': lambda: f"{self.debug_area_overlay_opacity:.2f}"},
+            {'label': "Increase Overlay Opacity", 'type': 'action', 'action': lambda: self._adjust_overlay_opacity(0.1)},
+            {'label': "Decrease Overlay Opacity", 'type': 'action', 'action': lambda: self._adjust_overlay_opacity(-0.1)},
+ {'label': "Infinite Mana", 'type': 'toggle',
+               'getter': lambda: self.cheat_infinite_mana,
+               'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
             {'label': "PCG Mode", 'type': 'toggle',
               'getter': lambda: getattr(self, 'use_pcg', False),
               'setter': lambda v: self._toggle_pcg(v)},
+
             {'label': "Zero Cooldown", 'type': 'toggle',
              'getter': lambda: self.cheat_zero_cooldown,
              'setter': lambda v: setattr(self, 'cheat_zero_cooldown', v)},
@@ -1797,22 +1952,25 @@ class Game:
         self.inventory.inventory_open = False
         self.inventory._clear_inventory_selection()
         options = []
-        for key, item in self.inventory.consumable_catalog.items():
-            options.append({
-                'label': f"Add {item.name}",
-                'type': 'action',
-                'action': (lambda k=key: self.inventory.add_consumable(k, 1))
-            })
-        for key, item in self.inventory.armament_catalog.items():
-            options.append({
-                'label': f"Equip {item.name}",
-                'type': 'action',
-                'action': (lambda k=key: self.inventory._force_equip_armament(k))
-            })
-        options.append({'label': "Back", 'type': 'action', 'action': None, 'close': True})
-        self._run_debug_option_menu(options, title="Item Spawner")
+
+    def _adjust_overlay_opacity(self, delta: float):
+        """Adjust area overlay opacity by delta and clamp between 0.0 and 1.0."""
+        self.debug_area_overlay_opacity = max(0.0, min(1.0, self.debug_area_overlay_opacity + delta))
+        # Show floating message
+        floating.append(DamageNumber(
+            self.player.rect.centerx,
+            self.player.rect.top - 12,
+            f"Overlay opacity: {self.debug_area_overlay_opacity:.2f}",
+            (200, 220, 255)
+        ))
 
     def _draw_debug_overlay(self, options, selected, title="Debugger", offset=0, visible=9):
+        """Draw the debug option overlay once (non-recursive).
+
+        This function assumes the caller already rendered the game underneath
+        (via `self.draw()`). It only renders the translucent overlay and the
+        options panel on top — it does not recurse or flip the display.
+        """
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
@@ -1831,15 +1989,22 @@ class Game:
             pygame.draw.rect(self.screen, bg_col, row, border_radius=8)
             text = opt['label']
             if opt['type'] == 'toggle':
-                text = f"{text}: {'ON' if opt['getter']() else 'OFF'}"
+                try:
+                    state = 'ON' if opt['getter']() else 'OFF'
+                except Exception:
+                    state = 'ERR'
+                text = f"{text}: {state}"
             elif opt['type'] == 'info':
-                text = f"{text}: {opt['getter']()}"
+                try:
+                    val = opt['getter']()
+                except Exception:
+                    val = 'ERR'
+                text = f"{text}: {val}"
             elif opt['type'] == 'action' and not opt.get('close'):
                 text = f"{text}"
             draw_text(self.screen, text, (row.x + 12, row.y + 8), (220,220,230), size=18)
-        self.draw()
-        self._draw_debug_overlay(options, selected, title=title, offset=offset, visible=visible)
-        pygame.display.flip()
+        # Do not call self.draw() or recurse here — caller manages game draw and display flip.
+        return
 
     def _run_debug_option_menu(self, options, title="Debugger"):
         idx = 0
@@ -1875,9 +2040,150 @@ class Game:
 
     def debug_teleport_menu(self):
         """
-        Teleport debug menu for static rooms.
-        Wraps using ROOM_COUNT.
+        Teleport debug menu.
+
+        - For legacy/static levels: behaves as before and wraps using ROOM_COUNT.
+        - For PCG levels: presents a flattened list of all PCG rooms (Level, RoomCode)
+          and allows navigation and teleport to any PCG room.
         """
+        # PCG-aware flow
+        if getattr(self, 'use_pcg', False):
+            try:
+                from src.level.level_loader import list_all_levels, level_loader
+                levels = list_all_levels()
+                rooms = []
+                for lid in levels:
+                    rcodes = level_loader.list_rooms_in_level(lid)
+                    for rc in rcodes:
+                        rooms.append((lid, rc))
+            except Exception:
+                rooms = []
+
+            if not rooms:
+                # Fallback to legacy behaviour when no PCG rooms available
+                idx = self.level_index
+                while True:
+                    dt = self.clock.tick(FPS) / 1000.0
+                    for ev in pygame.event.get():
+                        if ev.type == pygame.QUIT:
+                            pygame.quit(); sys.exit()
+                        elif ev.type == pygame.KEYDOWN:
+                            if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
+                                return
+                            elif ev.key in (pygame.K_LEFT, pygame.K_a):
+                                idx = (idx - 1) % ROOM_COUNT
+                            elif ev.key in (pygame.K_RIGHT, pygame.K_d):
+                                idx = (idx + 1) % ROOM_COUNT
+                            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                                self.goto_room(idx)
+                                return
+                    self.draw()
+                    self._draw_level_select_overlay(idx)
+                    pygame.display.flip()
+                return
+
+            # Find starting index: prefer current room if available
+            cur_level = getattr(self.level, 'level_id', None)
+            cur_code = getattr(self.level, 'room_code', None)
+            start_idx = 0
+            for i, (lid, rcode) in enumerate(rooms):
+                if lid == cur_level and rcode == cur_code:
+                    start_idx = i
+                    break
+            idx = start_idx
+
+            total = len(rooms)
+            while True:
+                dt = self.clock.tick(FPS) / 1000.0
+                for ev in pygame.event.get():
+                    if ev.type == pygame.QUIT:
+                        pygame.quit(); sys.exit()
+                    elif ev.type == pygame.KEYDOWN:
+                        if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
+                            return
+                        elif ev.key in (pygame.K_LEFT, pygame.K_a):
+                            idx = (idx - 1) % total
+                        elif ev.key in (pygame.K_RIGHT, pygame.K_d):
+                            idx = (idx + 1) % total
+                        elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                            level_id, room_code = rooms[idx]
+                            try:
+                                # Load the target PCG room and update all related state
+                                self._load_pcg_level(level_id, room_code, initial=False)
+
+                                # Clear transient visuals and hitboxes
+                                from src.entities.entities import hitboxes, floating
+                                hitboxes.clear()
+                                floating.clear()
+
+                                # Sync enemies from new level
+                                self.enemies = getattr(self.level, 'enemies', []) or []
+
+                                # Reset camera to player after placing player at spawn
+                                # Prefer spawn_tile from level_loader if present
+                                try:
+                                    from src.level.level_loader import level_loader
+                                    room_meta = level_loader.get_room(level_id, room_code)
+                                    if room_meta and getattr(room_meta, 'spawn_tile', None):
+                                        tx, ty = room_meta.spawn_tile
+                                        self.player.rect.centerx = tx * TILE + TILE // 2
+                                        self.player.rect.centery = ty * TILE + TILE // 2
+                                    else:
+                                        sx, sy = getattr(self.level, 'spawn', (100, 100))
+                                        self.player.rect.topleft = (sx, sy)
+                                except Exception:
+                                    sx, sy = getattr(self.level, 'spawn', (100, 100))
+                                    self.player.rect.topleft = (sx, sy)
+
+                                # Reset camera to center on player immediately
+                                self.camera = Camera()
+                                self.camera.update(self.player.rect, 0)
+
+                                # Update current level number for UI and state
+                                try:
+                                    self.current_level_number = int(level_id)
+                                except Exception:
+                                    self.current_level_number = getattr(self.level, 'level_id', self.current_level_number)
+
+                                # Reinitialize door system for new room
+                                try:
+                                    from src.level.door_system import DoorSystem
+                                    if hasattr(self, '_door_system') and self._door_system:
+                                        self._door_system.load_room(self.level.level_id, self.level.room_code)
+                                    else:
+                                        self._door_system = DoorSystem()
+                                        self._door_system.load_room(self.level.level_id, self.level.room_code)
+                                except Exception:
+                                    # ignore door system errors but log
+                                    logger.exception("Door system reinit failed for %s/%s", getattr(self.level,'level_id', None), getattr(self.level,'room_code', None))
+
+                                # Clear any interaction prompt
+                                self.interaction_prompt = None
+                                self.interaction_position = None
+
+                                # Ensure player state is stable
+                                try:
+                                    self.player.stunned = 0
+                                except Exception:
+                                    pass
+
+                                # Notify user visually and log
+                                try:
+                                    floating.append(DamageNumber(self.player.rect.centerx, self.player.rect.top - 12, f"Teleported to L{level_id} {room_code}", (160,220,255)))
+                                except Exception:
+                                    pass
+                                logger.info("Teleported to PCG room %s/%s", level_id, room_code)
+
+                            except Exception:
+                                logger.exception("Failed to teleport to PCG room: %s/%s", level_id, room_code)
+                            return
+
+                self.draw()
+                self._draw_pcg_level_select_overlay(rooms[idx], idx, total)
+                pygame.display.flip()
+            return
+
+        # Legacy/static fallback
         idx = self.level_index
         while True:
             dt = self.clock.tick(FPS) / 1000.0
@@ -1897,6 +2203,87 @@ class Game:
             self.draw()
             self._draw_level_select_overlay(idx)
             pygame.display.flip()
+
+    def _draw_pcg_level_select_overlay(self, room_tuple, idx, total):
+        """
+        Draw a cleaner overlay for PCG room selection with header band and level badge.
+
+        Args:
+            room_tuple: (level_id, room_code)
+            idx: flattened index
+            total: total number of PCG rooms
+        """
+        from src.level.level_loader import level_loader
+        # Backdrop
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((12, 14, 20, 200))
+        self.screen.blit(overlay, (0, 0))
+
+        # Panel shadow + body
+        panel_w, panel_h = 540, 300
+        panel_x = (WIDTH - panel_w) // 2
+        panel_y = (HEIGHT - panel_h) // 2
+        shadow = pygame.Rect(panel_x + 6, panel_y + 8, panel_w, panel_h)
+        pygame.draw.rect(self.screen, (0, 0, 0, 220), shadow, border_radius=14)
+        panel = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+        pygame.draw.rect(self.screen, (26, 28, 36), panel, border_radius=14)
+        pygame.draw.rect(self.screen, (140, 140, 150), panel, width=1, border_radius=14)
+
+        # Header band
+        level_id, room_code = room_tuple
+        try:
+            # level color derived deterministically from level id
+            lc = (120 + (int(level_id) * 47) % 100, 110, 170)
+        except Exception:
+            lc = (120, 110, 170)
+        header = pygame.Rect(panel.x, panel.y, panel.width, 64)
+        pygame.draw.rect(self.screen, lc, header, border_radius=12)
+        # Header title
+        draw_text(self.screen, "Teleport to PCG Room", (panel.x + 20, panel.y + 14), (245, 245, 250), size=22, bold=True)
+
+        # Level badge
+        badge_w, badge_h = 88, 40
+        badge = pygame.Rect(panel.x + 20, panel.y + 90 - 10, badge_w, badge_h)
+        pygame.draw.rect(self.screen, lc, badge, border_radius=8)
+        pygame.draw.rect(self.screen, (255,255,255,40), badge, width=1, border_radius=8)
+        draw_text(self.screen, f"L{level_id}", (badge.x + 14, badge.y + 8), (245,245,245), size=20, bold=True)
+
+        # Main room label
+        room_name = f"Room {room_code}"
+        draw_text(self.screen, room_name, (badge.right + 16, panel.y + 78), (230,230,235), size=28, bold=True)
+
+        # Local index info (try fetch)
+        local_idx = None
+        rcount = None
+        try:
+            rlist = level_loader.list_rooms_in_level(int(level_id))
+            rcount = len(rlist)
+            if room_code in rlist:
+                local_idx = rlist.index(room_code) + 1
+        except Exception:
+            rlist = None
+
+        # Subtext: position in level and overall count
+        sub_x = badge.right + 16
+        sub_y = panel.y + 118
+        if local_idx is not None and rcount is not None:
+            draw_text(self.screen, f"{local_idx}/{rcount} in Level {level_id}", (sub_x, sub_y), (200,200,210), size=16)
+        draw_text(self.screen, f"PCG: {idx+1}/{total}", (panel.right - 140, panel.y + 78), (200,200,210), size=18)
+
+        # Help text
+        draw_text(self.screen, "← / → to choose  •  Enter to teleport  •  Esc to cancel", (panel.x + 20, panel.bottom - 42), (170,180,200), size=14)
+
+        # Decorative separators
+        pygame.draw.line(self.screen, (60,60,70), (panel.x + 20, panel.y + 64), (panel.right - 20, panel.y + 64), 1)
+
+        # Optionally show a tiny preview: show tile coords under spawn if available
+        try:
+            room = level_loader.get_room(int(level_id), str(room_code))
+            if room and getattr(room, 'spawn_tile', None):
+                sx, sy = room.spawn_tile
+                draw_text(self.screen, f"Spawn tile: ({sx}, {sy})", (panel.x + 20, panel.y + 148), (200,200,210), size=14)
+        except Exception:
+            pass
 
     def _draw_level_select_overlay(self, idx):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1926,11 +2313,15 @@ class Game:
         # Use PCG door system if available
         if self.use_pcg and hasattr(self.level, 'level_id') and hasattr(self.level, 'room_code'):
             from src.level.door_system import DoorSystem
-            if not hasattr(self, '_door_system'):
+            # Ensure door system exists and is synced to current room each frame
+            if not hasattr(self, '_door_system') or self._door_system is None:
                 self._door_system = DoorSystem()
-                # Load current room into door system
+            try:
+                # Force reload so current_tiles always match self.level
                 self._door_system.load_room(self.level.level_id, self.level.room_code)
-            
+            except Exception:
+                logger.exception("Failed to sync DoorSystem to current room %s/%s", getattr(self.level,'level_id', None), getattr(self.level,'room_code', None))
+
             # Handle door interaction using PCG system
             result = self._door_system.handle_door_interaction(
                 player_rect=self.player.rect,
@@ -1941,35 +2332,127 @@ class Game:
             if result:
                 self.interaction_prompt, interaction_x, interaction_y = result
                 self.interaction_position = (interaction_x, interaction_y)
-                
-                # If E was pressed and interaction succeeded, transition to new room
-                if is_e_pressed:
-                        # Get new room info from door system
-                        room_info = self._door_system.get_current_room_info()
-                        if room_info:
-                            # If the door interaction didn't actually change room, avoid reloading same room
-                            cur_code = getattr(self.level, 'room_code', None)
-                            cur_level_id = getattr(self.level, 'level_id', None)
-                            if cur_code == room_info.get('room_code') and cur_level_id == room_info.get('level_id'):
-                                logger.info("Door interaction target equals current room (%s/%s); ignoring reload", cur_level_id, cur_code)
-                            else:
-                                # Load new room in main game (this places entrance doors correctly)
-                                logger.info("Transitioning from %s to %s (level %s)", getattr(self.level,'room_code', None), room_info['room_code'], room_info['level_id'])
-                                self._load_pcg_level(room_info['level_id'], room_info['room_code'], initial=False)
-                                logger.info("Loaded room now %s", getattr(self.level,'room_code', None))
-                                # Update door system to match new room
-                                self._door_system.load_room(room_info['level_id'], room_info['room_code'])
-                                # Move player to spawn point
-                                spawn_point = self._door_system.get_spawn_point()
-                                if spawn_point:
-                                    spawn_x, spawn_y = spawn_point
-                                    self.player.rect.centerx = spawn_x
-                                    self.player.rect.centery = spawn_y
 
-            else:
-                self.interaction_prompt = None
-                self.interaction_position = None
-            return
+                # Show prompt; validate at the moment of E-press before transitioning.
+                if is_e_pressed:
+                    try:
+                        from src.tiles.tile_types import TileType
+                        grid = getattr(self.level, 'tile_grid', None)
+                        valid = False
+                        if grid is not None:
+                            # Check a small neighborhood around the prompt position to tolerate offsets
+                            tx_center = int(interaction_x // TILE)
+                            ty_center = int(interaction_y // TILE)
+                            for dx in (-1, 0, 1):
+                                for dy in (-1, 0, 1):
+                                    tx = tx_center + dx
+                                    ty = ty_center + dy
+                                    if 0 <= ty < len(grid) and 0 <= tx < len(grid[0]):
+                                        val = grid[ty][tx]
+                                        if val in (TileType.DOOR_ENTRANCE.value, TileType.DOOR_EXIT_1.value, TileType.DOOR_EXIT_2.value):
+                                            valid = True
+                                            break
+                                if valid:
+                                    break
+                        if not valid:
+                            logger.debug("Door E-press ignored: no door tile near prompt coords %s,%s", interaction_x, interaction_y)
+                            # clear prompt to avoid confusing stale prompts
+                            self.interaction_prompt = None
+                            self.interaction_position = None
+                            return
+                    except Exception:
+                        logger.exception("Door validation failed; proceeding permissively")
+
+                    # Proceed with transition using DoorSystem's recorded planned transition
+                    transition = None
+                    try:
+                        transition = self._door_system.pop_last_transition()
+                    except Exception:
+                        # Fallback: try to use get_current_room_info if pop not available
+                        try:
+                            room_info = self._door_system.get_current_room_info()
+                            if room_info:
+                                transition = {
+                                    'level_id': room_info.get('level_id'),
+                                    'room_code': room_info.get('room_code'),
+                                    'spawn': None,
+                                }
+                        except Exception:
+                            transition = None
+
+                    if transition:
+                        cur_code = getattr(self.level, 'room_code', None)
+                        cur_level_id = getattr(self.level, 'level_id', None)
+                        target_level = transition.get('level_id')
+                        target_room = transition.get('room_code')
+
+                        if cur_code == target_room and cur_level_id == target_level:
+                            logger.info("Door interaction target equals current room (%s/%s); ignoring reload", cur_level_id, cur_code)
+                        else:
+                            logger.info("Attempting PCG room load: %s/%s -> target %s/%s", cur_level_id, cur_code, target_level, target_room)
+                            try:
+                                self._load_pcg_level(target_level, target_room, initial=False)
+                            except Exception:
+                                logger.exception("_load_pcg_level raised an exception for %s/%s", target_level, target_room)
+
+                            # Verify load succeeded
+                            loaded_code = getattr(self.level, 'room_code', None)
+                            loaded_level = getattr(self.level, 'level_id', None)
+                            if loaded_code != target_room or loaded_level != target_level:
+                                logger.error("PCG load mismatch: expected %s/%s but level is %s/%s", target_level, target_room, loaded_level, loaded_code)
+                            else:
+                                logger.info("Loaded PCG room successfully: %s/%s", loaded_level, loaded_code)
+
+                            # Sync transient state: enemies, hitboxes, floating, camera, door system
+                            try:
+                                from src.entities.entities import hitboxes, floating
+                                hitboxes.clear()
+                                floating.clear()
+                            except Exception:
+                                logger.debug("Failed to clear hitboxes/floating after PCG load")
+
+                            try:
+                                self.enemies = getattr(self.level, 'enemies', []) or []
+                            except Exception:
+                                logger.debug("Failed to sync enemies after PCG load")
+
+                            # Position player at spawn (prefer transition.spawn, then door system, then level.spawn)
+                            try:
+                                spawn_point = transition.get('spawn') if isinstance(transition, dict) else None
+                                if not spawn_point and hasattr(self, '_door_system') and self._door_system:
+                                    try:
+                                        spawn_point = self._door_system.get_spawn_point()
+                                    except Exception:
+                                        spawn_point = None
+                                if not spawn_point:
+                                    spawn_point = getattr(self.level, 'spawn', None)
+                                if spawn_point:
+                                    if isinstance(spawn_point, (tuple, list)):
+                                        self.player.rect.topleft = (spawn_point[0], spawn_point[1])
+                            except Exception:
+                                logger.exception("Failed to position player after PCG load")
+
+                            # Reset camera immediately
+                            try:
+                                self.camera = Camera()
+                                self.camera.update(self.player.rect, 0)
+                            except Exception:
+                                logger.exception("Failed to reset camera after PCG load")
+
+                            # Update door system to match new room
+                            try:
+                                if hasattr(self, '_door_system') and self._door_system:
+                                    self._door_system.load_room(target_level, target_room)
+                            except Exception:
+                                logger.exception("DoorSystem.load_room after main load failed")
+
+                            # Clear any interaction prompt/state
+                            self.interaction_prompt = None
+                            self.interaction_position = None
+                    else:
+                        self.interaction_prompt = None
+                        self.interaction_position = None
+                    return
         
         # Legacy door system for non-PCG levels
         def on_door_interact(tile_data, tile_pos):

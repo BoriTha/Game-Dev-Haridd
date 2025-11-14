@@ -2620,7 +2620,8 @@
               "level_id": 1,
               "room_code": "12B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 1,
@@ -5239,7 +5240,8 @@
               "level_id": 1,
               "room_code": "12B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 1,
@@ -7854,7 +7856,8 @@
               "level_id": 1,
               "room_code": "13A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 1,
@@ -10469,7 +10472,8 @@
               "level_id": 1,
               "room_code": "13A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 1,
@@ -13084,7 +13088,8 @@
               "level_id": 1,
               "room_code": "14A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 1,
@@ -15703,7 +15708,8 @@
               "level_id": 1,
               "room_code": "15B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 1,
@@ -18318,7 +18324,8 @@
               "level_id": 1,
               "room_code": "16A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 1,
@@ -20933,7 +20940,8 @@
               "level_id": 1,
               "room_code": "16A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 1,
@@ -23552,7 +23560,8 @@
               "level_id": 2,
               "room_code": "21B"
             }
-          }
+          },
+          "areas": null
         }
       ]
     },
@@ -26176,7 +26185,8 @@
               "level_id": 2,
               "room_code": "22B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 2,
@@ -28795,7 +28805,8 @@
               "level_id": 2,
               "room_code": "22B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 2,
@@ -31410,7 +31421,8 @@
               "level_id": 2,
               "room_code": "23A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 2,
@@ -34025,7 +34037,8 @@
               "level_id": 2,
               "room_code": "23A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 2,
@@ -36640,7 +36653,8 @@
               "level_id": 2,
               "room_code": "24A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 2,
@@ -39259,7 +39273,8 @@
               "level_id": 2,
               "room_code": "25B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 2,
@@ -41874,7 +41889,8 @@
               "level_id": 2,
               "room_code": "26A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 2,
@@ -44489,7 +44505,8 @@
               "level_id": 2,
               "room_code": "26A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 2,
@@ -47108,7 +47125,8 @@
               "level_id": 3,
               "room_code": "31B"
             }
-          }
+          },
+          "areas": null
         }
       ]
     },
@@ -49732,7 +49750,8 @@
               "level_id": 3,
               "room_code": "32B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 3,
@@ -52351,7 +52370,8 @@
               "level_id": 3,
               "room_code": "32B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 3,
@@ -54970,7 +54990,8 @@
               "level_id": 3,
               "room_code": "33B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 3,
@@ -57589,7 +57610,8 @@
               "level_id": 3,
               "room_code": "33B"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 3,
@@ -60204,7 +60226,8 @@
               "level_id": 3,
               "room_code": "34A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 3,
@@ -62819,7 +62842,8 @@
               "level_id": 3,
               "room_code": "34A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 3,
@@ -65434,7 +65458,8 @@
               "level_id": 3,
               "room_code": "35A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 3,
@@ -68049,7 +68074,8 @@
               "level_id": 3,
               "room_code": "36A"
             }
-          }
+          },
+          "areas": null
         },
         {
           "level_id": 3,
@@ -70659,7 +70685,8 @@
             ]
           ],
           "entrance_from": "35A",
-          "door_exits": {}
+          "door_exits": {},
+          "areas": null
         }
       ]
     }

@@ -95,19 +95,31 @@ class DoorSystem:
             {"level_id": int, "room_code": str, "spawn": (x,y) | None}
         """
         # reset last transition before checking
-        self.last_transition = None
+        self._last_transition = None
         """
         Handle door interactions for current room.
-        
+
         Args:
             player_rect: Player's collision rectangle
             tile_size: Size of each tile (usually 24)
             is_e_pressed: Whether E key was pressed this frame
-            
+
         Returns:
             Tuple of (prompt_text, world_x, world_y) for UI display,
             or None if no interactable tile is nearby.
         """
+        # Ensure current_tiles are fresh from the global LevelLoader in case
+        # other systems (e.g., main._load_pcg_level) modified the room tiles.
+        try:
+            from src.level.level_loader import level_loader
+            refreshed = level_loader.get_room_tiles(self.current_level_id, self.current_room_code)
+            if refreshed is not None:
+                self.current_tiles = refreshed
+        except Exception:
+            # If level loader fails, keep whatever we had and continue; failure
+            # to refresh should not crash the game.
+            logger.debug("DoorSystem: failed to refresh current_tiles from level_loader")
+
         if not self.current_tiles:
             return None
         
@@ -175,24 +187,36 @@ class DoorSystem:
             logger.info("Target equals current room (%s/%s), ignoring interaction", target_level_id, target_room_code_full)
             return
 
-        # Load target room
-        if self.load_room(target_level_id, target_room_code_full):
-            logger.info("Transitioned to %s", target_room_code_full)
-            
-            # Find spawn point in new room
-            spawn_coords = find_spawn_point(self.current_tiles)
-            if spawn_coords:
-                spawn_tx, spawn_ty = spawn_coords
-                from config import TILE
-                spawn_x = spawn_tx * TILE
-                spawn_y = spawn_ty * TILE
-                logger.debug("Spawn point: (%s, %s)", spawn_x, spawn_y)
-                # In actual game, you would move player here
-                return spawn_x, spawn_y
-            else:
-                logger.info("No spawn point found in target room")
-        else:
-            logger.warning("Failed to load room: %s", target_room_code_full)
+        # Do not immediately load the room here. Instead, record the intended
+        # transition details in self._last_transition so the main game loop can
+        # perform the authoritative load and state sync. This avoids races where
+        # DoorSystem and main both try to load rooms concurrently.
+        spawn_x = None
+        spawn_y = None
+        try:
+            # Try to fetch target room tiles to compute a spawn point, but do not
+            # apply them to DoorSystem.current_tiles yet.
+            from src.level.level_loader import level_loader
+            target_tiles = level_loader.get_room_tiles(target_level_id, target_room_code_full)
+            if target_tiles:
+                spawn_coords = find_spawn_point(target_tiles)
+                if spawn_coords:
+                    spawn_tx, spawn_ty = spawn_coords
+                    from config import TILE
+                    spawn_x = spawn_tx * TILE
+                    spawn_y = spawn_ty * TILE
+                    logger.debug("Planned spawn point for target room: (%s, %s)", spawn_x, spawn_y)
+        except Exception:
+            logger.debug("Failed to precompute spawn point for target room %s/%s", target_level_id, target_room_code_full)
+
+        # Record the planned transition; main loop will consume this on E-press
+        self._last_transition = {
+            "level_id": target_level_id,
+            "room_code": target_room_code_full,
+            "spawn": (spawn_x, spawn_y) if spawn_x is not None and spawn_y is not None else None,
+        }
+        logger.info("DoorSystem recorded planned transition to %s/%s", target_level_id, target_room_code_full)
+        return
     
     def get_spawn_point(self) -> Optional[Tuple[int, int]]:
         """Get spawn point for current room."""
@@ -230,6 +254,17 @@ class DoorSystem:
             "exits": exits,
             "room_size": f"{len(self.current_tiles)}x{len(self.current_tiles[0])}"
         }
+
+    def pop_last_transition(self) -> Optional[dict]:
+        """Return and clear the last recorded planned transition.
+
+        This is intended for the main game loop to call when the player
+        confirms a door interaction (presses E). It returns a dict with
+        keys: "level_id", "room_code", "spawn" (world coords tuple or None).
+        """
+        t = self._last_transition
+        self._last_transition = None
+        return t
 
 
 def test_door_system():
