@@ -39,8 +39,30 @@ class DoorSystem:
             self.current_level_id = level_id
             self.current_room_code = room_code
             self.current_tiles = tiles
+            
+            # Place entrance door if this room has an entrance
+            from src.level.level_loader import level_loader
+            room = level_loader.get_room(level_id, room_code)
+            if room and room.entrance_from:
+                self._place_entrance_door(room.entrance_from)
+            
             return True
         return False
+    
+    def _place_entrance_door(self, entrance_from: str):
+        """Place entrance door in current room tiles."""
+        if not self.current_tiles:
+            return
+            
+        from src.tiles.tile_types import TileType
+        
+        h = len(self.current_tiles)
+        w = len(self.current_tiles[0]) if h > 0 else 0
+        
+        # Place entrance door on left wall
+        entrance_y = h // 2
+        if 0 < entrance_y < h - 1 and 1 < w - 1:
+            self.current_tiles[entrance_y][1] = TileType.DOOR_ENTRANCE.value
     
     def handle_door_interaction(
         self, 
@@ -127,6 +149,15 @@ class DoorSystem:
         if not self.current_tiles:
             return None
         
+        # First try to find spawn point matching entrance_from
+        entrance_from = get_room_entrance_from(self.current_level_id, self.current_room_code)
+        if entrance_from:
+            spawn_coords = find_spawn_point(self.current_tiles, entrance_from)
+            if spawn_coords:
+                spawn_tx, spawn_ty = spawn_coords
+                return (spawn_tx * 24, spawn_ty * 24)  # Convert to world coordinates
+        
+        # Fallback to any spawn point
         spawn_coords = find_spawn_point(self.current_tiles)
         if spawn_coords:
             spawn_tx, spawn_ty = spawn_coords

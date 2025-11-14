@@ -1834,7 +1834,46 @@ class Game:
         keys = pygame.key.get_pressed()
         is_e_pressed = keys[pygame.K_e]
         
-        # Define interaction callback
+        # Use PCG door system if available
+        if self.use_pcg and hasattr(self.level, 'level_id') and hasattr(self.level, 'room_code'):
+            from src.level.door_system import DoorSystem
+            if not hasattr(self, '_door_system'):
+                self._door_system = DoorSystem()
+                # Load current room into door system
+                self._door_system.load_room(self.level.level_id, self.level.room_code)
+            
+            # Handle door interaction using PCG system
+            result = self._door_system.handle_door_interaction(
+                player_rect=self.player.rect,
+                tile_size=TILE,
+                is_e_pressed=is_e_pressed
+            )
+            
+            if result:
+                self.interaction_prompt, interaction_x, interaction_y = result
+                self.interaction_position = (interaction_x, interaction_y)
+                
+                # If E was pressed and interaction succeeded, transition to new room
+                if is_e_pressed:
+                    # Get new room info from door system
+                    room_info = self._door_system.get_current_room_info()
+                    if room_info:
+                        # Load new room in main game (this places entrance doors correctly)
+                        self._load_pcg_level(room_info['level_id'], room_info['room_code'], initial=False)
+                        # Update door system to match new room
+                        self._door_system.load_room(room_info['level_id'], room_info['room_code'])
+                        # Move player to spawn point
+                        spawn_point = self._door_system.get_spawn_point()
+                        if spawn_point:
+                            spawn_x, spawn_y = spawn_point
+                            self.player.rect.centerx = spawn_x
+                            self.player.rect.centery = spawn_y
+            else:
+                self.interaction_prompt = None
+                self.interaction_position = None
+            return
+        
+        # Legacy door system for non-PCG levels
         def on_door_interact(tile_data, tile_pos):
             target = parse_door_target(tile_data.interaction.on_interact_id)
             if target:
