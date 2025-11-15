@@ -160,6 +160,9 @@ class Game:
             self.input_handler = InputHandler()
         except Exception:
             self.input_handler = InputHandler()  # fallback to default
+            
+        # Shop delay callback for level transitions
+        self._shop_delay_callback = None
 
     def reset_game_state(self):
         """
@@ -2115,6 +2118,63 @@ class Game:
                             # Clear any interaction prompt/state
                             self.interaction_prompt = None
                             self.interaction_position = None
+
+                            # Check if this is a level transition (different level_id) or specific room transitions and trigger shop
+                            try:
+                                should_trigger_shop = False
+                                
+                                # Trigger shop when moving between levels
+                                if cur_level_id != target_level:
+                                    should_trigger_shop = True
+                                # OR trigger shop based on room pattern within same level
+                                else:
+                                    # Get the actual room_index from the target room data
+                                    target_room_code = transition.get('room_code', '')
+                                    target_level_id = transition.get('level_id')
+                                    
+                                    # Try to get the room data to access the room_index field
+                                    try:
+                                        from src.level.level_loader import level_loader
+                                        target_room_data = level_loader.get_room(target_level_id, target_room_code)
+                                        if target_room_data and hasattr(target_room_data, 'room_index'):
+                                            room_index = target_room_data.room_index
+                                            
+                                            # Shop pattern: trigger shop for specific room number indices
+                                            # This means: Room 1(index 0)=shop, Room 2(index 1)=shop, Room 3(index 2)=no shop, 
+                                            # Room 4(index 3)=shop, Room 5(index 4)=no shop, Room 6(index 5)=shop
+                                            # Note: Rooms 2A and 2B both have index 1, so both get shop or no shop together
+                                            shop_room_indices = [0, 1, 3, 5]  # Room number indices that should have shops
+                                            if room_index in shop_room_indices:
+                                                should_trigger_shop = True
+                                                logger.info(f"Shop triggered for room {target_room_code} (room number index {room_index})")
+                                        else:
+                                            # Fallback to room code parsing if room data not available
+                                            logger.warning(f"Could not get room_index for {target_room_code}, using fallback logic")
+                                            # Extract room number from room code (e.g., "2A" -> 2, then subtract 1 for 0-based index)
+                                            import re
+                                            match = re.match(r'(\d+)[A-Za-z]+', target_room_code)
+                                            if match:
+                                                room_number = int(match.group(1)) - 1  # Convert to 0-based room number index
+                                                shop_room_indices = [0, 1, 3, 5]
+                                                if room_number in shop_room_indices:
+                                                    should_trigger_shop = True
+                                                    logger.info(f"Shop triggered via fallback for room {target_room_code} (room number index {room_number})")
+                                    except Exception as e:
+                                        logger.exception(f"Error getting room data for {target_room_code}: {e}")
+                                        # Fallback to room number parsing
+                                        import re
+                                        match = re.match(r'(\d+)[A-Za-z]+', target_room_code)
+                                        if match:
+                                            room_number = int(match.group(1)) - 1  # Convert to 0-based room number index
+                                            shop_room_indices = [0, 1, 3, 5]
+                                            if room_number in shop_room_indices:
+                                                should_trigger_shop = True
+                                                logger.info(f"Shop triggered via exception fallback for room {target_room_code} (room number index {room_number})")
+                                
+                                if should_trigger_shop:
+                                    self._trigger_shop_after_level_transition()
+                            except Exception:
+                                logger.exception("Failed to trigger shop after level transition")
                     else:
                         self.interaction_prompt = None
                         self.interaction_position = None
@@ -2143,6 +2203,75 @@ class Game:
             self.interaction_prompt = None
             self.interaction_position = None
     
+    def _get_room_index_from_code(self, room_code: str) -> int:
+        """
+        Convert room code (like '1A', '2B', etc.) to a zero-based room index.
+        
+        Args:
+            room_code: Room code like '1A', '2B', etc.
+            
+        Returns:
+            int: Zero-based room index (0 for first room, 1 for second, etc.)
+        """
+        try:
+            if not room_code:
+                return 0
+            
+            # Extract the numeric part (level number) and letter part (room letter)
+            import re
+            match = re.match(r'(\d+)([A-Za-z]+)', room_code)
+            if match:
+                level_num = int(match.group(1)) - 1  # Convert to 0-based level
+                room_letter = match.group(2).upper()
+                room_letter_index = ord(room_letter) - ord('A')  # A=0, B=1, C=2, etc.
+                
+                # Ensure room_letter_index is within valid range (0-25 for A-Z)
+                room_letter_index = max(0, min(25, room_letter_index))
+                
+                # For simplicity, assume sequential rooms across levels
+                # This gives us: 1A=0, 1B=1, 1C=2, 2A=3, 2B=4, etc.
+                return level_num * 26 + room_letter_index
+            else:
+                # Fallback: try to extract any digits
+                digits = ''.join(filter(str.isdigit, room_code))
+                return int(digits) - 1 if digits else 0
+        except Exception:
+            # Fallback to 0 if anything goes wrong
+            return 0
+
+    def _trigger_shop_after_level_transition(self):
+        """Trigger shop after completing a level transition."""
+        try:
+            # Only trigger shop for PCG mode
+            if not getattr(self, 'use_pcg', False):
+                return
+                
+            # Check if player has enough health to shop (optional)
+            if hasattr(self.player, 'max_hp') and hasattr(self.player, 'hp'):
+                if self.player.hp <= 0:
+                    return  # Don't show shop if player is dead
+            
+            # Open shop immediately
+            if hasattr(self, 'shop') and self.shop:
+                logger.info("Opening shop after level transition")
+                self.shop.open_shop()
+                # Show a notification
+                try:
+                    from src.entities.entities import floating, DamageNumber
+                    floating.append(DamageNumber(
+                        self.player.rect.centerx,
+                        self.player.rect.top - 20,
+                        "Shop Available!",
+                        (100, 255, 150)
+                    ))
+                except Exception:
+                    pass
+            else:
+                logger.warning("Shop not available for triggering")
+            
+        except Exception as e:
+            logger.exception("Failed to trigger shop after level transition")
+
     def _transition_to_level(self, level_name: str, entrance_id: str):
         """Transition to a new level and spawn at specific entrance."""
         # For now, treat level_name as room index for legacy system
@@ -2154,10 +2283,10 @@ class Game:
             # Fallback to next room if parsing fails
             room_index = (self.level_index + 1) % ROOM_COUNT
         
-        # Load the target level
+        # Load target level
         self._load_level(room_index)
         
-        # Find spawn point for the specified entrance
+        # Find spawn point for specified entrance
         spawn_pos = find_spawn_point(
             getattr(self.level, "tile_grid", []),
             entrance_id
