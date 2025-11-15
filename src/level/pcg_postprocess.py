@@ -842,6 +842,262 @@ def add_floating_platforms(
     # The repair pass was removing all platforms, so let's see if they get placed first
     return platforms_added
 
+
+def add_enemy_spawn_areas(
+    room: RoomData,
+    config: PCGConfig,
+    rng: Optional[random.Random] = None,
+    min_regions: int = 1,
+    max_regions: int = 4,
+    min_size: int = 3,
+    max_size: int = 7,
+    allowed_enemy_types: Optional[List[str]] = None,
+    air_clearance: int = 4,
+) -> int:
+    """
+    Annotate the room with `spawn` areas (metadata only). Does NOT modify tiles.
+
+    - Finds standable tiles and attempts to place small rectangular spawn regions.
+    - Avoids `exclusion_zone`, `door_carve`, and `platform` areas.
+    - Adds dicts to `room.areas` in the same shape used elsewhere so JSON is serializable.
+    - Adds `properties.spawn_surface` = 'ground'|'air'|'both' to help runtime choose proper enemies.
+    Returns number of regions added.
+    """
+    rng = rng or random.Random()
+    tiles = getattr(room, 'tiles', None)
+    if not tiles:
+        return 0
+    h = len(tiles)
+    w = len(tiles[0]) if h > 0 else 0
+
+    air_id = config.air_tile_id
+    wall_id = config.wall_tile_id
+
+    standable = _standable_tiles(tiles, air_id, wall_id)
+    if not standable:
+        return 0
+
+    # build protected set from existing areas
+    # Build protected tile set from areas we should avoid (exclusions, platforms)
+    protected: Set[Tuple[int,int]] = set()
+    pocket_rects: List[Tuple[int,int,int,int]] = []
+    door_rects: List[Tuple[int,int,int,int]] = []
+    for a in getattr(room, 'areas', []) or []:
+        if not isinstance(a, dict):
+            continue
+        kind = a.get('kind')
+        rects = a.get('rects') or []
+        for r in rects:
+            rx = int(r.get('x', 0)); ry = int(r.get('y', 0)); rw = int(r.get('w', 0)); rh = int(r.get('h', 0))
+            if kind == 'pocket_room':
+                pocket_rects.append((rx, ry, rw, rh))
+            if kind == 'door_carve':
+                door_rects.append((rx, ry, rw, rh))
+            for yy in range(ry, ry + rh):
+                for xx in range(rx, rx + rw):
+                    if kind in ('exclusion_zone', 'platform'):
+                        protected.add((xx, yy))
+
+    # Also protect tiles within a radius around doors (pad), but allow tiles inside pocket rooms
+    DOOR_PAD = 10
+    for (drx, dry, drw, drh) in door_rects:
+        x0 = max(0, drx - DOOR_PAD)
+        x1 = min(w, drx + drw + DOOR_PAD)
+        y0 = max(0, dry - DOOR_PAD)
+        y1 = min(h, dry + drh + DOOR_PAD)
+        for yy in range(y0, y1):
+            for xx in range(x0, x1):
+                # skip if inside any pocket rect (pocket areas still allowed)
+                inside_pocket = False
+                for prx, pry, prw, prh in pocket_rects:
+                    if prx <= xx < prx + prw and pry <= yy < pry + prh:
+                        inside_pocket = True; break
+                if not inside_pocket:
+                    protected.add((xx, yy))
+
+    # First: convert any pocket_room areas into full spawn regions (use 'both' surface)
+    pocket_areas = [a for a in getattr(room, 'areas', []) or [] if isinstance(a, dict) and a.get('kind') == 'pocket_room']
+    pocket_converted = 0
+    if pocket_areas:
+        # remove any existing spawn areas that overlap pocket rects, then add full-pocket spawn
+        new_areas = []
+        existing_areas = getattr(room, 'areas', []) or []
+        for a in existing_areas:
+            if not isinstance(a, dict) or a.get('kind') != 'spawn':
+                new_areas.append(a)
+                continue
+            # check if this spawn overlaps any pocket rect; if so, drop it
+            spawn_overlaps_pocket = False
+            for pa in pocket_areas:
+                for pr in pa.get('rects', []) or []:
+                    prx = int(pr.get('x', 0)); pry = int(pr.get('y', 0)); prw = int(pr.get('w', 1)); prh = int(pr.get('h', 1))
+                    for sr in a.get('rects', []) or []:
+                        sx = int(sr.get('x', 0)); sy = int(sr.get('y', 0)); sw = int(sr.get('w', 1)); sh = int(sr.get('h', 1))
+                        if not (prx + prw <= sx or sx + sw <= prx or pry + prh <= sy or sy + sh <= pry):
+                            spawn_overlaps_pocket = True; break
+                    if spawn_overlaps_pocket:
+                        break
+                if spawn_overlaps_pocket:
+                    break
+            if not spawn_overlaps_pocket:
+                new_areas.append(a)
+        # replace room.areas temporarily to avoid duplicate checks below
+        room.areas = new_areas
+
+        # now append pocket-based spawn regions
+        for pa in pocket_areas:
+            for r in pa.get('rects', []) or []:
+                rx = int(r.get('x', 0)); ry = int(r.get('y', 0)); rw = int(r.get('w', 1)); rh = int(r.get('h', 1))
+                if rw <= 0 or rh <= 0:
+                    continue
+                props = {
+                    'spawn_cap': max(1, (rw * rh) // 2),
+                    'spawn_weight': max(1, 2 * rw * rh),
+                    'allowed_enemy_types': allowed_enemy_types or [],
+                    'spawn_surface': 'both',
+                }
+                room.areas.append({
+                    'kind': 'spawn',
+                    'rects': [{'x': rx, 'y': ry, 'w': rw, 'h': rh}],
+                    'properties': props,
+                })
+                pocket_converted += 1
+
+    # Build horizontal runs of contiguous standable tiles (prefer bigger areas)
+    runs: List[Tuple[int,int,int]] = []  # (x0, y, length)
+    for y in range(0, h - 1):
+        x = 1
+        while x < w - 1:
+            if (x, y) in standable and (x, y) not in protected:
+                start = x
+                x += 1
+                while x < w - 1 and (x, y) in standable and (x, y) not in protected:
+                    x += 1
+                runs.append((start, y, x - start))
+            else:
+                x += 1
+
+    # Filter runs that are at least min_size long
+    runs = [r for r in runs if r[2] >= min_size]
+    if not runs:
+        return 0
+
+    # sort runs by length descending (prefer larger contiguous areas)
+    runs.sort(key=lambda r: r[2], reverse=True)
+
+    to_place = max(0, rng.randint(min_regions, max_regions))
+    placed = 0
+    used_tiles: Set[Tuple[int,int]] = set()
+
+    room.areas = getattr(room, 'areas', []) or []
+
+    for start_x, ry, length in runs:
+        if placed >= to_place:
+            break
+        # try to carve this run into one or more spawn rects
+        remaining = length
+        cur_x = start_x
+        while remaining >= min_size and placed < to_place:
+            # choose width up to max_size but not larger than remaining
+            rw = min(max_size, remaining)
+            # prefer larger widths: bias toward rw but allow smaller
+            if rw > min_size and rng.random() < 0.5:
+                # sometimes shrink a bit to produce multiple regions
+                rw = rng.randint(min_size, rw)
+
+            # pick rect's left edge within the run to avoid edge collisions
+            x0 = cur_x + rng.randint(0, max(0, remaining - rw))
+            # vertical placement: prefer the standable row (ry)
+            rh = 1
+            y0 = ry
+
+            # validate rect is within bounds and tiles are air and not protected
+            bad = False
+            rect_tiles = []
+            for yy in range(y0, y0 + rh):
+                if yy < 0 or yy >= h:
+                    bad = True; break
+                for xx in range(x0, x0 + rw):
+                    if xx < 0 or xx >= w:
+                        bad = True; break
+                    if (xx, yy) in protected:
+                        bad = True; break
+                    if tiles[yy][xx] != air_id:
+                        bad = True; break
+                    rect_tiles.append((xx, yy))
+                if bad:
+                    break
+            if bad:
+                # try shrinking width once
+                if rw > min_size:
+                    rw = max(min_size, rw - 1)
+                    continue
+                else:
+                    break
+
+            # determine surface classification
+            has_ground = False
+            below_y = y0 + rh
+            for xx in range(x0, x0 + rw):
+                if 0 <= below_y < h and tiles[below_y][xx] == wall_id:
+                    has_ground = True; break
+            has_clearance = True
+            for xx in range(x0, x0 + rw):
+                for dy in range(1, air_clearance + 1):
+                    check_y = y0 - dy
+                    if check_y < 0:
+                        break
+                    if tiles[check_y][xx] != air_id:
+                        has_clearance = False; break
+                if not has_clearance:
+                    break
+
+            if has_ground and not has_clearance:
+                surface = 'ground'
+            elif has_clearance and not has_ground:
+                surface = 'air'
+            else:
+                surface = 'both'
+
+            # require sensible surface
+            if surface == 'air' and not has_clearance:
+                # shrink/skip
+                remaining -= rw
+                cur_x += rw
+                continue
+            if surface == 'ground' and not has_ground:
+                remaining -= rw
+                cur_x += rw
+                continue
+
+            props = {
+                'spawn_cap': max(1, (rw * rh) // 1),
+                'spawn_weight': max(1, 2 * rw * rh),
+                'allowed_enemy_types': allowed_enemy_types or [],
+                'spawn_surface': surface,
+            }
+
+            room.areas.append({
+                'kind': 'spawn',
+                'rects': [{'x': x0, 'y': y0, 'w': rw, 'h': rh}],
+                'properties': props,
+            })
+
+            for t in rect_tiles:
+                used_tiles.add(t)
+
+            placed += 1
+
+            # advance past this placed rect inside the run
+            # reduce remaining and move cur_x forward
+            advance = (x0 + rw) - cur_x
+            cur_x = x0 + rw
+            remaining = start_x + length - cur_x
+            if remaining <= 0:
+                break
+
+    return placed
+
     # Original repair pass code (disabled):
     # if any exits remain unreachable, try removing
     # individual platform areas (last placed first) to restore access.

@@ -222,8 +222,13 @@ class LevelLoader:
         walkable_check: Optional[Callable[[int,int], bool]] = None,
         avoid_positions: Optional[List[Tuple[int,int]]] = None,
         min_distance: int = 0,
+        allowed_surfaces: Optional[Tuple[str, ...]] = None,
     ) -> Optional[Tuple[int,int]]:
         """Choose a spawn tile from regions of type `kind` in the room.
+
+        Improvements:
+        - Can filter regions by `allowed_surfaces` (tuple of 'ground','air','both').
+        - Prefers central tiles in a chosen region so spawns are less edge-biased.
 
         - `walkable_check(x,y)` should return True when a tile is valid for spawn.
         - `avoid_positions` is a list of tile positions to avoid (e.g., player).
@@ -237,36 +242,77 @@ class LevelLoader:
         for r in regions:
             if r.properties.get("no_enemy_spawn"):
                 continue
+            # surface filtering
+            if allowed_surfaces is not None:
+                surface = r.properties.get("spawn_surface", "both")
+                if surface not in allowed_surfaces:
+                    continue
             weight = float(r.properties.get("spawn_weight", max(1, r.area_size())))
             weighted.append((r, weight))
         if not weighted:
             return None
-        total = sum(w for _, w in weighted)
-        pick = rng.random() * total
-        upto = 0.0
-        chosen = weighted[-1][0]
-        for r, w in weighted:
-            upto += w
-            if pick <= upto:
-                chosen = r
-                break
-        candidate_tiles = expand_rects_to_tiles(chosen.rects)
-        rng.shuffle(candidate_tiles)
-        for x, y in candidate_tiles:
-            if walkable_check and not walkable_check(x, y):
+        # Build weighted per-tile candidate list from all allowed regions
+        tile_candidates: List[Tuple[Tuple[int,int], float, AreaRegion]] = []  # ((x,y), weight, region)
+        for r, rwgt in weighted:
+            rect_tiles = expand_rects_to_tiles(r.rects)
+            if not rect_tiles:
+                continue
+            # compute region center
+            cx_sum = 0.0; cy_sum = 0.0; cnt = 0
+            for rect in r.rects:
+                rx = int(rect.get('x', 0)); ry = int(rect.get('y', 0)); rw = int(rect.get('w', 1)); rh = int(rect.get('h', 1))
+                cx_sum += rx + rw / 2.0
+                cy_sum += ry + rh / 2.0
+                cnt += 1
+            if cnt == 0:
+                cnt = 1
+            center = (cx_sum / cnt, cy_sum / cnt)
+
+            # assign per-tile weight inversely proportional to squared distance from center
+            for (tx, ty) in rect_tiles:
+                dx = (tx + 0.5) - center[0]
+                dy = (ty + 0.5) - center[1]
+                dist2 = dx * dx + dy * dy
+                # small constant to avoid division by zero and to keep edge tiles viable
+                tile_weight = rwgt / (1.0 + dist2)
+                tile_candidates.append(((tx, ty), float(tile_weight), r))
+
+        if not tile_candidates:
+            return None
+
+        # optionally shuffle to add randomness for equal weights
+        rng.shuffle(tile_candidates)
+
+        # filter by walkable_check and avoid_positions, build final weighted list
+        final_tiles: List[Tuple[Tuple[int,int], float]] = []
+        for (tx, ty), tw, reg in tile_candidates:
+            if walkable_check and not walkable_check(tx, ty):
                 continue
             if avoid_positions:
                 bad = False
                 for ax, ay in avoid_positions:
-                    dx = ax - x
-                    dy = ay - y
+                    dx = ax - tx
+                    dy = ay - ty
                     if dx * dx + dy * dy <= min_distance * min_distance:
                         bad = True
                         break
                 if bad:
                     continue
-            return (x, y)
-        return None
+            final_tiles.append(((tx, ty), tw))
+
+        if not final_tiles:
+            return None
+
+        # sample a tile by weight
+        total = sum(w for _, w in final_tiles)
+        pick = rng.random() * total
+        upto = 0.0
+        for (tx, ty), w in final_tiles:
+            upto += w
+            if pick <= upto:
+                return (tx, ty)
+        # fallback
+        return final_tiles[-1][0]
 
 
 # Global level loader instance

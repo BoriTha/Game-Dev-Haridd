@@ -373,6 +373,63 @@ class Game:
         lvl.tile_grid = room.tiles      # used by _handle_door_interactions
         lvl.enemies = []                # start empty for now
         lvl.is_boss_room = False
+
+        # --- Spawn PCG enemies from room metadata 'spawn' areas ---
+        try:
+            from src.level.level_loader import level_loader
+            from src.entities.entities import Bug, Bee, Frog, Archer, WizardCaster, Assassin, Golem
+            from config import TILE
+            import random as _rnd
+
+            room_meta = level_loader.get_room(lvl.level_id, lvl.room_code)
+            if room_meta:
+                rng = _rnd.Random(self.pcg_seed or None)
+                spawned = []
+                areas = getattr(room_meta, 'areas', []) or []
+                spawn_areas = [a for a in areas if isinstance(a, dict) and a.get('kind') == 'spawn']
+                for a in spawn_areas:
+                    props = a.get('properties', {}) or {}
+                    surface = props.get('spawn_surface', 'both')
+                    cap = int(props.get('spawn_cap', 1)) if props.get('spawn_cap') is not None else 1
+                    # cap per region to avoid huge crowds
+                    max_per_region = min(cap, 3)
+                    for i in range(max_per_region):
+                        allowed = None
+                        if surface == 'ground':
+                            allowed = ('ground', 'both')
+                        elif surface == 'air':
+                            allowed = ('air', 'both')
+                        else:
+                            allowed = ('ground', 'air', 'both')
+                        try:
+                            tile_choice = level_loader.choose_spawn_tile(lvl.level_id, lvl.room_code, kind='spawn', rng=rng, allowed_surfaces=allowed)
+                        except Exception:
+                            tile_choice = None
+                        if not tile_choice:
+                            continue
+                        tx, ty = tile_choice
+                        cx = int(tx * TILE + TILE // 2)
+                        ground_y = int((ty + 1) * TILE)
+                        # pick enemy class based on surface
+                        try:
+                            if surface == 'air':
+                                EnemyClass = _rnd.choice([Bee, WizardCaster])
+                            elif surface == 'ground':
+                                EnemyClass = _rnd.choice([Bug, Frog, Archer])
+                            else:
+                                EnemyClass = _rnd.choice([Bug, Bee, Archer])
+                            spawned.append(EnemyClass(cx, ground_y))
+                        except Exception:
+                            try:
+                                spawned.append(Bug(cx, ground_y))
+                            except Exception:
+                                pass
+                # assign spawned enemies to level
+                if spawned:
+                    lvl.enemies = spawned
+        except Exception:
+            # don't let spawning break level load
+            pass
         
         # Try to find door entrance spawn point first, fall back to center of room
         from src.core.interaction import find_spawn_point
