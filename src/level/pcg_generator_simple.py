@@ -626,6 +626,241 @@ def _get_drunken_move(current_pos: Tuple[int, int], target_pos: Tuple[int, int],
         return rng.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
 
 
+# ----- Connectivity check and repair -----
+
+def _flood_fill_reachable(tile_grid: List[List[int]], start: Tuple[int,int], config: PCGConfig) -> Set[Tuple[int,int]]:
+    """Return set of reachable air tiles from start using 4-way movement."""
+    h = len(tile_grid)
+    w = len(tile_grid[0]) if h>0 else 0
+    sx, sy = start
+    if sx < 0 or sx >= w or sy < 0 or sy >= h:
+        return set()
+    if tile_grid[sy][sx] != config.air_tile_id:
+        return set()
+
+    q = [start]
+    seen = {start}
+    for x,y in q:
+        for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)):
+            nx, ny = x+dx, y+dy
+            if 0<=nx<w and 0<=ny<h and (nx,ny) not in seen and tile_grid[ny][nx]==config.air_tile_id:
+                seen.add((nx,ny))
+                q.append((nx,ny))
+    return seen
+
+
+def _find_door_centers(room: RoomData) -> List[Tuple[str, Tuple[int,int]]]:
+    """Return list of (door_key, center) from room.areas."""
+    centers = []
+    areas = getattr(room, 'areas', []) or []
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        if area.get('kind')!='door_carve':
+            continue
+        rects = area.get('rects') or []
+        if not rects:
+            continue
+        r = rects[0]
+        if not isinstance(r, dict):
+            continue
+        cx = int(r.get('x',0)+ (r.get('w',1)//2))
+        cy = int(r.get('y',0)+ (r.get('h',1)//2))
+        centers.append((r.get('door_key'), (cx,cy)))
+    return centers
+
+
+def _ensure_doors_reachable(room: RoomData, config: PCGConfig, rng: random.Random) -> None:
+    """Ensure every carved door area is reachable from the entrance; if not, repair by targeted walks."""
+    tile_grid = room.tiles
+    h = len(tile_grid)
+    w = len(tile_grid[0]) if h>0 else 0
+
+    # find entrance center
+    door_centers = _find_door_centers(room)
+    entrance_center = None
+    exits = []
+    for key, pos in door_centers:
+        if key=='entrance':
+            entrance_center = pos
+        else:
+            exits.append((key,pos))
+    if entrance_center is None:
+        return
+
+    reachable = _flood_fill_reachable(tile_grid, entrance_center, config)
+
+    # For each exit, if unreachable, try targeted carving from closest reachable tile
+    for key,pos in exits:
+        if pos in reachable:
+            continue
+        # find closest reachable tile by Manhattan distance
+        if not reachable:
+            continue
+        best = min(reachable, key=lambda p: abs(p[0]-pos[0]) + abs(p[1]-pos[1]))
+        # attempt multiple repairs with increasing carve radius
+        repaired = False
+        for attempt_radius in (config.dw_carve_radius, max(1, config.dw_carve_radius-1), config.dw_carve_radius+1, config.dw_carve_radius+2):
+            # run a short drunk walk from best -> pos with this brush
+            _run_single_walk(tile_grid, best, pos, config, rng, max_steps=max(10, config.dw_max_steps//10))
+            # re-evaluate reachable
+            reachable = _flood_fill_reachable(tile_grid, entrance_center, config)
+            if pos in reachable:
+                repaired = True
+                break
+        if not repaired:
+            # fallback: carve a straight corridor between best and pos
+            x0,y0 = best
+            x1,y1 = pos
+            x,y = x0,y0
+            while (x,y)!=(x1,y1):
+                if x<x1:
+                    x+=1
+                elif x>x1:
+                    x-=1
+                elif y<y1:
+                    y+=1
+                elif y>y1:
+                    y-=1
+                # carve 3x3 at x,y
+                _carve_at(tile_grid, (x,y), max(2, config.dw_carve_radius), config)
+            # final check
+            reachable = _flood_fill_reachable(tile_grid, entrance_center, config)
+        # done for this exit
+
+    # no return (room.tiles modified in place)
+
+
+# ----- Cellular Automata smoothing (preserve protected areas) -----
+
+def _run_cellular_automata(room: RoomData, config: PCGConfig, rng: random.Random) -> None:
+    """
+    Applies CA smoothing to the room's tile grid.
+    Respects `door_carve` (keeps them as air) and `exclusion_zone` (keeps them as walls).
+    """
+    iterations = int(getattr(config, 'ca_smoothing_iterations', 0))
+    if iterations <= 0:
+        return
+
+    # Build protected sets from room.areas
+    door_set: Set[Tuple[int,int]] = set()
+    exclusion_set: Set[Tuple[int,int]] = set()
+    areas = getattr(room, 'areas', []) or []
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        kind = area.get('kind')
+        rects = area.get('rects') or []
+        for rect in rects:
+            if not isinstance(rect, dict):
+                continue
+            rx = int(rect.get('x', 0))
+            ry = int(rect.get('y', 0))
+            rw = int(rect.get('w', 0))
+            rh = int(rect.get('h', 0))
+            for yy in range(ry, ry + rh):
+                for xx in range(rx, rx + rw):
+                    if kind == 'door_carve':
+                        door_set.add((xx, yy))
+                    elif kind == 'exclusion_zone':
+                        exclusion_set.add((xx, yy))
+
+    current_grid = room.tiles
+    for _ in range(iterations):
+        current_grid = _ca_smoothing_step(current_grid, config, door_set=door_set, exclusion_set=exclusion_set)
+
+    room.tiles = current_grid
+
+
+def _ca_smoothing_step(tile_grid: List[List[int]], config: PCGConfig, door_set: Optional[Set[Tuple[int,int]]] = None, exclusion_set: Optional[Set[Tuple[int,int]]] = None) -> List[List[int]]:
+    """
+    Runs a single iteration of the CA simulation.
+
+    Preserves tiles in `door_set` as air and tiles in `exclusion_set` as walls.
+    """
+    if door_set is None:
+        door_set = set()
+    if exclusion_set is None:
+        exclusion_set = set()
+
+    h = len(tile_grid)
+    w = len(tile_grid[0]) if h > 0 else 0
+    if h == 0 or w == 0:
+        return tile_grid
+
+    new_grid: List[List[int]] = [[0] * w for _ in range(h)]
+
+    threshold = int(getattr(config, 'ca_wall_neighbor_threshold', 5))
+    include_diagonals = bool(getattr(config, 'ca_include_diagonals', True))
+
+    for y in range(h):
+        for x in range(w):
+            # Preserve border
+            if x == 0 or x == w - 1 or y == 0 or y == h - 1:
+                new_grid[y][x] = config.wall_tile_id
+                continue
+
+            # Preserve door carve as air
+            if (x, y) in door_set:
+                new_grid[y][x] = config.air_tile_id
+                continue
+
+            # Preserve exclusion zones as walls
+            if (x, y) in exclusion_set:
+                new_grid[y][x] = config.wall_tile_id
+                continue
+
+            neighbor_count = _get_wall_neighbor_count(tile_grid, x, y, include_diagonals, config, door_set, exclusion_set)
+
+            if neighbor_count >= threshold:
+                new_grid[y][x] = config.wall_tile_id
+            else:
+                new_grid[y][x] = config.air_tile_id
+
+    return new_grid
+
+
+def _get_wall_neighbor_count(tile_grid: List[List[int]], x: int, y: int, include_diagonals: bool, config: PCGConfig, door_set: Optional[Set[Tuple[int,int]]] = None, exclusion_set: Optional[Set[Tuple[int,int]]] = None) -> int:
+    """
+    Counts the number of wall neighbors for a given tile. Treats out-of-bounds tiles as walls.
+    Respects door_set (treated as air) and exclusion_set (treated as wall).
+    """
+    if door_set is None:
+        door_set = set()
+    if exclusion_set is None:
+        exclusion_set = set()
+
+    h = len(tile_grid)
+    w = len(tile_grid[0])
+    count = 0
+
+    for iy in range(y - 1, y + 2):
+        for ix in range(x - 1, x + 2):
+            if ix == x and iy == y:
+                continue
+            if not include_diagonals and (ix != x and iy != y):
+                continue
+
+            # Out of bounds counts as wall
+            if ix < 0 or ix >= w or iy < 0 or iy >= h:
+                count += 1
+                continue
+
+            # Protected areas override raw grid value
+            if (ix, iy) in door_set:
+                # door carve considered air
+                continue
+            if (ix, iy) in exclusion_set:
+                count += 1
+                continue
+
+            if tile_grid[iy][ix] == config.wall_tile_id:
+                count += 1
+
+    return count
+
+
+
 def generate_simple_pcg_level_set(
     seed: Optional[int] = None,
 ) -> LevelSet:
@@ -685,9 +920,20 @@ def generate_simple_pcg_level_set(
                     pass
                 pass
             
-            # --- (Future Step): This is where you would add _run_cellular_automata(room, config, rng) ---
+            # --- NEW STEP 3: Smooth tunnels with Cellular Automata ---
+            try:
+                _run_cellular_automata(room, config, rng)
+                # Ensure doors remain reachable after smoothing
+                _ensure_doors_reachable(room, config, rng)
+            except Exception as e:
+                try:
+                    import logging
+                    logging.getLogger(__name__).error(f"Failed _run_cellular_automata or connectivity check: {e}")
+                except Exception:
+                    pass
+                pass
 
-            # Step 3: Place the actual door tiles into the carved-out grid
+            # Step 4: Place the actual door tiles into the carved-out grid
             if getattr(room, 'placed_doors', None) is None:
                 room.placed_doors = []
             try:

@@ -49,12 +49,24 @@ class PCGConfig:
     dw_exit_bias: float = 0.4
     # The radius of the carving "brush". 1 = a 1x1 tile. 2 = a 2x2 square or 3x3 circle.
     # Start with 1 to create thin paths.
-    dw_carve_radius: int = 1
+    # Carve radius: r -> square of size (2*r - 1). r=2 -> 3x3 carve
+    dw_carve_radius: int = 2
     # % chance to spawn an "extra" drunkard from a random point on an existing path.
     # This creates side-rooms and loops.
     dw_extra_drunk_chance: float = 0.1
     # How long the "extra" drunkards walk for.
     dw_extra_drunk_steps: int = 1000
+
+    # --- CELLULAR AUTOMATA SETTINGS ---
+    # The number of "smoothing" iterations to run. 3-5 is usually good.
+    # 0 will disable smoothing.
+    ca_smoothing_iterations: int = 5
+    # The "5-step" rule: if a tile (air or wall) has this many or more
+    # wall neighbors, it becomes a wall in the next iteration.
+    ca_wall_neighbor_threshold: int = 5
+    # Whether to check 8 neighbors (diagonals=True) or 4 (diagonals=False).
+    # True is better for organic caves.
+    ca_include_diagonals: bool = True
 
 
 @dataclass
