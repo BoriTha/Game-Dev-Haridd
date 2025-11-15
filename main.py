@@ -417,6 +417,9 @@ class Game:
                 spawned = []
                 areas = getattr(room_meta, 'areas', []) or []
                 spawn_areas = [a for a in areas if isinstance(a, dict) and a.get('kind') == 'spawn']
+                # Track used spawn positions to prevent crowding
+                used_spawn_positions = []  # List of (tile_x, tile_y) tuples
+                
                 for a in spawn_areas:
                     props = a.get('properties', {}) or {}
                     surface = props.get('spawn_surface', 'both')
@@ -432,12 +435,23 @@ class Game:
                         else:
                             allowed = ('ground', 'air', 'both')
                         try:
-                            tile_choice = level_loader.choose_spawn_tile(lvl.level_id, lvl.room_code, kind='spawn', rng=rng, allowed_surfaces=allowed)
+                            # Use minimum distance of 3 tiles between spawns to prevent crowding
+                            tile_choice = level_loader.choose_spawn_tile(
+                                lvl.level_id, lvl.room_code, 
+                                kind='spawn', 
+                                rng=rng, 
+                                allowed_surfaces=allowed,
+                                avoid_positions=used_spawn_positions,
+                                min_distance=3  # Minimum 3 tiles between enemy spawns
+                            )
                         except Exception:
                             tile_choice = None
                         if not tile_choice:
                             continue
                         tx, ty = tile_choice
+                        # Add this position to used positions list
+                        used_spawn_positions.append((tx, ty))
+                        
                         cx = int(tx * TILE + TILE // 2)
                         ground_y = int((ty + 1) * TILE)
                         # pick enemy class based on surface
