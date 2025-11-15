@@ -349,6 +349,27 @@ class Game:
                 from src.tiles.tile_collision import TileCollision
                 from config import TILE
                 self.tile_collision = TileCollision(TILE)
+            
+            def _update_solids_from_grid(self):
+                """Update solids list from tile grid for enemy collision system."""
+                from src.tiles.tile_registry import tile_registry
+                from src.tiles.tile_types import TileType
+                from config import TILE
+                
+                self.solids = []
+                if not self.tile_grid:
+                    return
+                    
+                for y, row in enumerate(self.tile_grid):
+                    for x, tile_value in enumerate(row):
+                        if tile_value >= 0:
+                            tile_type = TileType(tile_value)
+                            tile_data = tile_registry.get_tile(tile_type)
+                            
+                            # Add solids for tiles with full collision
+                            if tile_data and tile_data.collision.collision_type == "full":
+                                rect = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
+                                self.solids.append(rect)
                 
             def draw(self, screen, camera, dt: float = 0.0):
                 """Use the proper tile system for PCG levels."""
@@ -378,6 +399,10 @@ class Game:
         # Set level dimensions for enemy movement system
         lvl.h = len(room.tiles) if room.tiles else 0
         lvl.w = len(room.tiles[0]) if lvl.h > 0 else 0
+        
+        # Generate collision solids from tile grid for enemy collision system
+        lvl._update_solids_from_grid()
+        lvl._update_solids_from_grid()
 
         # --- Spawn PCG enemies from room metadata 'spawn' areas ---
         try:
