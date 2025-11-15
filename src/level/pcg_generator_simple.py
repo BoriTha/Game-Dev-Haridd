@@ -372,35 +372,7 @@ def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: rand
                 # add 3x1 exclusion row below
                 excl_y = top_y + 3
                 if excl_y < h - 1:
-                    _add_area('no_spawn', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
-                used_quadrants.add(entrance_quadrant)
-
-    # Exits carve using quadrant system
-    exit_keys = list((room.door_exits or {}).keys())
-    if not exit_keys:
-        return
-
-    available_quadrants = ['TL', 'TR', 'BL', 'BR']
-    
-    for exit_key in exit_keys:
-        exit_quadrant = select_available_quadrant(used_quadrants, available_quadrants, rng)
-        
-        if exit_quadrant:
-            quadrant_rect = quadrants[exit_quadrant]
-            pos = get_random_position_in_quadrant(quadrant_rect, 3, rng)
-            
-            if pos:
-                left_x, top_y = pos
-                # carve 3x3 to air
-                for yy in range(top_y, top_y + 3):
-                    for xx in range(left_x, left_x + 3):
-                        if 0 <= yy < h and 0 <= xx < w:
-                            tiles[yy][xx] = TILE_AIR
-                _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': exit_key})
-                # add 3x1 exclusion row below
-                excl_y = top_y + 3
-                if excl_y < h - 1:
-                    _add_area('no_spawn', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+                    _add_area('exclusion_zone', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
                 used_quadrants.add(exit_quadrant)
 
 

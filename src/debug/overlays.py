@@ -30,6 +30,7 @@ class DebugOverlays:
                 'spawn': (50, 200, 50, 120),
                 'player_spawn': (50, 120, 240, 160),
                 'no_spawn': (200, 50, 50, 160),
+                'exclusion_zone': (255, 140, 0, 160),  # Orange for exclusion zones
                 'hazard': (220, 80, 80, 160),
                 'biome': (160, 220, 160, 110),
                 'door_proximity': (200, 200, 80, 140),
