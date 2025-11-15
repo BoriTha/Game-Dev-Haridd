@@ -36,6 +36,32 @@ class LevelLoader:
             raise FileNotFoundError(f"Levels file not found: {self.levels_file}")
         
         self._level_set = LevelSet.load_from_json(self.levels_file)
+        # Populate missing allowed_enemy_types based on spawn_surface for compatibility
+        try:
+            for level in self._level_set.levels:
+                for room in level.rooms:
+                    areas = getattr(room, 'areas', []) or []
+                    for a in areas:
+                        try:
+                            if not isinstance(a, dict):
+                                continue
+                            if a.get('kind') != 'spawn':
+                                continue
+                            props = a.get('properties') or {}
+                            aet = a.get('allowed_enemy_types')
+                            if aet is None or (isinstance(aet, list) and len(aet) == 0):
+                                surface = props.get('spawn_surface', 'both')
+                                if surface == 'ground':
+                                    a['allowed_enemy_types'] = ['Bug','Frog','Archer','Assassin','Golem']
+                                elif surface == 'air':
+                                    a['allowed_enemy_types'] = ['Bee','WizardCaster']
+                                else:
+                                    a['allowed_enemy_types'] = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','Golem']
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+
         # Apply PCG postprocessing (floating platforms) to loaded rooms so saved levels
         # generated before this change also receive platform fixes at load time.
         try:

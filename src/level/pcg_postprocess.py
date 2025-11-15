@@ -950,10 +950,22 @@ def add_enemy_spawn_areas(
                 rx = int(r.get('x', 0)); ry = int(r.get('y', 0)); rw = int(r.get('w', 1)); rh = int(r.get('h', 1))
                 if rw <= 0 or rh <= 0:
                     continue
+                # determine allowed enemy types for pocket (default to both types)
+                surface = 'both'
+                if allowed_enemy_types is not None:
+                    aet = allowed_enemy_types
+                else:
+                    if surface == 'ground':
+                        aet = ['Bug','Frog','Archer','Assassin','Golem']
+                    elif surface == 'air':
+                        aet = ['Bee','WizardCaster']
+                    else:
+                        aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','Golem']
+
                 props = {
                     'spawn_cap': max(1, (rw * rh) // 2),
                     'spawn_weight': max(1, 2 * rw * rh),
-                    'allowed_enemy_types': allowed_enemy_types or [],
+                    'allowed_enemy_types': aet,
                     'spawn_surface': 'both',
                 }
                 room.areas.append({
@@ -1070,10 +1082,21 @@ def add_enemy_spawn_areas(
                 cur_x += rw
                 continue
 
+            # determine allowed enemy types for this region
+            if allowed_enemy_types is not None:
+                aet = allowed_enemy_types
+            else:
+                if surface == 'ground':
+                    aet = ['Bug','Frog','Archer','Assassin','Golem']
+                elif surface == 'air':
+                    aet = ['Bee','WizardCaster']
+                else:
+                    aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','Golem']
+
             props = {
                 'spawn_cap': max(1, (rw * rh) // 1),
                 'spawn_weight': max(1, 2 * rw * rh),
-                'allowed_enemy_types': allowed_enemy_types or [],
+                'allowed_enemy_types': aet,
                 'spawn_surface': surface,
             }
 

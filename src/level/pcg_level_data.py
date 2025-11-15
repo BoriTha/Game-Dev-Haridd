@@ -265,13 +265,25 @@ class AreaRegion:
             # Filter only valid AreaRect fields
             rect_data = {k: v for k, v in r.items() if k in ['x', 'y', 'w', 'h']}
             rects.append(AreaRect(**rect_data))
+        props = data.get("properties", {}) or {}
+        aet = data.get("allowed_enemy_types")
+        # If allowed_enemy_types not provided, infer from properties.spawn_surface
+        if not aet:
+            surface = props.get("spawn_surface")
+            if surface == 'ground':
+                aet = ['Bug','Frog','Archer','Assassin','Golem']
+            elif surface == 'air':
+                aet = ['Bee','WizardCaster']
+            else:
+                aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','Golem']
+
         return cls(
             region_id=str(data.get("region_id", f"{data.get('kind', 'unknown')}_{id(data)}")),
             label=data.get("label"),
             kind=str(data.get("kind", "spawn")),
             rects=rects,
-            properties=data.get("properties", {}),
-            allowed_enemy_types=data.get("allowed_enemy_types"),
+            properties=props,
+            allowed_enemy_types=aet,
             banned_enemy_types=data.get("banned_enemy_types"),
             spawn_cap=data.get("spawn_cap"),
             priority=int(data.get("priority", 0)),
