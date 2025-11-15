@@ -228,6 +228,97 @@ def _compute_entrances(all_levels_rooms: List[List[RoomData]]) -> None:
                 target.entrance_from = source.room_code
 
 
+def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: random.Random, place_entrance_fn=None, place_exit_fn=None, allow_entrance: bool = True) -> None:
+    """Carve 3x3 entrance/exit areas and mark exclusion rows.
+
+    - Entrance: if `room.entrance_from` exists and `allow_entrance` True, carve a
+      3x3 area centered at bottom-center and add a 3x1 `no_spawn` row below it.
+    - Exits: for each exit in `room.door_exits`, carve a 3x3 area on a wall
+      (prefer right then left) and add a 3x1 `no_spawn` row below the carve.
+
+    The carved areas are recorded in `room.areas` as dicts so placement helpers
+    can find the bottom-center tile for door placement. This function is
+    idempotent (safe to call multiple times).
+    """
+    TILE_AIR = config.air_tile_id
+    tiles = room.tiles
+    h = len(tiles)
+    w = len(tiles[0]) if h > 0 else 0
+    if h < 3 or w < 3:
+        return
+
+    room.areas = getattr(room, 'areas', []) or []
+
+    def _add_area(kind: str, rect):
+        room.areas.append({
+            'kind': kind,
+            'rects': [rect],
+            'properties': {}
+        })
+
+    # Entrance carve at bottom-center
+    if allow_entrance and getattr(room, 'entrance_from', None):
+        cx = w // 2
+        top_y = max(1, h - 4)  # carve area top y (3 rows: top_y..top_y+2)
+        left_x = max(1, cx - 1)
+        # ensure within bounds
+        if left_x + 3 <= w - 1 and top_y + 3 <= h - 1:
+            # carve 3x3 to air
+            for yy in range(top_y, top_y + 3):
+                for xx in range(left_x, left_x + 3):
+                    tiles[yy][xx] = TILE_AIR
+            _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': 'entrance'})
+            # add 3x1 exclusion row below
+            excl_y = top_y + 3
+            if excl_y < h - 1:
+                _add_area('no_spawn', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+
+    # Exits carve: choose sides so multiple exits don't overlap
+    exit_keys = list((room.door_exits or {}).keys())
+    if not exit_keys:
+        return
+
+    sides = []
+    if len(exit_keys) == 1:
+        # prefer right then left then top
+        sides = ['right', 'left', 'top']
+    else:
+        # two exits: use left and right
+        sides = ['left', 'right']
+
+    used_sides = set()
+    for i, exit_key in enumerate(exit_keys):
+        # choose a side not yet used
+        side = None
+        for s in (sides if isinstance(sides, list) else [sides]):
+            if s not in used_sides:
+                side = s
+                break
+        if side is None:
+            side = rng.choice(['left', 'right', 'top'])
+        used_sides.add(side)
+
+        if side == 'left':
+            left_x = 1
+            top_y = max(1, (h // 2) - 1)
+        elif side == 'right':
+            left_x = max(1, w - 4)
+            top_y = max(1, (h // 2) - 1)
+        else:  # top
+            left_x = max(1, (w // 2) - 1)
+            top_y = 1
+
+        # carve if space
+        if left_x + 3 <= w - 1 and top_y + 3 <= h - 1:
+            for yy in range(top_y, top_y + 3):
+                for xx in range(left_x, left_x + 3):
+                    tiles[yy][xx] = TILE_AIR
+            _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': exit_key})
+            excl_y = top_y + 3
+            if excl_y < h - 1:
+                _add_area('no_spawn', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+
+
 def generate_simple_pcg_level_set(
     seed: Optional[int] = None,
 ) -> LevelSet:
@@ -255,51 +346,38 @@ def generate_simple_pcg_level_set(
     _wire_cross_level_doors(all_levels_rooms)
     _compute_entrances(all_levels_rooms)
 
-    # Place door tiles into room tile grids and record placed_doors metadata
+    # Carve spawn/exit regions (no tile writes) and delegate all door tile writes
+    # to the centralized placement module so `room.placed_doors` is always authoritative.
     try:
-        from src.level.door_utils import choose_wall_position, place_exit_with_metadata, place_entrance
+        from src.level.door_placement import place_all_doors_for_room
     except Exception:
-        # If helper not available, skip placement
-        choose_wall_position = None
-        place_exit_with_metadata = None
-        place_entrance = None
+        place_all_doors_for_room = None
 
     for level_rooms in all_levels_rooms:
         for room in level_rooms:
-            # Ensure placed_doors is initialized
-            room.placed_doors = getattr(room, 'placed_doors', None)
-            if room.placed_doors is None:
+            # perform carving (3x3 carved areas and platform no-carve regions)
+            try:
+                _carve_spawn_and_exits_for_room(room, config, rng, place_entrance_fn=None, place_exit_fn=None, allow_entrance=True)
+            except Exception:
+                pass
+
+            # ensure placed_doors initialized
+            if getattr(room, 'placed_doors', None) is None:
                 room.placed_doors = []
 
-            # Place entrance if present
-            if room.entrance_from and choose_wall_position and place_entrance:
-                pos = choose_wall_position(room.tiles, "left", rng)
-                if pos:
-                    tx, ty = pos
-                    place_entrance(room, room.tiles, tx, ty, room.entrance_from)
-
-            # Place exits
-            if room.door_exits and choose_wall_position and place_exit_with_metadata:
-                for exit_key, target in room.door_exits.items():
-                    # Skip if we already placed this logical exit for the room
-                    already = False
-                    for pd in getattr(room, 'placed_doors', []) or []:
-                        if pd.get('exit_key') == exit_key:
-                            already = True
-                            break
-                    if already:
-                        continue
-
-                    pos = choose_wall_position(room.tiles, "right", rng)
-                    if pos:
-                        tx, ty = pos
-                        place_exit_with_metadata(room, room.tiles, tx, ty, exit_key, target)
+            # delegate tile placement to centralized helper
+            try:
+                if place_all_doors_for_room:
+                    place_all_doors_for_room(room, rng=rng)
+            except Exception:
+                # Do not let door placement break generation
+                pass
 
     levels: List[LevelData] = []
     for level_id, rooms in enumerate(all_levels_rooms, start=1):
         levels.append(LevelData(level_id=level_id, rooms=rooms))
 
-    return LevelSet(levels=levels)
+    return LevelSet(levels=levels, seed=seed)
 
 
 def generate_and_save_simple_pcg(

@@ -464,14 +464,20 @@ class Game:
         # If door system exists, sync its internal tiles/state to the newly loaded room
         try:
             if hasattr(self, '_door_system') and getattr(self, '_door_system') is not None:
-                ds = self._door_system
-                ds.current_level_id = lvl.level_id
-                ds.current_room_code = lvl.room_code
-                # ensure door system sees the exact tile grid used for rendering
-                ds.current_tiles = lvl.tile_grid
+                try:
+                    # Prefer DoorSystem.set_current_tiles when available
+                    self._door_system.set_current_tiles(lvl.level_id, lvl.room_code, lvl.tile_grid)
+                except Exception:
+                    ds = self._door_system
+                    ds.current_level_id = lvl.level_id
+                    ds.current_room_code = lvl.room_code
+                    # ensure door system sees the exact tile grid used for rendering
+                    ds.current_tiles = lvl.tile_grid
         except Exception:
             logger.exception("Failed to sync DoorSystem after PCG level load")
         
+
+
         if not initial:
             hitboxes.clear()
             floating.clear()
@@ -1902,8 +1908,21 @@ class Game:
             if not hasattr(self, '_door_system') or self._door_system is None:
                 self._door_system = DoorSystem()
             try:
-                # Force reload so current_tiles always match self.level
-                self._door_system.load_room(self.level.level_id, self.level.room_code)
+                # Only sync DoorSystem when the room actually changed to avoid
+                # redundant per-frame reloads. Prefer `set_current_tiles` when
+                # available; fall back to `load_room` for compatibility.
+                if (getattr(self._door_system, 'current_level_id', None) != getattr(self.level, 'level_id', None)
+                    or getattr(self._door_system, 'current_room_code', None) != getattr(self.level, 'room_code', None)):
+                    try:
+                        self._door_system.set_current_tiles(self.level.level_id, self.level.room_code, getattr(self.level, 'tile_grid', None))
+                    except Exception:
+                        try:
+                            self._door_system.load_room(self.level.level_id, self.level.room_code)
+                        except Exception:
+                            logger.exception("Failed to sync DoorSystem to current room %s/%s", getattr(self.level,'level_id', None), getattr(self.level,'room_code', None))
+            except Exception:
+                logger.exception("Failed to sync DoorSystem to current room %s/%s", getattr(self.level,'level_id', None), getattr(self.level,'room_code', None))
+
             except Exception:
                 logger.exception("Failed to sync DoorSystem to current room %s/%s", getattr(self.level,'level_id', None), getattr(self.level,'room_code', None))
 

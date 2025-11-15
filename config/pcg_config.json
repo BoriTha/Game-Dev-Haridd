@@ -1,8 +1,8 @@
 {
   "pcg_config": {
     "use_pcg": true,
-    "seed_mode": "fixed",
-    "seed": 45805229,
+    "seed_mode": "random",
+    "seed": 1784473909,
     "num_levels": 3,
     "rooms_per_level": 6,
     "room_width": 50,
@@ -13,6 +13,8 @@
     "door_entrance_tile_id": 2,
     "door_exit_tile_id": 3,
     "door_exit_1_tile_id": 4,
-    "door_exit_2_tile_id": 5
+    "door_exit_2_tile_id": 5,
+    "initial_fill_walls": true,
+    "quadrant_radius": 10
   }
 }

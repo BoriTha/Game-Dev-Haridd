@@ -35,6 +35,12 @@ class PCGConfig:
     door_exit_1_tile_id: int = 4   # DOOR_EXIT_1
     door_exit_2_tile_id: int = 5   # DOOR_EXIT_2
 
+    # Prefill behavior: if True, rooms are filled entirely with wall and
+    # carving operations will create air where needed.
+    initial_fill_walls: bool = True
+    # Radius (in tiles) from the quadrant corner where carve centers may be chosen
+    quadrant_radius: int = 10
+
 
 @dataclass
 class RoomData:
@@ -66,12 +72,38 @@ class LevelData:
 
 @dataclass
 class LevelSet:
-    """Complete set of levels with all rooms."""
+    """Complete set of levels with all rooms.
+
+    Added `seed` field so saved JSON includes which RNG seed produced this
+    LevelSet. This makes it trivial to inspect the saved file and know which
+    seed was used for generation.
+    """
     levels: List[LevelData]
+    seed: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to JSON-serializable dictionary."""
-        return asdict(self)
+        """Convert to JSON-serializable dictionary, include metadata first.
+
+        Produces an object with `seed` and `generated_at` first followed by
+        `levels` for readability and to act as a file header.
+        """
+        # Build levels representation manually to control ordering and avoid
+        # exposing internal dataclass quirks
+        levels_out: List[Dict[str, Any]] = []
+        for level in self.levels:
+            rooms_out: List[Dict[str, Any]] = []
+            for room in level.rooms:
+                rooms_out.append(asdict(room))
+            levels_out.append({"level_id": level.level_id, "rooms": rooms_out})
+
+        # metadata header
+        out: Dict[str, Any] = {}
+        out["seed"] = int(self.seed) if self.seed is not None else None
+        # ISO timestamp to indicate when this file was written
+        from datetime import datetime
+        out["generated_at"] = datetime.utcnow().isoformat() + "Z"
+        out["levels"] = levels_out
+        return out
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LevelSet":
@@ -89,10 +121,15 @@ class LevelSet:
                 level_id=level_data["level_id"],
                 rooms=rooms
             ))
-        return cls(levels=levels)
+        seed = data.get("seed")
+        try:
+            seed = int(seed) if seed is not None else None
+        except Exception:
+            seed = None
+        return cls(levels=levels, seed=seed)
     
     def save_to_json(self, filepath: str) -> None:
-        """Save level set to JSON file."""
+        """Save level set to JSON file (includes seed)."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w') as f:
             json.dump(self.to_dict(), f, indent=2)
@@ -253,21 +290,30 @@ def generate_room_tiles(
 ) -> List[List[int]]:
     """
     Generate a 2D grid of tile IDs for a room.
-    Replace this with your actual PCG algorithm.
+
+    If `config.initial_fill_walls` is True, the room will be entirely filled
+    with wall tiles. Carving (air holes, doors, platforms) is handled by the
+    generator later and must respect `room.areas` for exclusions.
     """
-    # Simple placeholder: walls around border, floor inside
     grid: List[List[int]] = []
-    
-    for y in range(height):
-        row: List[int] = []
-        for x in range(width):
-            # Border walls
-            if x == 0 or x == width - 1 or y == 0 or y == height - 1:
-                row.append(config.wall_tile_id)
-            else:
-                row.append(config.air_tile_id)
-        grid.append(row)
-    
+
+    if getattr(config, 'initial_fill_walls', False):
+        # Fill entire room with wall tiles
+        for y in range(height):
+            row = [config.wall_tile_id] * width
+            grid.append(row)
+    else:
+        # Backwards-compatible: border walls and air interior
+        for y in range(height):
+            row: List[int] = []
+            for x in range(width):
+                # Border walls
+                if x == 0 or x == width - 1 or y == 0 or y == height - 1:
+                    row.append(config.wall_tile_id)
+                else:
+                    row.append(config.air_tile_id)
+            grid.append(row)
+
     # Do not place door tiles here. Door tiles are placed at load time
     # based on the logical room.door_exits and room.entrance_from metadata.
     return grid

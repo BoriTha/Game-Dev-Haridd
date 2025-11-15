@@ -7,10 +7,10 @@ class TileType(IntEnum):
     # Basic tiles
     AIR = 0
     WALL = 1
-    DOOR_ENTRANCE = auto()
-    DOOR_EXIT = auto()
-    DOOR_EXIT_1 = auto()
-    DOOR_EXIT_2 = auto()
+    DOOR_ENTRANCE = 2
+    DOOR_EXIT = 3
+    DOOR_EXIT_1 = 4
+    DOOR_EXIT_2 = 5
 
 
 

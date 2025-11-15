@@ -396,6 +396,24 @@ class Menu:
                                 new_seed = random.randint(1, 2**31 - 1)
                                 runtime = runtime._replace(seed=new_seed)
                                 save_pcg_runtime_config(runtime)
+
+                                # If the game instance is available and PCG is enabled,
+                                # eagerly generate the new levels now so Start will use them
+                                try:
+                                    from src.level.pcg_generator_simple import generate_simple_pcg_level_set
+                                    from src.level.level_loader import level_loader
+                                    # update game's seed so subsequent generation uses same value
+                                    try:
+                                        self.game.pcg_seed = new_seed
+                                    except Exception:
+                                        pass
+                                    if runtime.use_pcg:
+                                        level_set = generate_simple_pcg_level_set(seed=new_seed)
+                                        level_set.save_to_json("data/levels/generated_levels.json")
+                                        level_loader._level_set = level_set
+                                except Exception:
+                                    # Do not crash menu if generation fails; just continue
+                                    pass
                         elif idx == 3:
                             return
 

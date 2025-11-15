@@ -5,9 +5,7 @@ import os
 import sys
 from typing import Optional, Tuple
 
-# Add project root to path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-
+# No local sys.path mutation; rely on package imports
 from src.core.interaction import handle_proximity_interactions, find_spawn_point
 from src.tiles.tile_types import TileType
 from src.level.level_loader import (
@@ -48,62 +46,37 @@ class DoorSystem:
             self.current_tiles = tiles
             logger.debug("DoorSystem load_room: %s -> (%s, %s)", prev, self.current_level_id, self.current_room_code)
             
-            # Place entrance/exit tiles from room.placed_doors if present
-            from src.level.level_loader import level_loader
-            room = level_loader.get_room(level_id, room_code)
-            placed = None
-            if room is not None:
-                placed = getattr(room, 'placed_doors', None)
-
-            if placed:
-                # Apply each recorded placed door into current_tiles
-                try:
-                    h = len(self.current_tiles)
-                    w = len(self.current_tiles[0]) if h > 0 else 0
-                except Exception:
-                    h = 0
-                    w = 0
-
-                for pd in placed:
-                    try:
-                        tx = int(pd.get('tx'))
-                        ty = int(pd.get('ty'))
-                        tile_id = int(pd.get('tile'))
-                    except Exception:
-                        continue
-                    if 0 <= ty < h and 0 <= tx < w:
-                        self.current_tiles[ty][tx] = tile_id
-            else:
-                # Backwards-compatible behavior: place left entrance if room metadata has entrance_from
-                if room and room.entrance_from:
-                    self._place_entrance_door(room.entrance_from)
-                else:
-                    # Ensure left door tile cleared if no entrance
-                    if self.current_tiles:
-                        h = len(self.current_tiles)
-                        w = len(self.current_tiles[0]) if h > 0 else 0
-                        entrance_y = h // 2
-                        if 0 < entrance_y < h - 1 and 1 < w - 1:
-                            from config import TILE_AIR
-                            self.current_tiles[entrance_y][1] = TILE_AIR
+            # DoorSystem no longer mutates room tile grids. Doors are placed by
+            # the PCG generator and persisted in the level data (`room.tiles`).
+            # This prevents duplicate or conflicting door placements.
+            # If `room.placed_doors` metadata exists, it is expected to match the
+            # tiles already saved in `get_room_tiles` and does not need to be
+            # applied here.
             
             return True
         return False
-    
+
+    def set_current_tiles(self, level_id: int, room_code: str, tile_grid) -> None:
+        """Set the current room identifiers and tile grid.
+
+        Use this when the caller (main) already has the authoritative tile
+        grid (e.g., after PCG generation or door placement) to avoid extra
+        lookups into the level_loader on every frame.
+        """
+        self.current_level_id = level_id
+        self.current_room_code = room_code
+        self.current_tiles = tile_grid
+
     def _place_entrance_door(self, entrance_from: str):
-        """Place entrance door in current room tiles."""
-        if not self.current_tiles:
-            return
-            
-        from src.tiles.tile_types import TileType
-        
-        h = len(self.current_tiles)
-        w = len(self.current_tiles[0]) if h > 0 else 0
-        
-        # Place entrance door on left wall
-        entrance_y = h // 2
-        if 0 < entrance_y < h - 1 and 1 < w - 1:
-            self.current_tiles[entrance_y][1] = TileType.DOOR_ENTRANCE.value
+        """No-op: entrances are placed by the PCG generator and persisted in level data.
+
+        Historically this method mutated `current_tiles` to inject an entrance
+        on the left wall. That behavior caused legacy fixed-position entrances
+        to appear even when PCG placements were intended to be authoritative.
+        Keep this method as a no-op to preserve API compatibility while ensuring
+        PCG remains the single source of truth for door placement.
+        """
+        return
     
     def handle_door_interaction(
         self, 
@@ -132,17 +105,19 @@ class DoorSystem:
             Tuple of (prompt_text, world_x, world_y) for UI display,
             or None if no interactable tile is nearby.
         """
-        # Ensure current_tiles are fresh from the global LevelLoader in case
-        # other systems (e.g., main._load_pcg_level) modified the room tiles.
-        try:
-            from src.level.level_loader import level_loader
-            refreshed = level_loader.get_room_tiles(self.current_level_id, self.current_room_code)
-            if refreshed is not None:
-                self.current_tiles = refreshed
-        except Exception:
-            # If level loader fails, keep whatever we had and continue; failure
-            # to refresh should not crash the game.
-            logger.debug("DoorSystem: failed to refresh current_tiles from level_loader")
+        # If current_tiles is None, try to refresh from the global LevelLoader.
+        # Avoid refreshing every call when main already provides the authoritative
+        # tile grid (main._load_pcg_level sets it). This reduces redundant work.
+        if self.current_tiles is None:
+            try:
+                from src.level.level_loader import level_loader
+                refreshed = level_loader.get_room_tiles(self.current_level_id, self.current_room_code)
+                if refreshed is not None:
+                    self.current_tiles = refreshed
+            except Exception:
+                # If level loader fails, keep whatever we had and continue; failure
+                # to refresh should not crash the game.
+                logger.debug("DoorSystem: failed to refresh current_tiles from level_loader")
 
         if not self.current_tiles:
             return None

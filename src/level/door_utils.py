@@ -72,40 +72,46 @@ def place_exit_with_metadata(
     exit_key: str,
     target: Dict[str, Any]
 ) -> None:
-    """Place a door exit tile and update room.door_exits and room.placed_doors metadata."""
-    if exit_key == "door_exit_1":
-        door_tile = TileType.DOOR_EXIT_1
-    elif exit_key == "door_exit_2":
-        door_tile = TileType.DOOR_EXIT_2
-    else:
-        door_tile = TileType.DOOR_EXIT
+    """Legacy helper preserved but made conservative.
 
-    place_door(tile_grid, tx, ty, door_tile)
-
+    This function will update `room.door_exits` and `room.placed_doors` metadata
+    but will NOT mutate `tile_grid`. PCG generator and `door_placement` are the
+    authoritative tile writers. Keeping metadata-only behavior allows callers
+    that expect metadata updates to function without introducing legacy fixed
+    position tile writes that interfere with PCG.
+    """
     if getattr(room, "door_exits", None) is None:
         room.door_exits = {}
     room.door_exits[exit_key] = target
 
     room.placed_doors = getattr(room, "placed_doors", []) or []
-    room.placed_doors.append({
-        "tx": tx,
-        "ty": ty,
-        "tile": door_tile.value,
-        "role": "exit",
-        "exit_key": exit_key,
-        "target": target,
-    })
+    # Avoid duplicate entries
+    if not any(d.get('exit_key') == exit_key for d in room.placed_doors):
+        door_tile_value = TileType.DOOR_EXIT_1.value if exit_key == "door_exit_1" else TileType.DOOR_EXIT_2.value
+        room.placed_doors.append({
+            "tx": tx,
+            "ty": ty,
+            "tile": door_tile_value,
+            "role": "exit",
+            "exit_key": exit_key,
+            "target": target,
+        })
 
 
 def place_entrance(room: RoomData, tile_grid: List[List[int]], tx: int, ty: int, entrance_from: Optional[str]) -> None:
-    """Place a door entrance tile and update room.entrance_from and placed_doors."""
-    place_door(tile_grid, tx, ty, TileType.DOOR_ENTRANCE)
+    """Legacy entrance helper preserved but made conservative.
+
+    This updates `room.entrance_from` and `room.placed_doors` metadata but does
+    NOT write to `tile_grid`. The PCG generator is expected to carve and
+    door_placement to write tiles.
+    """
     room.entrance_from = entrance_from
     room.placed_doors = getattr(room, "placed_doors", []) or []
-    room.placed_doors.append({
-        "tx": tx,
-        "ty": ty,
-        "tile": TileType.DOOR_ENTRANCE.value,
-        "role": "entrance",
-        "source": entrance_from,
-    })
+    if not any(d.get('role') == 'entrance' for d in room.placed_doors):
+        room.placed_doors.append({
+            "tx": tx,
+            "ty": ty,
+            "tile": TileType.DOOR_ENTRANCE.value,
+            "role": "entrance",
+            "source": entrance_from,
+        })
