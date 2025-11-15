@@ -408,18 +408,36 @@ def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: rand
 def _carve_drunken_walk_paths(room: RoomData, config: PCGConfig, rng: random.Random) -> None:
     """
     Finds the entrance/exits for the room and carves paths between them.
-    This function assumes the room.tiles is a solid grid (walls) and will
-    carve TILE_AIR tiles into it based on DW settings in PCGConfig.
+    This version respects `exclusion_zone` areas recorded in `room.areas`.
     """
     tile_grid = getattr(room, 'tiles', None)
     if not tile_grid:
         return
 
+    # Build exclusion set from room.areas (rects)
+    exclusion_set: Set[Tuple[int, int]] = set()
+    areas = getattr(room, 'areas', []) or []
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        if area.get('kind') != 'exclusion_zone':
+            continue
+        rects = area.get('rects') or []
+        for rect in rects:
+            if not isinstance(rect, dict):
+                continue
+            rx = int(rect.get('x', 0))
+            ry = int(rect.get('y', 0))
+            rw = int(rect.get('w', 0))
+            rh = int(rect.get('h', 0))
+            for yy in range(ry, ry + rh):
+                for xx in range(rx, rx + rw):
+                    exclusion_set.add((xx, yy))
+
+    # Find door carve centers (entrance and exits)
     start_pos = None
     exit_positions: List[Tuple[int, int]] = []
 
-    areas = getattr(room, 'areas', []) or []
-    # areas may be list of dicts (as created by _carve_spawn_and_exits_for_room)
     for area in areas:
         if not isinstance(area, dict):
             continue
@@ -445,34 +463,104 @@ def _carve_drunken_walk_paths(room: RoomData, config: PCGConfig, rng: random.Ran
     if not start_pos:
         start_pos = (w // 2, h - 3)
 
+    # If start is inside exclusion, try to find a nearby non-excluded tile
+    if start_pos in exclusion_set:
+        found = None
+        for radius in (1, 2, 3):
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    cand = (max(1, min(w - 2, start_pos[0] + dx)), max(1, min(h - 2, start_pos[1] + dy)))
+                    if cand not in exclusion_set:
+                        found = cand
+                        break
+                if found:
+                    break
+            if found:
+                break
+        if found:
+            start_pos = found
+
     # If there are no exits, for the first room create a short walk to seed a cave
     if not exit_positions and is_first_room_first_level(room):
-        fake_exit = (rng.randint(max(2, w//4), max(2, 3*w//4)), rng.randint(max(2, h//4), max(2, 3*h//4)))
-        _run_single_walk(tile_grid, start_pos, fake_exit, config, rng, max_steps=max(1, config.dw_max_steps // 2))
+        # pick a fake exit not in exclusion
+        fake_exit = None
+        for _ in range(20):
+            candidate = (rng.randint(max(2, w//4), max(2, 3*w//4)), rng.randint(max(2, h//4), max(2, 3*h//4)))
+            if candidate not in exclusion_set:
+                fake_exit = candidate
+                break
+        if fake_exit is None:
+            fake_exit = (max(2, w//2), max(2, h//2))
+        _run_single_walk(tile_grid, start_pos, fake_exit, config, rng, max_steps=max(1, config.dw_max_steps // 2), exclusion_set=exclusion_set)
         return
 
     all_paths: List[Tuple[int, int]] = []
 
     for exit_pos in exit_positions:
-        path = _run_single_walk(tile_grid, start_pos, exit_pos, config, rng, max_steps=config.dw_max_steps)
+        # If exit is in exclusion, try to nudge it slightly outward
+        ep = exit_pos
+        if ep in exclusion_set:
+            for _ in range(8):
+                ep = (max(2, min(w - 3, ep[0] + rng.randint(-1, 1))), max(2, min(h - 3, ep[1] + rng.randint(-1, 1))))
+                if ep not in exclusion_set:
+                    break
+        path = _run_single_walk(tile_grid, start_pos, ep, config, rng, max_steps=config.dw_max_steps, exclusion_set=exclusion_set)
         all_paths.extend(path)
 
     # Possibly spawn an extra random walk from an existing carved tile to make loops
     if all_paths and config.dw_extra_drunk_chance and rng.random() < config.dw_extra_drunk_chance:
-        random_start_pos = rng.choice(all_paths)
-        random_target = (rng.randint(2, max(2, w - 3)), rng.randint(2, max(2, h - 3)))
-        _run_single_walk(tile_grid, random_start_pos, random_target, config, rng, max_steps=config.dw_extra_drunk_steps)
+        # pick a non-excluded start tile
+        tries = 0
+        random_start_pos = None
+        while tries < 20 and random_start_pos is None:
+            cand = rng.choice(all_paths)
+            if cand not in exclusion_set:
+                random_start_pos = cand
+            tries += 1
+        if random_start_pos is not None:
+            # pick non-excluded target
+            random_target = None
+            for _ in range(20):
+                cand = (rng.randint(2, max(2, w - 3)), rng.randint(2, max(2, h - 3)))
+                if cand not in exclusion_set:
+                    random_target = cand
+                    break
+            if random_target is None:
+                random_target = random_start_pos
+            _run_single_walk(tile_grid, random_start_pos, random_target, config, rng, max_steps=config.dw_extra_drunk_steps, exclusion_set=exclusion_set)
 
 
-def _run_single_walk(tile_grid: List[List[int]], start_pos: Tuple[int, int], end_pos: Tuple[int, int], config: PCGConfig, rng: random.Random, max_steps: int) -> List[Tuple[int, int]]:
-    """Run a single drunkard walk carving into tile_grid and return carved tiles."""
+def _run_single_walk(tile_grid: List[List[int]], start_pos: Tuple[int, int], end_pos: Tuple[int, int], config: PCGConfig, rng: random.Random, max_steps: int, exclusion_set: Optional[Set[Tuple[int,int]]] = None) -> List[Tuple[int, int]]:
+    """Run a single drunkard walk carving into tile_grid and return carved tiles.
+
+    The walk respects `exclusion_set` (doesn't carve there and won't step into it).
+    """
+    if exclusion_set is None:
+        exclusion_set = set()
+
     h = len(tile_grid)
     w = len(tile_grid[0]) if h > 0 else 0
     current = start_pos
     carved: List[Tuple[int, int]] = []
 
     for _ in range(max(1, int(max_steps))):
-        _carve_at(tile_grid, current, config.dw_carve_radius, config)
+        # If current is excluded, try to nudge to nearest non-excluded tile
+        if current in exclusion_set:
+            moved = False
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    cand = (max(1, min(w - 2, current[0] + dx)), max(1, min(h - 2, current[1] + dy)))
+                    if cand not in exclusion_set:
+                        current = cand
+                        moved = True
+                        break
+                if moved:
+                    break
+            if not moved:
+                # give up on this walk
+                break
+
+        _carve_at(tile_grid, current, config.dw_carve_radius, config, exclusion_set=exclusion_set)
         if current not in carved:
             carved.append(current)
 
@@ -483,13 +571,35 @@ def _run_single_walk(tile_grid: List[List[int]], start_pos: Tuple[int, int], end
         dx, dy = _get_drunken_move(current, end_pos, config, rng)
         nx = max(1, min(w - 2, current[0] + dx))
         ny = max(1, min(h - 2, current[1] + dy))
-        current = (nx, ny)
+
+        # If next step would land in exclusion, try alternatives (random tries)
+        next_pos = (nx, ny)
+        if next_pos in exclusion_set:
+            alt_found = False
+            for _ in range(6):
+                adx, ady = rng.choice([(0,1),(0,-1),(1,0),(-1,0)])
+                candx = max(1, min(w - 2, current[0] + adx))
+                candy = max(1, min(h - 2, current[1] + ady))
+                if (candx, candy) not in exclusion_set:
+                    next_pos = (candx, candy)
+                    alt_found = True
+                    break
+            if not alt_found:
+                # cannot move without hitting exclusion, end walk
+                break
+
+        current = next_pos
 
     return carved
 
 
-def _carve_at(tile_grid: List[List[int]], pos: Tuple[int, int], radius: int, config: PCGConfig) -> None:
-    """Carve a simple square of air centered on pos using config.air_tile_id."""
+def _carve_at(tile_grid: List[List[int]], pos: Tuple[int, int], radius: int, config: PCGConfig, exclusion_set: Optional[Set[Tuple[int,int]]] = None) -> None:
+    """Carve a simple square of air centered on pos using config.air_tile_id.
+
+    Respects `exclusion_set` by skipping any tile coordinates that are excluded.
+    """
+    if exclusion_set is None:
+        exclusion_set = set()
     h = len(tile_grid)
     w = len(tile_grid[0]) if h > 0 else 0
     cx, cy = pos
@@ -497,7 +607,7 @@ def _carve_at(tile_grid: List[List[int]], pos: Tuple[int, int], radius: int, con
     offset = r - 1
     for yy in range(cy - offset, cy + r):
         for xx in range(cx - offset, cx + r):
-            if 0 <= yy < h and 0 <= xx < w:
+            if 0 <= yy < h and 0 <= xx < w and (xx, yy) not in exclusion_set:
                 tile_grid[yy][xx] = config.air_tile_id
 
 
