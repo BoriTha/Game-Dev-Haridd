@@ -1,325 +1,192 @@
-"""Door interaction handler for PCG level system."""
+"""Door interaction and room transition system for PCG levels.
 
-import pygame
-import os
-import sys
-from typing import Optional, Tuple
-
-# No local sys.path mutation; rely on package imports
-from src.core.interaction import handle_proximity_interactions, find_spawn_point
-from src.tiles.tile_types import TileType
-from src.level.level_loader import (
-    get_room_tiles, get_room_exits, get_room_entrance_from
-)
+This module provides the DoorSystem class that handles door interactions,
+room transitions, and spawn point management for the PCG level system.
+"""
 
 import logging
-logger = logging.getLogger(__name__)  # module logger; application config controls output level
+from typing import Optional, Tuple, Dict, Any, List
+from src.level.level_loader import LevelLoader, get_room_exits, get_room_entrance_from
+from src.tiles.tile_types import TileType
+from src.core.interaction import find_spawn_point
+from config import TILE
+
+logger = logging.getLogger(__name__)
 
 
 class DoorSystem:
-    """Handles door interactions and room transitions in PCG levels."""
+    """Handles door interactions and room transitions for PCG levels."""
     
     def __init__(self):
-        self.current_level_id = 1
-        self.current_room_code = "1A"
-        self.current_tiles = None
-        # Holds last successful transition info set by _process_door_interaction
-        # Format: {"level_id": int, "room_code": str, "spawn": (x,y) or None}
-        self._last_transition: Optional[dict] = None
-    
-    def load_room(self, level_id: int, room_code: str) -> bool:
-        """
-        Load a specific room.
+        """Initialize the door system."""
+        self.level_loader = LevelLoader()
+        try:
+            self.level_loader.load_levels()
+        except Exception as e:
+            logger.warning(f"Failed to load levels in DoorSystem: {e}")
+        
+        self.current_level_id: Optional[int] = None
+        self.current_room_code: Optional[str] = None
+        self.current_tile_grid: Optional[List[List[int]]] = None
+        self._last_transition: Optional[Dict[str, Any]] = None
+        
+    def set_current_tiles(self, level_id: int, room_code: str, tile_grid: Optional[List[List[int]]] = None) -> None:
+        """Set the current room tiles and update room state.
         
         Args:
-            level_id: The level number (1-based)
-            room_code: Room code like "1A", "2B", etc.
-            
-        Returns:
-            True if room loaded successfully, False otherwise
-        """
-        tiles = get_room_tiles(level_id, room_code)
-        if tiles:
-            prev = (self.current_level_id, self.current_room_code)
-            self.current_level_id = level_id
-            self.current_room_code = room_code
-            self.current_tiles = tiles
-            logger.debug("DoorSystem load_room: %s -> (%s, %s)", prev, self.current_level_id, self.current_room_code)
-            
-            # DoorSystem no longer mutates room tile grids. Doors are placed by
-            # the PCG generator and persisted in the level data (`room.tiles`).
-            # This prevents duplicate or conflicting door placements.
-            # If `room.placed_doors` metadata exists, it is expected to match the
-            # tiles already saved in `get_room_tiles` and does not need to be
-            # applied here.
-            
-            return True
-        return False
-
-    def set_current_tiles(self, level_id: int, room_code: str, tile_grid) -> None:
-        """Set the current room identifiers and tile grid.
-
-        Use this when the caller (main) already has the authoritative tile
-        grid (e.g., after PCG generation or door placement) to avoid extra
-        lookups into the level_loader on every frame.
+            level_id: The level ID
+            room_code: The room code  
+            tile_grid: The tile grid for the current room
         """
         self.current_level_id = level_id
         self.current_room_code = room_code
-        self.current_tiles = tile_grid
-
-    def _place_entrance_door(self, entrance_from: str):
-        """No-op: entrances are placed by the PCG generator and persisted in level data.
-
-        Historically this method mutated `current_tiles` to inject an entrance
-        on the left wall. That behavior caused legacy fixed-position entrances
-        to appear even when PCG placements were intended to be authoritative.
-        Keep this method as a no-op to preserve API compatibility while ensuring
-        PCG remains the single source of truth for door placement.
-        """
-        return
-    
-    def handle_door_interaction(
-        self, 
-        player_rect: pygame.Rect, 
-        tile_size: int,
-        is_e_pressed: bool
-    ) -> Optional[Tuple[str, int, int]]:
-        """Handle proximity interactions and record transitions.
-
-        Returns the usual (prompt, x, y) tuple for HUD display. If an actual
-        room transition occurs as a result of the interaction, this object
-        records details in `self.last_transition` as a dict:
-            {"level_id": int, "room_code": str, "spawn": (x,y) | None}
-        """
-        # reset last transition before checking
+        self.current_tile_grid = tile_grid
         self._last_transition = None
-        """
-        Handle door interactions for current room.
-
+        
+    def load_room(self, level_id: int, room_code: str) -> None:
+        """Load a room and set it as current.
+        
         Args:
-            player_rect: Player's collision rectangle
-            tile_size: Size of each tile (usually 24)
-            is_e_pressed: Whether E key was pressed this frame
-
-        Returns:
-            Tuple of (prompt_text, world_x, world_y) for UI display,
-            or None if no interactable tile is nearby.
+            level_id: The level ID
+            room_code: The room code
         """
-        # If current_tiles is None, try to refresh from the global LevelLoader.
-        # Avoid refreshing every call when main already provides the authoritative
-        # tile grid (main._load_pcg_level sets it). This reduces redundant work.
-        if self.current_tiles is None:
-            try:
-                from src.level.level_loader import level_loader
-                refreshed = level_loader.get_room_tiles(self.current_level_id, self.current_room_code)
-                if refreshed is not None:
-                    self.current_tiles = refreshed
-            except Exception:
-                # If level loader fails, keep whatever we had and continue; failure
-                # to refresh should not crash the game.
-                logger.debug("DoorSystem: failed to refresh current_tiles from level_loader")
-
-        if not self.current_tiles:
-            return None
-        
-        def on_interact(tile_data, tile_coords):
-            """Handle door interaction."""
-            self._process_door_interaction(tile_data, tile_coords)
-        
-        return handle_proximity_interactions(
-            player_rect=player_rect,
-            tile_grid=self.current_tiles,
-            tile_size=tile_size,
-            is_e_pressed=is_e_pressed,
-            on_interact=on_interact
-        )
-    
-    def _process_door_interaction(self, tile_data, tile_coords: Tuple[int, int]):
-        """Process a door interaction and perform room transition."""
-        tile_type = tile_data.tile_type
-        on_interact_id = tile_data.interaction.on_interact_id
-        
-        # Handle different door types
-        if tile_type == TileType.DOOR_EXIT_1:
-            exit_key = "door_exit_1"
-        elif tile_type == TileType.DOOR_EXIT_2:
-            exit_key = "door_exit_2"
-        else:
-            # Not a door exit we handle
-            return
-        
-        # Get target room from current room's exit mapping
-        exits = get_room_exits(self.current_level_id, self.current_room_code)
-        target = exits.get(exit_key)
-
-        # Support both normalized structured exits and legacy string exits
-        target_level_id = None
-        target_room_code_full = None
-
-        if isinstance(target, dict):
-            # normalized form: {"level_id": X, "room_code": "..."}
-            try:
-                target_level_id = int(target.get("level_id"))
-                target_room_code_full = str(target.get("room_code"))
-            except Exception:
-                logger.warning("Invalid structured target for %s: %s", exit_key, target)
-                return
-        elif isinstance(target, str):
-            # Legacy string like '11A'
-            import re
-            m = re.match(r"^(\d+)(.+)$", target)
-            if not m:
-                logger.warning("Invalid room code format: %s", target)
-                return
-            target_level_id = int(m.group(1))
-            target_room_code_full = m.group(0)
-        else:
-            logger.debug("No target room for %s in %s", exit_key, self.current_room_code)
-            return
-
-        # Verify target exists and is not the current room
-        from src.level.level_loader import level_loader
-        if not level_loader.get_room(target_level_id, target_room_code_full):
-            logger.warning("No such target room: %s/%s", target_level_id, target_room_code_full)
-            return
-        if target_level_id == self.current_level_id and target_room_code_full == self.current_room_code:
-            logger.info("Target equals current room (%s/%s), ignoring interaction", target_level_id, target_room_code_full)
-            return
-
-        # Do not immediately load the room here. Instead, record the intended
-        # transition details in self._last_transition so the main game loop can
-        # perform the authoritative load and state sync. This avoids races where
-        # DoorSystem and main both try to load rooms concurrently.
-        spawn_x = None
-        spawn_y = None
         try:
-            # Try to fetch target room tiles to compute a spawn point, but do not
-            # apply them to DoorSystem.current_tiles yet.
-            from src.level.level_loader import level_loader
-            target_tiles = level_loader.get_room_tiles(target_level_id, target_room_code_full)
-            if target_tiles:
-                spawn_coords = find_spawn_point(target_tiles)
-                if spawn_coords:
-                    spawn_tx, spawn_ty = spawn_coords
-                    from config import TILE
-                    spawn_x = spawn_tx * TILE
-                    spawn_y = spawn_ty * TILE
-                    logger.debug("Planned spawn point for target room: (%s, %s)", spawn_x, spawn_y)
-        except Exception:
-            logger.debug("Failed to precompute spawn point for target room %s/%s", target_level_id, target_room_code_full)
-
-        # Record the planned transition; main loop will consume this on E-press
-        self._last_transition = {
-            "level_id": target_level_id,
-            "room_code": target_room_code_full,
-            "spawn": (spawn_x, spawn_y) if spawn_x is not None and spawn_y is not None else None,
-        }
-        logger.info("DoorSystem recorded planned transition to %s/%s", target_level_id, target_room_code_full)
-        return
-    
-    def get_spawn_point(self) -> Optional[Tuple[int, int]]:
-        """Get spawn point for current room."""
-        if not self.current_tiles:
-            return None
+            room = self.level_loader.get_room(level_id, room_code)
+            if room:
+                self.set_current_tiles(level_id, room_code, room.tiles)
+            else:
+                logger.warning(f"Room {level_id}/{room_code} not found")
+        except Exception as e:
+            logger.error(f"Failed to load room {level_id}/{room_code}: {e}")
+            
+    def handle_door_interaction(self, player_rect, tile_size: int, is_e_pressed: bool) -> Optional[Tuple[str, int, int]]:
+        """Handle door interaction for the player.
         
-        from config import TILE
-        # First try to find spawn point matching entrance_from
-        entrance_from = get_room_entrance_from(self.current_level_id, self.current_room_code)
-        if entrance_from:
-            spawn_coords = find_spawn_point(self.current_tiles, entrance_from)
-            if spawn_coords:
-                spawn_tx, spawn_ty = spawn_coords
-                return (spawn_tx * TILE, spawn_ty * TILE)  # Convert to world coordinates
-        
-        # Fallback to any spawn point
-        spawn_coords = find_spawn_point(self.current_tiles)
-        if spawn_coords:
-            spawn_tx, spawn_ty = spawn_coords
-            return (spawn_tx * TILE, spawn_ty * TILE)  # Convert to world coordinates
-        return None
-    
-    def get_current_room_info(self) -> dict:
-        """Get information about current room."""
-        if not self.current_tiles:
-            return {}
-        
-        exits = get_room_exits(self.current_level_id, self.current_room_code)
-        entrance_from = get_room_entrance_from(self.current_level_id, self.current_room_code)
-        
-        return {
-            "level_id": self.current_level_id,
-            "room_code": self.current_room_code,
-            "entrance_from": entrance_from,
-            "exits": exits,
-            "room_size": f"{len(self.current_tiles)}x{len(self.current_tiles[0])}"
-        }
-
-    def pop_last_transition(self) -> Optional[dict]:
-        """Return and clear the last recorded planned transition.
-
-        This is intended for the main game loop to call when the player
-        confirms a door interaction (presses E). It returns a dict with
-        keys: "level_id", "room_code", "spawn" (world coords tuple or None).
+        Args:
+            player_rect: The player's rectangle
+            tile_size: Size of tiles
+            is_e_pressed: Whether the E key is pressed
+            
+        Returns:
+            Tuple of (prompt_text, x, y) if near a door, None otherwise
         """
-        t = self._last_transition
+        if not self.current_tile_grid or self.current_level_id is None or self.current_room_code is None:
+            return None
+            
+        # Get room exits
+        try:
+            exits = get_room_exits(self.current_level_id, self.current_room_code)
+        except Exception as e:
+            logger.error(f"Failed to get room exits: {e}")
+            return None
+            
+        if not exits:
+            return None
+            
+        # Check player proximity to doors
+        player_center_x = player_rect.centerx
+        player_center_y = player_rect.centery
+        
+        # Search for door tiles near the player
+        search_radius = tile_size * 2
+        door_found = False
+        door_info = None
+        
+        for ty, row in enumerate(self.current_tile_grid):
+            for tx, tile_val in enumerate(row):
+                if tile_val in (TileType.DOOR_EXIT_1.value, TileType.DOOR_EXIT_2.value):
+                    door_x = tx * tile_size + tile_size // 2
+                    door_y = ty * tile_size + tile_size // 2
+                    
+                    # Check distance to player
+                    dist = ((player_center_x - door_x) ** 2 + (player_center_y - door_y) ** 2) ** 0.5
+                    if dist <= search_radius:
+                        door_found = True
+                        # Determine which exit key this door corresponds to
+                        if tile_val == TileType.DOOR_EXIT_1.value:
+                            exit_key = "door_exit_1"
+                            prompt_text = "Press E to enter (Exit 1)"
+                        else:
+                            exit_key = "door_exit_2"
+                            prompt_text = "Press E to enter (Exit 2)"
+                            
+                        door_info = (exit_key, prompt_text, door_x, door_y)
+                        break
+            if door_found:
+                break
+                
+        if not door_info:
+            return None
+            
+        exit_key, prompt_text, door_x, door_y = door_info
+        
+        # If E is pressed, plan the transition
+        if is_e_pressed and exit_key in exits:
+            target = exits[exit_key]
+            if isinstance(target, dict):
+                target_level_id = target.get('level_id', self.current_level_id)
+                target_room_code = target.get('room_code')
+            else:
+                # Assume string format like "1A" or "2B"
+                target_str = str(target)
+                if len(target_str) >= 2 and target_str[:-1].isdigit():
+                    target_level_id = int(target_str[:-1])
+                    target_room_code = target_str[-1]
+                else:
+                    logger.warning(f"Invalid target format: {target}")
+                    return None
+                    
+            self._last_transition = {
+                'level_id': target_level_id,
+                'room_code': target_room_code,
+                'spawn': None  # Will be determined by spawn point finding
+            }
+            
+        return (prompt_text, door_x, door_y)
+        
+    def pop_last_transition(self) -> Optional[Dict[str, Any]]:
+        """Get and clear the last planned transition.
+        
+        Returns:
+            The transition dict or None if no transition is planned
+        """
+        transition = self._last_transition
         self._last_transition = None
-        return t
-
-
-def test_door_system():
-    """Test the door system with generated levels."""
-    import logging
-    logger = logging.getLogger(__name__)
-    from src.level.pcg_generator_simple import generate_and_save_simple_pcg
-    
-    logger.info("=== Generating test levels ===")
-    level_set = generate_and_save_simple_pcg()
-    
-    logger.info("\n=== Testing Door System ===")
-    door_system = DoorSystem()
-    
-    # Load first room
-    if door_system.load_room(1, "1A"):
-        logger.info("✓ Loaded room 1A")
+        return transition
         
-        # Show room info
-        info = door_system.get_current_room_info()
-        logger.info("Room info: %s", info)
+    def get_current_room_info(self) -> Optional[Dict[str, Any]]:
+        """Get information about the current room.
         
-        # Test spawn point
-        spawn = door_system.get_spawn_point()
-        if spawn:
-            logger.info("✓ Spawn point: %s", spawn)
+        Returns:
+            Dict with room info or None if no room is loaded
+        """
+        if self.current_level_id is None or self.current_room_code is None:
+            return None
+            
+        return {
+            'level_id': self.current_level_id,
+            'room_code': self.current_room_code,
+            'tile_grid': self.current_tile_grid
+        }
         
-        # Test door exits
-        exits = info.get("exits", {})
-        for exit_key, target_room in exits.items():
-            logger.info("  %s → %s", exit_key, target_room)
-    
-    logger.info("\n=== Testing room transitions ===")
-    # Simulate door interaction
-    door_system.load_room(1, "1A")
-    
-    # Simulate using door_exit_1
-    logger.info("Simulating door_exit_1 interaction...")
-    # Create fake tile data for testing
-    from src.tiles.tile_data import TileData, InteractionProperties
-    from src.tiles.tile_types import TileType
-    
-    fake_door_tile = TileData(
-        tile_type=TileType.DOOR_EXIT_1,
-        name="Test Door",
-        interaction=InteractionProperties(
-            on_interact_id="door_exit_1"
-        )
-    )
-    
-    door_system._process_door_interaction(fake_door_tile, (38, 13))  # Approx door position
-    
-    # Show current room after transition
-    info = door_system.get_current_room_info()
-    logger.info("After transition: %s", info)
-
-
-if __name__ == "__main__":
-    test_door_system()
+    def get_spawn_point(self) -> Optional[Tuple[int, int]]:
+        """Find spawn point in the current room.
+        
+        Returns:
+            Tuple of (x, y) pixel coordinates for spawn point, or None if not found
+        """
+        if not self.current_tile_grid:
+            return None
+            
+        try:
+            # Get entrance from to determine which entrance to look for
+            entrance_from = get_room_entrance_from(self.current_level_id, self.current_room_code)
+            spawn_tile = find_spawn_point(self.current_tile_grid, entrance_from)
+            
+            if spawn_tile:
+                # Convert tile coordinates to pixel coordinates
+                return (spawn_tile[0] * TILE, spawn_tile[1] * TILE)
+        except Exception as e:
+            logger.error(f"Failed to find spawn point: {e}")
+            
+        return None

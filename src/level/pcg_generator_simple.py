@@ -24,7 +24,7 @@ manages logical connectivity via door_exits and entrance_from.
 from __future__ import annotations
 
 import random
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple, Set
 import os
 import sys
 
@@ -39,6 +39,93 @@ from src.level.pcg_level_data import (
     LevelData,
     LevelSet,
 )
+
+
+# ----- Quadrant System for Door Placement -----
+
+def get_room_quadrants(width: int, height: int, radius: int = 10) -> Dict[str, Tuple[int, int, int, int]]:
+    """Divide room into 4 quadrants with 10x10 square areas from corners.
+    
+    Returns:
+        Dict mapping quadrant names to (x, y, w, h) tuples for the 10x10 carve areas
+    """
+    quadrants = {}
+    
+    # Top-left quadrant
+    tl_x = 1  # Start after wall
+    tl_y = 1  # Start after wall
+    tl_w = min(radius, width // 2 - 1)
+    tl_h = min(radius, height // 2 - 1)
+    quadrants['TL'] = (tl_x, tl_y, tl_w, tl_h)
+    
+    # Top-right quadrant
+    tr_x = max(width // 2 + 1, width - radius - 1)
+    tr_y = 1
+    tr_w = min(radius, width - tr_x - 1)
+    tr_h = min(radius, height // 2 - 1)
+    quadrants['TR'] = (tr_x, tr_y, tr_w, tr_h)
+    
+    # Bottom-left quadrant
+    bl_x = 1
+    bl_y = max(height // 2 + 1, height - radius - 1)
+    bl_w = min(radius, width // 2 - 1)
+    bl_h = min(radius, height - bl_y - 1)
+    quadrants['BL'] = (bl_x, bl_y, bl_w, bl_h)
+    
+    # Bottom-right quadrant
+    br_x = max(width // 2 + 1, width - radius - 1)
+    br_y = max(height // 2 + 1, height - radius - 1)
+    br_w = min(radius, width - br_x - 1)
+    br_h = min(radius, height - br_y - 1)
+    quadrants['BR'] = (br_x, br_y, br_w, br_h)
+    
+    return quadrants
+
+
+def select_available_quadrant(used_quadrants: Set[str], available_quadrants: List[str], rng: random.Random) -> Optional[str]:
+    """Select a random quadrant from available ones that hasn't been used."""
+    available = [q for q in available_quadrants if q not in used_quadrants]
+    if not available:
+        return None
+    return rng.choice(available)
+
+
+def get_random_position_in_quadrant(quadrant: Tuple[int, int, int, int], carve_size: int = 3, rng: random.Random = None) -> Optional[Tuple[int, int]]:
+    """Get random position within quadrant for placing a carve area.
+    
+    Args:
+        quadrant: (x, y, w, h) tuple defining the quadrant area
+        carve_size: Size of the carve area (default 3x3)
+        rng: Random number generator
+    
+    Returns:
+        (x, y) position for top-left of carve area, or None if no space
+    """
+    if rng is None:
+        rng = random.Random()
+    
+    qx, qy, qw, qh = quadrant
+    
+    # Ensure quadrant is large enough for carve area
+    if qw < carve_size or qh < carve_size:
+        return None
+    
+    # Random position within quadrant bounds
+    max_x = qx + qw - carve_size
+    max_y = qy + qh - carve_size
+    
+    if max_x < qx or max_y < qy:
+        return None
+    
+    x = rng.randint(qx, max_x)
+    y = rng.randint(qy, max_y)
+    
+    return (x, y)
+
+
+def is_first_room_first_level(room: RoomData) -> bool:
+    """Check if this is the first room of the first level (11A)."""
+    return room.level_id == 1 and room.room_index == 0 and room.room_letter == 'A'
 
 
 def generate_simple_room_tiles(config: PCGConfig) -> List[List[int]]:
@@ -229,12 +316,12 @@ def _compute_entrances(all_levels_rooms: List[List[RoomData]]) -> None:
 
 
 def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: random.Random, place_entrance_fn=None, place_exit_fn=None, allow_entrance: bool = True) -> None:
-    """Carve 3x3 entrance/exit areas and mark exclusion rows.
+    """Carve 3x3 entrance/exit areas using quadrant system.
 
-    - Entrance: if `room.entrance_from` exists and `allow_entrance` True, carve a
-      3x3 area centered at bottom-center and add a 3x1 `no_spawn` row below it.
-    - Exits: for each exit in `room.door_exits`, carve a 3x3 area on a wall
-      (prefer right then left) and add a 3x1 `no_spawn` row below the carve.
+    - Entrance: if `room.entrance_from` exists OR this is first room of first level,
+      carve a 3x3 area in a randomly selected quadrant.
+    - Exits: for each exit in `room.door_exits`, carve a 3x3 area in different quadrants
+      from each other and from the entrance.
 
     The carved areas are recorded in `room.areas` as dicts so placement helpers
     can find the bottom-center tile for door placement. This function is
@@ -256,67 +343,65 @@ def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: rand
             'properties': {}
         })
 
-    # Entrance carve at bottom-center
-    if allow_entrance and getattr(room, 'entrance_from', None):
-        cx = w // 2
-        top_y = max(1, h - 4)  # carve area top y (3 rows: top_y..top_y+2)
-        left_x = max(1, cx - 1)
-        # ensure within bounds
-        if left_x + 3 <= w - 1 and top_y + 3 <= h - 1:
-            # carve 3x3 to air
-            for yy in range(top_y, top_y + 3):
-                for xx in range(left_x, left_x + 3):
-                    tiles[yy][xx] = TILE_AIR
-            _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': 'entrance'})
-            # add 3x1 exclusion row below
-            excl_y = top_y + 3
-            if excl_y < h - 1:
-                _add_area('no_spawn', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+    # Get room quadrants using the configured radius
+    quadrants = get_room_quadrants(w, h, config.quadrant_radius)
+    used_quadrants: Set[str] = set()
+    
+    # Determine if we should place entrance
+    should_place_entrance = allow_entrance and (
+        getattr(room, 'entrance_from', None) or is_first_room_first_level(room)
+    )
+    
+    # Entrance carve using quadrant system
+    if should_place_entrance:
+        available_quadrants = ['TL', 'TR', 'BL', 'BR']
+        entrance_quadrant = select_available_quadrant(used_quadrants, available_quadrants, rng)
+        
+        if entrance_quadrant:
+            quadrant_rect = quadrants[entrance_quadrant]
+            pos = get_random_position_in_quadrant(quadrant_rect, 3, rng)
+            
+            if pos:
+                left_x, top_y = pos
+                # carve 3x3 to air
+                for yy in range(top_y, top_y + 3):
+                    for xx in range(left_x, left_x + 3):
+                        if 0 <= yy < h and 0 <= xx < w:
+                            tiles[yy][xx] = TILE_AIR
+                _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': 'entrance'})
+                # add 3x1 exclusion row below
+                excl_y = top_y + 3
+                if excl_y < h - 1:
+                    _add_area('no_spawn', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+                used_quadrants.add(entrance_quadrant)
 
-    # Exits carve: choose sides so multiple exits don't overlap
+    # Exits carve using quadrant system
     exit_keys = list((room.door_exits or {}).keys())
     if not exit_keys:
         return
 
-    sides = []
-    if len(exit_keys) == 1:
-        # prefer right then left then top
-        sides = ['right', 'left', 'top']
-    else:
-        # two exits: use left and right
-        sides = ['left', 'right']
-
-    used_sides = set()
-    for i, exit_key in enumerate(exit_keys):
-        # choose a side not yet used
-        side = None
-        for s in (sides if isinstance(sides, list) else [sides]):
-            if s not in used_sides:
-                side = s
-                break
-        if side is None:
-            side = rng.choice(['left', 'right', 'top'])
-        used_sides.add(side)
-
-        if side == 'left':
-            left_x = 1
-            top_y = max(1, (h // 2) - 1)
-        elif side == 'right':
-            left_x = max(1, w - 4)
-            top_y = max(1, (h // 2) - 1)
-        else:  # top
-            left_x = max(1, (w // 2) - 1)
-            top_y = 1
-
-        # carve if space
-        if left_x + 3 <= w - 1 and top_y + 3 <= h - 1:
-            for yy in range(top_y, top_y + 3):
-                for xx in range(left_x, left_x + 3):
-                    tiles[yy][xx] = TILE_AIR
-            _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': exit_key})
-            excl_y = top_y + 3
-            if excl_y < h - 1:
-                _add_area('no_spawn', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+    available_quadrants = ['TL', 'TR', 'BL', 'BR']
+    
+    for exit_key in exit_keys:
+        exit_quadrant = select_available_quadrant(used_quadrants, available_quadrants, rng)
+        
+        if exit_quadrant:
+            quadrant_rect = quadrants[exit_quadrant]
+            pos = get_random_position_in_quadrant(quadrant_rect, 3, rng)
+            
+            if pos:
+                left_x, top_y = pos
+                # carve 3x3 to air
+                for yy in range(top_y, top_y + 3):
+                    for xx in range(left_x, left_x + 3):
+                        if 0 <= yy < h and 0 <= xx < w:
+                            tiles[yy][xx] = TILE_AIR
+                _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': exit_key})
+                # add 3x1 exclusion row below
+                excl_y = top_y + 3
+                if excl_y < h - 1:
+                    _add_area('no_spawn', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+                used_quadrants.add(exit_quadrant)
 
 
 def generate_simple_pcg_level_set(

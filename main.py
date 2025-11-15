@@ -381,77 +381,7 @@ class Game:
         lvl.spawn[0] = w // 2 * TILE
         lvl.spawn[1] = (h - 2) * TILE  # just above floor
         
-        # Convert door_exits metadata into actual door tiles
-        from src.tiles.tile_types import TileType
-        
-        if lvl.tiles:
-            h = len(lvl.tiles)
-            w = len(lvl.tiles[0]) if h > 0 else 0
 
-            # First: clear any stale door tiles that may exist in saved grids
-            from src.tiles.tile_types import TileType as _TileType
-            from config import TILE_AIR
-            door_values = {
-                _TileType.DOOR_ENTRANCE.value,
-                _TileType.DOOR_EXIT_1.value,
-                _TileType.DOOR_EXIT_2.value,
-            }
-            for ty in range(h):
-                row = lvl.tiles[ty]
-                for tx in range(w):
-                    if row[tx] in door_values:
-                        row[tx] = TILE_AIR
-
-            # Entrance door position (left wall, middle)
-            entrance_y = h // 2
-            if 0 < entrance_y < h - 1 and 1 < w - 1:
-                if room.entrance_from:
-                    lvl.tiles[entrance_y][1] = TileType.DOOR_ENTRANCE.value
-
-            # Exit door positions (right wall)
-            exit_y1 = h // 2 - 2
-            exit_y2 = h // 2 + 2
-
-            # Use loader to get normalized exits and only place tiles for valid targets
-            try:
-                from src.level.level_loader import level_loader as _ll
-                normalized_exits = _ll.get_room_exits(room.level_id, room.room_code)
-            except Exception:
-                normalized_exits = {}
-
-            # Exit 1
-            if 0 < exit_y1 < h - 1:
-                target = normalized_exits.get('door_exit_1') if normalized_exits else None
-                if isinstance(target, dict):
-                    try:
-                        tlevel = int(target.get('level_id'))
-                        tcode = str(target.get('room_code'))
-                        if _ll.get_room(tlevel, tcode):
-                            lvl.tiles[exit_y1][w - 2] = TileType.DOOR_EXIT_1.value
-                    except Exception:
-                        pass
-
-            # Exit 2
-            if 0 < exit_y2 < h - 1:
-                target = normalized_exits.get('door_exit_2') if normalized_exits else None
-                if isinstance(target, dict):
-                    try:
-                        tlevel = int(target.get('level_id'))
-                        tcode = str(target.get('room_code'))
-                        if _ll.get_room(tlevel, tcode):
-                            lvl.tiles[exit_y2][w - 2] = TileType.DOOR_EXIT_2.value
-                    except Exception:
-                        pass
-        
-        # Persist modified tiles back into the global level set so other systems
-        # (e.g., DoorSystem) see the same tile grid after we placed/cleared door tiles.
-        try:
-            from src.level.level_loader import level_loader
-            stored_room = level_loader.get_room(lvl.level_id, lvl.room_code)
-            if stored_room:
-                stored_room.tiles = lvl.tiles
-        except Exception:
-            pass
 
         self.level = lvl
         self.enemies = lvl.enemies
