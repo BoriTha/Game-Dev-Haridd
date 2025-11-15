@@ -366,13 +366,14 @@ def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: rand
                 # carve 3x3 to air
                 for yy in range(top_y, top_y + 3):
                     for xx in range(left_x, left_x + 3):
-                        if 0 <= yy < h and 0 <= xx < w:
+                        # MODIFIED: Changed bounds to protect the outer wall (1 instead of 0)
+                        if 1 <= yy < h - 1 and 1 <= xx < w - 1:
                             tiles[yy][xx] = TILE_AIR
                 _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': 'entrance'})
                 # add 3x1 exclusion row below
-                excl_y = top_y + 3
-                if excl_y < h - 1:
-                    _add_area('exclusion_zone', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+                # excl_y = top_y + 3
+                # if excl_y < h - 1:
+                #     _add_area('exclusion_zone', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
                 used_quadrants.add(entrance_quadrant)
     
     # Exit carves using quadrant system
@@ -392,13 +393,14 @@ def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: rand
                     # carve 3x3 to air
                     for yy in range(top_y, top_y + 3):
                         for xx in range(left_x, left_x + 3):
-                            if 0 <= yy < h and 0 <= xx < w:
+                            # MODIFIED: Changed bounds to protect the outer wall (1 instead of 0)
+                            if 1 <= yy < h - 1 and 1 <= xx < w - 1:
                                 tiles[yy][xx] = TILE_AIR
                     _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': door_key})
                     # add 3x1 exclusion row below
-                    excl_y = top_y + 3
-                    if excl_y < h - 1:
-                        _add_area('exclusion_zone', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+                    # excl_y = top_y + 3
+                    # if excl_y < h - 1:
+                    #     _add_area('exclusion_zone', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
                     used_quadrants.add(exit_quadrant)
 
 
@@ -537,7 +539,8 @@ def _carve_drunken_walk_paths(room: RoomData, config: PCGConfig, rng: random.Ran
             # carve pocket
             for yy in range(py, py + s):
                 for xx in range(px, px + s):
-                    if 0 <= yy < h and 0 <= xx < w:
+                    # MODIFIED: Changed bounds to protect the outer wall (1 instead of 0)
+                    if 1 <= yy < h - 1 and 1 <= xx < w - 1:
                         tile_grid[yy][xx] = config.air_tile_id
             # record area so CA preserves it
             room.areas = getattr(room, 'areas', []) or []
@@ -852,7 +855,8 @@ def _carve_at(tile_grid: List[List[int]], pos: Tuple[int, int], radius: int, con
     offset = r - 1
     for yy in range(cy - offset, cy + r):
         for xx in range(cx - offset, cx + r):
-            if 0 <= yy < h and 0 <= xx < w and (xx, yy) not in exclusion_set:
+            # MODIFIED: Changed bounds to protect the outer wall (1 instead of 0)
+            if 1 <= yy < h - 1 and 1 <= xx < w - 1 and (xx, yy) not in exclusion_set:
                 tile_grid[yy][xx] = config.air_tile_id
 
 
@@ -1055,9 +1059,10 @@ def _run_cellular_automata(room: RoomData, config: PCGConfig, rng: random.Random
             ry = int(rect.get('y', 0))
             rw = int(rect.get('w', 0))
             rh = int(rect.get('h', 0))
-            # carve a slightly larger square around the pocket
-            for yy in range(max(0, ry - pocket_expand), min(h, ry + rh + pocket_expand)):
-                for xx in range(max(0, rx - pocket_expand), min(w, rx + rw + pocket_expand)):
+# carve a slightly larger square around the pocket
+            # MODIFIED: Changed bounds to protect the outer wall (1 instead of 0)
+            for yy in range(max(1, ry - pocket_expand), min(h - 1, ry + rh + pocket_expand)):
+                for xx in range(max(1, rx - pocket_expand), min(w - 1, rx + rw + pocket_expand)):
                     if (xx, yy) not in exclusion_set:
                         door_set.add((xx, yy))
                         # also ensure current grid has air so CA grows from it
@@ -1308,6 +1313,17 @@ def generate_simple_pcg_level_set(
                     pass
                 # Ensure doors remain reachable after smoothing and dilation
                 _ensure_doors_reachable(room, config, rng)
+                # Postprocess: add floating platforms to improve reachability
+                try:
+                    from src.level.pcg_postprocess import add_floating_platforms
+                    from src.utils.player_movement_profile import PlayerMovementProfile
+                    # build a profile using game defaults; specific presets may be used later
+                    profile = PlayerMovementProfile()
+                    # use conservative defaults; rng may be None in some contexts
+                    add_floating_platforms(room, profile=profile, config=config, rng=rng)
+                except Exception:
+                    # ignore postprocess failures; generation should continue
+                    pass
             except Exception as e:
                 try:
                     import logging

@@ -21,7 +21,6 @@ class DebugOverlays:
             from src.level.level_loader import level_loader
             regions = level_loader.get_room_areas(lvl.level_id, lvl.room_code)
             if not regions:
-                print(f"DEBUG: No regions found for {lvl.level_id}/{lvl.room_code}")
                 return
             
 

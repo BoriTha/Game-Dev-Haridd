@@ -36,6 +36,24 @@ class LevelLoader:
             raise FileNotFoundError(f"Levels file not found: {self.levels_file}")
         
         self._level_set = LevelSet.load_from_json(self.levels_file)
+        # Apply PCG postprocessing (floating platforms) to loaded rooms so saved levels
+        # generated before this change also receive platform fixes at load time.
+        try:
+            from src.level.pcg_postprocess import add_floating_platforms
+            from src.utils.player_movement_profile import PlayerMovementProfile
+            from src.level.config_loader import load_pcg_config
+            config = load_pcg_config()
+            # default profile; project may later pass specific presets
+            profile = PlayerMovementProfile()
+            for level in self._level_set.levels:
+                for room in level.rooms:
+                    try:
+                        add_floating_platforms(room, profile=profile, config=config, rng=None)
+                    except Exception:
+                        # don't let postprocess failures block loading
+                        pass
+        except Exception:
+            pass
         return self._level_set
     
     def get_level_set(self) -> Optional[LevelSet]:

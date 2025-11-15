@@ -12,16 +12,12 @@ class TileType(IntEnum):
     DOOR_EXIT_1 = 4
     DOOR_EXIT_2 = 5
 
-
-
     @property
     def is_solid(self) -> bool:
         """Return True if tile blocks movement completely."""
         return self == TileType.WALL
 
 
-
-    
 
     @property
     def has_collision(self) -> bool:

@@ -164,9 +164,6 @@ class TileRegistry:
 
 
 
-
-
-
     def register_tile(self, tile_data: TileData):
         """Register a new tile type."""
         self._tiles[tile_data.tile_type] = tile_data
