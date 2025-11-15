@@ -644,25 +644,30 @@ class Game:
 
         for hb in list(hitboxes):
             hb.tick()
-            # if projectile hits solids, explode or die
-            collided_solid = False
-            for s in self.level.solids:
-                if hb.rect.colliderect(s):
-                    collided_solid = True
-                    break
-            if collided_solid:
-                if getattr(hb, 'aoe_radius', 0) > 0 and not getattr(hb, 'visual_only', False):
-                    cx, cy = hb.rect.center
-                    for e2 in self.enemies:
-                        if getattr(e2, 'alive', False):
-                            dx = e2.rect.centerx - cx
-                            dy = e2.rect.centery - cy
-                            if (dx*dx + dy*dy) ** 0.5 <= hb.aoe_radius:
-                                e2.hit(hb, self.player)
-                # remove visual-only hitboxes or projectiles
-                if hb in hitboxes:
-                    hitboxes.remove(hb)
-                continue
+            # Only projectiles (hitboxes with velocity) should be destroyed by solids
+            # Melee attacks (no velocity) should pass through walls for enemy detection
+            is_projectile = getattr(hb, 'vx', 0) != 0 or getattr(hb, 'vy', 0) != 0
+            
+            if is_projectile:
+                # if projectile hits solids, explode or die
+                collided_solid = False
+                for s in self.level.solids:
+                    if hb.rect.colliderect(s):
+                        collided_solid = True
+                        break
+                if collided_solid:
+                    if getattr(hb, 'aoe_radius', 0) > 0 and not getattr(hb, 'visual_only', False):
+                        cx, cy = hb.rect.center
+                        for e2 in self.enemies:
+                            if getattr(e2, 'alive', False):
+                                dx = e2.rect.centerx - cx
+                                dy = e2.rect.centery - cy
+                                if (dx*dx + dy*dy) ** 0.5 <= hb.aoe_radius:
+                                    e2.hit(hb, self.player)
+                    # remove projectiles that hit solids
+                    if hb in hitboxes:
+                        hitboxes.remove(hb)
+                    continue
             # enemy hitboxes can affect player (damage/stun). Ignore player's own.
             if getattr(hb, 'owner', None) is not self.player:
                 # AOE against player
