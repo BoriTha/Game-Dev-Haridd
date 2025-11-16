@@ -336,8 +336,10 @@ class Shop:
         if event.type == pygame.MOUSEWHEEL:
             # Detect which column the mouse is over for targeted scrolling
             mouse_pos = pygame.mouse.get_pos()
-            # Only scroll if mouse is over a scrollable column (no fallback)
-            self._handle_mousewheel_scroll(mouse_pos, event.y)
+            # Return the result of the scroll handler.
+            # This will be True if a column was scrolled, and False if not.
+            return self._handle_mousewheel_scroll(mouse_pos, event.y)
+        
         elif event.type == pygame.KEYDOWN:
             # Navigation - LEFT/RIGHT switch between categories (spatial navigation)
             if event.key in [pygame.K_LEFT, pygame.K_a]:
@@ -347,7 +349,8 @@ class Shop:
                     # Keep same index if possible, otherwise clamp to valid range
                     self.selection = min(self.selection, len(self.selected_gear) - 1) if self.selected_gear else 0
                     self.gear_scroll_offset = max(0, self.selection - self.max_visible_gear + 1)
-                # If already in gear, stay in gear (no wrap-around)
+                return True  # Event handled
+            
             elif event.key in [pygame.K_RIGHT, pygame.K_d]:
                 if self.selection_category == 'gear':
                     # Gear is on the left, RIGHT goes to consumables (right neighbor)
@@ -355,7 +358,8 @@ class Shop:
                     # Keep same index if possible, otherwise clamp to valid range
                     self.selection = min(self.selection, len(self.selected_consumables) - 1) if self.selected_consumables else 0
                     self.consumable_scroll_offset = max(0, self.selection - self.max_visible_consumables + 1)
-                # If already in consumables, stay in consumables (no wrap-around)
+                return True  # Event handled
+            
             elif event.key in [pygame.K_UP, pygame.K_w]:
                 # Move up in current category
                 if self.selection > 0:
@@ -367,6 +371,8 @@ class Shop:
                     else:  # consumable
                         if self.selection < self.consumable_scroll_offset:
                             self.consumable_scroll_offset = max(0, self.selection)
+                return True  # Event handled
+            
             elif event.key in [pygame.K_DOWN, pygame.K_s]:
                 # Move down in current category
                 max_items = len(self.selected_gear) if self.selection_category == 'gear' else len(self.selected_consumables)
@@ -387,24 +393,34 @@ class Shop:
                             # Ensure scroll offset doesn't exceed maximum
                             max_scroll = max(0, len(self.selected_consumables) - self.max_visible_consumables)
                             self.consumable_scroll_offset = min(self.consumable_scroll_offset, max_scroll)
+                return True  # Event handled
             
             # Purchase/Select action
             elif event.key in [pygame.K_RETURN, pygame.K_SPACE]:
                 self._handle_selection()
+                return True  # Event handled
             
             # Scrolling
             elif event.key == pygame.K_PAGEUP:
                 self._scroll_up()
+                return True  # Event handled
             elif event.key == pygame.K_PAGEDOWN:
                 self._scroll_down()
+                return True  # Event handled
             elif event.key == pygame.K_HOME:
                 self._scroll_to_top()
+                return True  # Event handled
             elif event.key == pygame.K_END:
                 self._scroll_to_bottom()
+                return True  # Event handled
             
             # Close shop
             elif event.key in [pygame.K_ESCAPE, pygame.K_i]:
                 self.close_shop()
+                return True  # Event handled
+        
+        # If no event was handled, return False
+        return False
     
     def _handle_selection(self):
         """Handle current selection"""
@@ -2196,8 +2212,8 @@ class Shop:
             pygame.draw.rect(screen, (180, 180, 200), indicator_rect, width=1, border_radius=3)
     
     def _handle_mousewheel_scroll(self, mouse_pos, scroll_direction):
-        """Handle mouse wheel scrolling based on which column the mouse is over.
-        
+        """Handle mouse wheel scrolling based on which column is over.
+
         Returns True if scroll was handled by a specific column, False otherwise.
         """
         # Calculate column bounds (same as in draw method)
@@ -2206,63 +2222,73 @@ class Shop:
         panel_height = HEIGHT - (margin * 2)
         panel_x = margin
         panel_y = margin
-        
+
         column_margin = 12
         header_height = 60
         content_y = panel_y + header_height + 20
         content_height = panel_height - header_height - 80  # Leave space for footer
-        
-        # First check if mouse is within the shop panel at all
+
+        # First check if mouse is within shop panel at all
         panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
         if not panel_rect.collidepoint(mouse_pos):
             return False  # Mouse is outside the shop panel entirely
-        
-        # Left column: Shop items list (40% width)
+
+        # Left column: Shop items list (40% width) - more precise calculation
         left_width = int(panel_width * 0.40)
         left_rect = pygame.Rect(panel_x + 10, content_y, left_width, content_height)
-        
-        # Middle column: Player slots (30% width)
+
+        # Middle column: Player slots (30% width) - ensure no overlap
         middle_width = int(panel_width * 0.28)
         middle_rect = pygame.Rect(left_rect.right + column_margin, content_y, middle_width, content_height)
-        
-        # Right column: Player info (30% width)
+
+        # Right column: Player info (remaining width) - ensure no overlap
         right_width = panel_width - left_width - middle_width - column_margin * 3 - 20
         right_rect = pygame.Rect(middle_rect.right + column_margin, content_y, right_width, content_height)
-        
-        # Check if mouse is in right column (player info / stock view) and scroll that
-        if right_rect.collidepoint(mouse_pos):
-            # Check if we're showing the inventory stock view
+
+        # Use horizontal x coordinate to determine which column should receive the scroll
+        mx, my = mouse_pos
+
+        # If mouse is over right column area (by X coordinate)
+        if mx >= right_rect.x and mx <= right_rect.right:
+            # Scroll the stock view or player info depending on selection
             if self.selected_slot_type is not None:
-                # Scroll the inventory stock view
                 scroll_amount = 50  # Pixels to scroll
                 if scroll_direction > 0:
-                    # Scroll up
-                    self.stock_scroll_offset -= scroll_amount
-                    self.stock_scroll_offset = max(0, self.stock_scroll_offset)
+                    self.stock_scroll_offset = max(0, self.stock_scroll_offset - scroll_amount)
                 else:
-                    # Scroll down
                     self.stock_scroll_offset += scroll_amount
             else:
-                # Scroll the player info stats
                 if scroll_direction > 0:
-                    # Scroll up
-                    self.player_info_scroll_offset -= 22  # One line height
-                    self.player_info_scroll_offset = max(0, self.player_info_scroll_offset)
+                    self.player_info_scroll_offset = max(0, self.player_info_scroll_offset - 22)
                 else:
-                    # Scroll down
-                    self.player_info_scroll_offset += 22  # One line height
+                    self.player_info_scroll_offset += 22
             return True
-        
-        # Check if mouse is in left column (shop items) and scroll that
-        if left_rect.collidepoint(mouse_pos):
-            if scroll_direction > 0:
-                self._scroll_up()
+
+        # If mouse is over middle column area (by X coordinate) - don't scroll anything
+        if mx >= middle_rect.x and mx <= middle_rect.right:
+            return True  # Prevent left column from handling the scroll
+
+        # If mouse is over left column area (by X coordinate)
+        if mx >= left_rect.x and mx <= left_rect.right:
+            # Further restrict to the actual scrollable area (exclude header and buy button area)
+            header_h = 36
+            buy_button_height = 36
+            bottom_padding = 18
+
+            scrollable_y = left_rect.y + header_h + 8
+            scrollable_height = left_rect.height - header_h - buy_button_height - bottom_padding - 8
+            scrollable_rect = pygame.Rect(left_rect.x, scrollable_y, left_rect.width, scrollable_height)
+
+            if scrollable_rect.collidepoint(mouse_pos):
+                if scroll_direction > 0:
+                    self._scroll_up()
+                else:
+                    self._scroll_down()
+                return True
             else:
-                self._scroll_down()
-            return True
-        
-        # Middle column doesn't have scrolling (just slots)
-        # Also returns False if mouse is in gaps between columns
+                return True
+
+        # Mouse is in gaps between columns or outside content area
         return False
     
     def _scroll_up(self):

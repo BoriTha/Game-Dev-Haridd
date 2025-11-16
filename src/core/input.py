@@ -78,17 +78,20 @@ class InputHandler:
                             continue
                     # Legacy wheel scroll for shop (fallback for older pygame)
                     elif getattr(game, 'shop', None) and getattr(game.shop, 'shop_open', False):
-                        if ev.button == 4:
+                        if ev.button in (4, 5):
+                            # Determine mouse position
+                            mouse_pos = getattr(ev, 'pos', None) or pygame.mouse.get_pos()
+                            scroll_dir = 1 if ev.button == 4 else -1
                             try:
-                                game.shop._scroll_up()
+                                handled = game.shop._handle_mousewheel_scroll(mouse_pos, scroll_dir)
+                                if not handled:
+                                    # Fallback: scroll the left list as before
+                                    if ev.button == 4:
+                                        game.shop._scroll_up()
+                                    else:
+                                        game.shop._scroll_down()
                             except Exception:
-                                logger.exception("shop scroll up failed")
-                            continue
-                        elif ev.button == 5:
-                            try:
-                                game.shop._scroll_down()
-                            except Exception:
-                                logger.exception("shop scroll down failed")
+                                logger.exception("shop scroll wheel fallback failed")
                             continue
 
                     # Left click
