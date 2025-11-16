@@ -69,9 +69,10 @@ class Hitbox:
         if self.lifetime <= 0:
             self.alive = False
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, force_draw=False):
         # Skip drawing if this hitbox has a sprite (sprite is drawn separately by enemy's draw_projectile_sprites)
-        if getattr(self, 'has_sprite', False):
+        # UNLESS force_draw is True (for debug mode)
+        if getattr(self, 'has_sprite', False) and not force_draw:
             return
         
         # if this hitbox represents an AOE, draw a circle

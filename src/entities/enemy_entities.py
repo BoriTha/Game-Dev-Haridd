@@ -777,19 +777,25 @@ class Enemy:
         if not self.sprite or not hasattr(self, 'sprite_rect') or not self.sprite_rect:
             return False
         
-        # Calculate screen position
-        screen_pos = camera.to_screen(self.sprite_rect.topleft)
-        
         # Flip sprite based on facing direction
         draw_sprite = pygame.transform.flip(self.sprite, True, False) if self.facing == -1 else self.sprite
+        
+        # Scale sprite to match camera zoom
+        scaled_width = int(draw_sprite.get_width() * camera.zoom)
+        scaled_height = int(draw_sprite.get_height() * camera.zoom)
+        draw_sprite = pygame.transform.scale(draw_sprite, (scaled_width, scaled_height))
+        
+        # Create a rect for the scaled sprite and position it correctly
+        scaled_sprite_rect = draw_sprite.get_rect()
+        scaled_sprite_rect.midbottom = camera.to_screen(self.sprite_rect.midbottom)
         
         # Apply invincibility flicker effect
         if self.combat.is_invincible():
             temp = draw_sprite.copy()
             temp.set_alpha(150)
-            surf.blit(temp, screen_pos)
+            surf.blit(temp, scaled_sprite_rect.topleft)
         else:
-            surf.blit(draw_sprite, screen_pos)
+            surf.blit(draw_sprite, scaled_sprite_rect.topleft)
         
         return True
     
@@ -797,9 +803,9 @@ class Enemy:
         """Draw projectile sprites scaled to match hitbox size for accurate visual feedback."""
         if self.projectile_sprite and hasattr(self, 'projectile_hitboxes'):
             for hb in self.projectile_hitboxes:
-                # Scale sprite to match hitbox dimensions for visual accuracy
-                hitbox_w = hb.rect.width
-                hitbox_h = hb.rect.height
+                # Scale sprite to match hitbox dimensions AND camera zoom for visual accuracy
+                hitbox_w = int(hb.rect.width * camera.zoom)
+                hitbox_h = int(hb.rect.height * camera.zoom)
                 scaled_sprite = pygame.transform.scale(self.projectile_sprite, (hitbox_w, hitbox_h))
                 
                 # Center sprite on hitbox
@@ -1502,7 +1508,7 @@ class Golem(Enemy):
             'default_ifr': 12,
             'money_drop': (50, 100)
         }
-        super().__init__(x, ground_y, width=56, height=44, combat_config=combat_config,
+        super().__init__(x, ground_y, width=60, height=90, combat_config=combat_config,
                         vision_range=500, cone_half_angle=math.pi/3, turn_rate=0.03)
         # ----------------------------
         # Basic properties
@@ -1528,7 +1534,7 @@ class Golem(Enemy):
             self.sprite_idle = None
         
         self.sprite = self.sprite_idle
-        self.sprite_offset_y = 55  # Friend's original offset value
+        self.sprite_offset_y = 18  # Align the sprite bottom with the new hitbox bottom
         
         # Sprite rect
         if self.sprite:
@@ -1636,6 +1642,12 @@ class Golem(Enemy):
                 
                 # ----------- SHOOT (Aura) -----------
                 elif self.action == "shoot" and has_los:
+                    self.play_attack_anim = True
+                    self.atk_index = 0
+                    self.atk_timer = 0
+                    self.play_attack_anim = True
+                    self.atk_index = 0
+                    self.atk_timer = 0
                     hb = pygame.Rect(0,0,26,26)
                     hb.center = self.rect.center
                     new_hb = Hitbox(
@@ -1653,6 +1665,9 @@ class Golem(Enemy):
                 
                 # ----------- STUN -----------
                 elif self.action == "stun":
+                    self.play_attack_anim = True
+                    self.atk_index = 0
+                    self.atk_timer = 0
                     r = 72
                     hb = pygame.Rect(0,0,r*2,r*2)
                     hb.center = self.rect.center

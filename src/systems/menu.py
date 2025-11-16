@@ -83,7 +83,7 @@ class Menu:
             "Dev Cheats:",
             "  F1: Toggle God Mode",
             "  F2: Refill Consumables",
-            "  F3: Toggle Enemy Vision Rays",
+            "  F3: Toggle Enemy Vision Rays & Hitboxes",
             "  F4: Open Debugger Menu",
         ]
         while True:

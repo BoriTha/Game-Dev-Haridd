@@ -94,6 +94,7 @@ class Game:
         self.cheat_zero_cooldown = False
         self.debug_enemy_rays = False
         self.debug_enemy_nametags = False # Default to False
+        self.debug_show_hitboxes = False  # F3 will toggle this along with vision rays
 
         # Debug visualization toggles
         self.debug_tile_inspector = False
@@ -390,6 +391,10 @@ class Game:
         self.level = lvl
         self.enemies = lvl.enemies
         
+        # Update camera boundaries
+        self.camera.level_width = lvl.w
+        self.camera.level_height = lvl.h
+        
         if not initial:
             from src.entities.entities import hitboxes, floating
             hitboxes.clear()
@@ -481,9 +486,14 @@ class Game:
         lvl.tile_grid = room.tiles      # used by _handle_door_interactions
         lvl.enemies = []                # start empty for now
         lvl.is_boss_room = False
-        # Set level dimensions for enemy movement system
+        # Set level dimensions for enemy movement system (in tiles and pixels)
         lvl.h = len(room.tiles) if room.tiles else 0
         lvl.w = len(room.tiles[0]) if lvl.h > 0 else 0
+        
+        # Convert to pixels for camera boundaries (matching legacy level behavior)
+        from config import TILE
+        lvl.w = lvl.w * TILE  # Width in pixels
+        lvl.h = lvl.h * TILE  # Height in pixels
         
         # Generate collision solids from tile grid for enemy collision system
         lvl._update_solids_from_grid()
@@ -594,6 +604,11 @@ class Game:
 
         self.level = lvl
         self.enemies = lvl.enemies
+        
+        # Update camera boundaries
+        self.camera.level_width = lvl.w
+        self.camera.level_height = lvl.h
+        
         # Update current level tracking
         try:
             self.current_level_number = int(lvl.level_id)
@@ -1031,8 +1046,9 @@ class Game:
         self.level.draw(self.screen, self.camera)
         for e in self.enemies:
             e.draw(self.screen, self.camera, show_los=self.debug_enemy_rays, show_nametags=self.debug_enemy_nametags)
+        # Draw hitboxes: force draw all hitboxes if debug mode is on
         for hb in hitboxes:
-            hb.draw(self.screen, self.camera)
+            hb.draw(self.screen, self.camera, force_draw=self.debug_show_hitboxes)
         self.player.draw(self.screen, self.camera)
         for dn in floating:
             dn.draw(self.screen, self.camera, self.font_small)
@@ -1177,6 +1193,9 @@ class Game:
             {'label': 'Enemy Vision Rays', 'type': 'toggle',
              'getter': lambda: self.debug_enemy_rays,
              'setter': lambda v: setattr(self, 'debug_enemy_rays', v)},
+            {'label': 'Show Hitboxes', 'type': 'toggle',
+             'getter': lambda: self.debug_show_hitboxes,
+             'setter': lambda v: setattr(self, 'debug_show_hitboxes', v)},
             {'label': 'Enemy Nametags', 'type': 'toggle',
              'getter': lambda: self.debug_enemy_nametags,
              'setter': lambda v: setattr(self, 'debug_enemy_nametags', v)},

@@ -241,6 +241,17 @@ class InputHandler:
 
                         elif ev.key == pygame.K_F3:
                             game.debug_enemy_rays = not getattr(game, 'debug_enemy_rays', False)
+                            game.debug_show_hitboxes = game.debug_enemy_rays  # Toggle hitboxes with vision rays
+                            try:
+                                from src.entities.entities import floating, DamageNumber
+                                floating.append(DamageNumber(
+                                    game.player.rect.centerx,
+                                    game.player.rect.top - 12,
+                                    f"Vision Rays & Hitboxes {'ON' if game.debug_enemy_rays else 'OFF'}",
+                                    (160, 220, 255) if game.debug_enemy_rays else (200, 200, 200)
+                                ))
+                            except Exception:
+                                pass
                             continue
 
                         elif ev.key == pygame.K_F4:

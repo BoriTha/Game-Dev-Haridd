@@ -12,6 +12,9 @@ class Camera:
         self.zoom = self.zoom_levels[self.current_zoom_index]
         self.target_zoom = self.zoom
         self.zoom_transition_speed = 5.0  # Speed of smooth zoom transitions
+        # Level boundaries (set by game)
+        self.level_width = 0
+        self.level_height = 0
 
     def update(self, target_rect: pygame.Rect, dt: float = 1/60):
         # Smooth zoom transition
@@ -23,6 +26,24 @@ class Camera:
         ty = target_rect.centery - (HEIGHT / (2 * self.zoom))
         self.x += (tx - self.x) * self.lerp
         self.y += (ty - self.y) * self.lerp
+        
+        # Clamp camera to level boundaries
+        if self.level_width > 0 and self.level_height > 0:
+            # Calculate the visible area size in world coordinates
+            view_width = WIDTH / self.zoom
+            view_height = HEIGHT / self.zoom
+            
+            # Clamp camera position so it doesn't show outside level bounds
+            # If level is smaller than view, center it
+            if self.level_width <= view_width:
+                self.x = (self.level_width - view_width) / 2
+            else:
+                self.x = max(0, min(self.x, self.level_width - view_width))
+            
+            if self.level_height <= view_height:
+                self.y = (self.level_height - view_height) / 2
+            else:
+                self.y = max(0, min(self.y, self.level_height - view_height))
 
     def to_screen(self, p):
         return (int((p[0] - self.x) * self.zoom), int((p[1] - self.y) * self.zoom))
