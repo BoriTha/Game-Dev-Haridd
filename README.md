@@ -30,12 +30,20 @@ py d:\game_dev\main.py
 - Pause: Esc
 
 Dev cheats (for testing):
-- F1: Toggle God Mode (also available inside the debugger menu)
+- F1: Toggle God Mode
 - F2: Refill Consumables
 - F3: Toggle Enemy Vision Rays
-- F4: Open the debugger menu (pause overlay)
-- F5: Open the debugger menu (alternative key)
-- F6-F10: Jump to Rooms 1-5
+- F4: Toggle Enemy Nametags
+- F5: Open the debugger menu
+- F6: Toggle Shop
+- F7: Add 1000 Money
+- F8: Toggle Tile Inspector
+- F9: Toggle Wall Jump Debug Visualization
+- F10: Toggle Area Overlay (PCG room areas)
+- F11: Follow door_exit_1 (PCG mode) / Reserved (Legacy mode)
+- F12: Follow door_exit_2 (PCG mode) / Go to Boss Room (Legacy mode)
+- Z: Toggle Camera Zoom
+- Double-tap Space (in God Mode): Toggle No-clip + Floating Mode
 
 ## Menu flow
 
@@ -48,9 +56,9 @@ Dev cheats (for testing):
 
 ## Classes
 
-- Knight: Tanky melee. Shield/Power/Charge skills. Lower mobility, strong survivability.
-- Ranger: Ranged damage. Charge shot, triple-shot that can bypass enemy i-frames.
-- Wizard: Spells. Fireball, cold field (area), homing missiles, plus teleport.
+- Knight: Tanky melee. Shield/Power/Charge skills. Lower mobility, strong survivability. Can parry attacks with shield skill.
+- Ranger: Ranged damage. Charge shot, triple-shot that can bypass enemy i-frames, speed boost skill.
+- Wizard: Spells. Fireball, cold field (area slow), homing magic missiles, plus teleport skill for mobility.
 
 Each class has unique resource bars (stamina/mana) and cooldowns shown on the HUD.
 
@@ -70,31 +78,38 @@ Each class has unique resource bars (stamina/mana) and cooldowns shown on the HU
 
 ### Debugger menu
 
-Press `F4` (or `F5`) at any time during gameplay to open the debugger overlay. From there you can:
+Press `F5` at any time during gameplay to open the debugger overlay. From there you can:
 
-- Toggle God Mode, Infinite Mana, and Zero Cooldown without remembering individual hotkeys.
-- Jump directly to any room via a level picker, or close the menu.
+- Toggle God Mode, Infinite Mana, Zero Cooldown, and No-clip Mode without remembering individual hotkeys.
+- Jump directly to any room or level via a teleport picker (works for both PCG and legacy modes).
 - Enable/disable enemy vision rays to visualize their current line-of-sight target.
+- Enable/disable enemy nametags to see enemy types above their sprites.
+- Enable/disable area overlay to visualize PCG room areas and spawn zones.
 - Instantly refill all consumable slots for quick testing of the hotbar interactions.
-- Spawn items and equipment directly into inventory.
+- Spawn items and equipment directly into inventory via the "Give Items" menu.
+- Toggle PCG mode on/off (switch between procedural and static legacy levels).
 
 ## Gameplay notes
 
 - Enemies telegraph strong attacks with `!` or `!!`.
 - Enemy projectiles are visible. Enemy friendly-fire is disabled.
 - Boss rooms lock doors until the boss is defeated (doors turn red; HUD shows a hint).
-- Enemy line-of-sight (vision) rays can be toggled on/off from the debugger menu to debug aggro behavior.
+- Enemy line-of-sight (vision) rays can be toggled on/off from the debugger menu (F5) or with F3.
+- Press `E` near doors to transition between rooms (proximity-based interaction).
 - ASCII maps are parsed directly; each character is one tile wide.
-  - `#` = solid wall/platform
-  - `.` = empty space
-  - `S` = player spawn
-  - `D` = door to next room
+  - `#` = solid wall
+  - `.` = empty/air (floor in legacy mode)
+  - `_` = platform (one-way collision from above)
+  - `@` = breakable wall
+  - `S` = player spawn point
+  - `D` = door (entrance or exit)
    - `E` = Bug (basic enemy)
    - `f` = Frog
    - `r` = Archer
    - `w` = Wizard Caster
    - `a` = Assassin
    - `b` = Bee
+   - `k` = Knight Monster (armored melee enemy)
    - `B` = Boss (classic)
    - `G` = Golem (boss)
 
@@ -137,6 +152,10 @@ Each enemy is drawn as a colored rectangle; during their invulnerability frames 
    - Color: RGB(140, 140, 160) steel; i-frames: RGB(100, 100, 120)
    - Patterns: `!` diagonal dash, `!!` shoot, `!!` radial stun (AoE) that applies a stun tag within ~72 radius.
 
+- Knight Monster (`k`) — armored melee enemy
+   - Color: RGB(100, 120, 140) dark blue-gray; i-frames: RGB(70, 85, 100)
+   - Behavior: Armored ground enemy with shield and sword. Can block attacks from the front. Telegraphs strong sword strikes with `!` or `!!`.
+
 ## Project Structure
 
 The codebase is organized into logical modules for better maintainability:
@@ -146,6 +165,10 @@ The codebase is organized into logical modules for better maintainability:
 ├── config.py                  # Game configuration constants
 ├── README.md                  # This file
 ├── guide.txt                  # Quick reference guide
+├── arument_item.json          # Armament item definitions
+│
+├── config/                    # Configuration files
+│   └── pcg_config.json       # PCG runtime settings (seed, use_pcg flag)
 │
 ├── src/                       # Core source code
 │   ├── entities/             # Entity system
@@ -160,60 +183,90 @@ The codebase is organized into logical modules for better maintainability:
 │   │
 │   ├── systems/              # Game systems
 │   │   ├── inventory.py      # Inventory management
-│   │   ├── items.py          # Item definitions
+│   │   ├── items.py          # Item definitions and icon loading
 │   │   ├── shop.py           # Shop system
 │   │   ├── menu.py           # Menu system
-│   │   └── camera.py         # Camera management
+│   │   ├── camera.py         # Camera management with zoom
+│   │   ├── area_effects.py   # Area effect system (slow, DOT, etc.)
+│   │   └── on_hit_effects.py # On-hit effect system
 │   │
 │   ├── level/                # Level generation
-│   │   ├── level_generator.py      # Procedural generation
-│   │   ├── generation_algorithms.py # Generation algorithms
-│   │   ├── level.py               # Legacy static levels
-│   │   ├── level_validator.py     # Level validation
-│   │   ├── level_progression.py   # Difficulty scaling
-│   │   ├── seed_manager.py        # Seed management
-│   │   ├── terrain_system.py      # Terrain types
-│   │   ├── area_system.py         # Area definitions
-│   │   └── area_builder.py        # Area building
+│   │   ├── pcg_generator_simple.py  # Procedural generation
+│   │   ├── pcg_level_data.py        # PCG level data structures
+│   │   ├── pcg_postprocess.py       # Post-processing for PCG
+│   │   ├── level_loader.py          # Level loading singleton
+│   │   ├── config_loader.py         # PCG config loader
+│   │   ├── door_system.py           # Door interaction system
+│   │   ├── door_placement.py        # Door placement logic
+│   │   ├── door_utils.py            # Door utilities
+│   │   └── legacy_level.py          # Legacy static levels (preserved, do not modify)
+│   │
+│   ├── tiles/                # Tile system
+│   │   ├── tile_types.py      # TileType enum definitions
+│   │   ├── tile_data.py       # TileData dataclass
+│   │   ├── tile_registry.py   # TileRegistry singleton
+│   │   ├── tile_parser.py     # ASCII map parser
+│   │   ├── tile_renderer.py   # Tile rendering
+│   │   └── tile_collision.py  # Tile collision detection
 │   │
 │   ├── ai/                   # AI and behaviors
 │   │   └── enemy_movement.py # Enemy AI patterns
 │   │
-│   └── core/                 # Core utilities
-│       └── utils.py          # Helper functions
+│   ├── core/                 # Core utilities
+│   │   ├── utils.py          # Helper functions
+│   │   ├── input.py          # InputHandler for centralized event processing
+│   │   ├── interaction.py    # Proximity interaction system
+│   │   ├── movement.py       # Movement utilities
+│   │   └── constants.py      # Additional constants
+│   │
+│   ├── debug/                # Debug tools
+│   │   └── overlays.py       # Debug overlay rendering
+│   │
+│   └── ui/                   # UI components
+│       └── hud.py            # HUD rendering
 │
 ├── docs/                     # Documentation
 │   ├── developer_cheat(must read).txt
-│   └── level_generation_system_diagram.md
+│   └── (other documentation)
 │
-└── assets/                   # Game assets
-    ├── performance_benchmarks.py
-    └── inventory_debug.png
+├── assets/                   # Game assets
+│   ├── consumable/           # Consumable item icons
+│   └── armament/             # Armament item icons
+│
+└── tests/                    # Test suite
+    └── test_lifesteal.py
 ```
 
 ### Key Files:
-- **`main.py`** — Game loop, menus (Title/How to Play/Class Select/Pause), HUD, collisions
-- **`config.py`** — Config constants (sizes, colors, FPS, physics parameters)
-- **`src/entities/`** — All player and enemy code with component-based architecture
-- **`src/level/`** — Procedural level generation system
-- **`src/systems/`** — Inventory, shop, menu, and camera systems
+- **`main.py`** — Game loop, menus (Title/How to Play/Class Select/Pause), HUD, collisions, level loading
+- **`config.py`** — Config constants (sizes, colors, FPS, physics parameters, tile constants)
+- **`src/entities/`** — All player and enemy code with component-based architecture (CombatComponent, PhysicsComponent, VisionComponent)
+- **`src/level/`** — Procedural level generation system (PCG) and legacy static levels
+- **`src/systems/`** — Inventory, shop, menu, camera, and area effect systems
+- **`src/tiles/`** — Complete tile system with types, registry, collision, rendering
+- **`src/core/input.py`** — Centralized input/event handling via InputHandler class
+- **`config/pcg_config.json`** — Runtime PCG configuration (seed, use_pcg flag)
 
 ## Collaboration tips
 
-- Use a consistent Python version (3.11+ recommended) and Pygame 2.6+.
-- Before pushing, run the game locally to verify no errors.
+- Use a consistent Python version (3.11+ recommended, 3.13+ supported) and Pygame 2.6+.
+- Before pushing, run the game locally to verify no errors (`python main.py`).
 - Keep rooms ASCII-aligned (each line same width). Unknown characters are treated as empty.
 - When adding enemies or skills, tag hitboxes with an `owner` and use `visual_only` for telegraphs or non-damaging areas.
-- Prefer small focused commits with clear messages (e.g., "Add wizard cold field slow").
-- If you change controls or UI, update this README and the How to Play screen.
-- When you introduce new consumables or buffs, wire them through the catalog in `main.py` so the HUD and inventory automatically pick them up.
+- Prefer small focused commits with clear messages (e.g., "Add wizard teleport skill", not "Update code").
+- If you change controls or UI, update this README, guide.txt, and the How to Play screen in-game.
+- When you introduce new consumables or buffs, wire them through the catalog in `src/systems/items.py` so the HUD and inventory automatically pick them up.
+- **Legacy level system** (`src/level/legacy_level.py`) is preserved for compatibility — **DO NOT MODIFY**. Work with PCG files instead.
+- PCG configuration is loaded from `config/pcg_config.json` at runtime. Use `use_pcg: true` for procedural generation, `false` for legacy static levels.
 
 ### Suggested workflow for pair dev
 
-- Create a branch per feature (e.g., `feature/assassin-patterns`).
-- Coordinate room edits: agree on which room index each person is editing to avoid conflicts.
+- Create a branch per feature (e.g., `feature/wizard-teleport-skill`).
+- Coordinate room edits: agree on which room index or PCG room code each person is editing to avoid conflicts.
 - Test the boss-door locking logic if you change boss spawns (rooms with `G`/`B` are considered boss rooms).
-- Keep projectile lifetimes bounded to avoid perf spikes.
+- Keep projectile lifetimes bounded (< 180 frames) to avoid performance spikes.
+- Use the debug tools (F5 menu, F8 tile inspector, F9 wall jump debug, F10 area overlay) to verify changes.
+- For PCG changes, use `tools/pcg_validate.py` to validate level files before committing.
 
 ## Troubleshooting
 

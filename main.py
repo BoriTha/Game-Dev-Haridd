@@ -5,6 +5,14 @@ import pygame
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Reduce verbosity of PCG modules (only show warnings/errors)
+logging.getLogger('src.level.pcg_postprocess').setLevel(logging.WARNING)
+logging.getLogger('src.level.pcg_generator_simple').setLevel(logging.WARNING)
+
+# Reduce verbosity of PCG modules (only show warnings/errors)
+logging.getLogger('src.level.pcg_postprocess').setLevel(logging.WARNING)
+logging.getLogger('src.level.pcg_generator_simple').setLevel(logging.WARNING)
 from config import (
     WIDTH,
     HEIGHT,
@@ -547,12 +555,12 @@ class Game:
                 # Use door entrance position if found
                 lvl.spawn[0] = spawn_tile[0] * TILE
                 lvl.spawn[1] = spawn_tile[1] * TILE
-                logger.info(f"Using door entrance spawn at tile ({spawn_tile[0]}, {spawn_tile[1]}) for room {room.room_code}")
+                logger.debug(f"Using door entrance spawn at tile ({spawn_tile[0]}, {spawn_tile[1]}) for room {room.room_code}")
             else:
                 # Fall back to default center spawn
                 lvl.spawn[0] = default_spawn_x
                 lvl.spawn[1] = default_spawn_y
-                logger.info(f"No door entrance found in room {room.room_code}, using center spawn")
+                logger.debug(f"No door entrance found in room {room.room_code}, using center spawn")
         except Exception as e:
             # If spawn point finding fails, use default
             lvl.spawn[0] = default_spawn_x

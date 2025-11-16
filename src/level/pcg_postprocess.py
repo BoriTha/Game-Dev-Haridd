@@ -433,8 +433,9 @@ def add_floating_platforms(
                 break
                 
             # Try to place platform with connected path logic
+            # Prefer wider platforms (easier to land on)
             placed = False
-            for width in (3, 2, 1):
+            for width in (3, 3, 2, 2, 1):  # Try 3-wide twice, 2-wide twice, then 1-wide
                 x_start = max(1, min(w - width - 1, next_x - width // 2))
                 
                 # Check if this platform connects to previous platform
@@ -581,8 +582,7 @@ def add_floating_platforms(
                 
                 # If we've failed too many times, give up on this path
                 if consecutive_failures >= 20:  # INCREASED from 10
-                    import logging
-                    logging.getLogger(__name__).warning(f"Failed to build {path_name}: stuck after {steps} steps, {consecutive_failures} consecutive failures, platforms_added={platforms_added}")
+                    # Silently give up - this is normal for complex rooms
                     break
                 
                 # Nudge current position randomly - be more aggressive when stuck
@@ -615,18 +615,12 @@ def add_floating_platforms(
                 continue
 
     # 1. Build paths from entrance to unreachable exits
-    import logging
-    logger = logging.getLogger(__name__)
-    
     for dk, ex, ey, ew, eh in exits:
         if exit_initially_reachable.get(dk, False):
-            logger.debug(f"Exit {dk} already reachable, skipping platform path")
             continue  # Already reachable
         
-        logger.info(f"Building platform path from entrance to unreachable exit {dk} at ({ex}, {ey})")
         exit_centers = [(ex + ew // 2, ey + eh // 2)]
         build_connected_path(list(baseline_standable), exit_centers, f"entrance_to_{dk}", rng=rng)
-        logger.info(f"Finished building path to {dk}, platforms_added={platforms_added}")
 
     # 2. Build paths from pocket areas to exits (if pockets are trapped)
     pocket_areas = [a for a in getattr(room, 'areas', []) or [] if isinstance(a, dict) and a.get('kind') == 'pocket_room']
@@ -955,8 +949,33 @@ def add_floating_platforms(
         platforms_added += run_w
         deco_tries += 1
 
-    # Final repair pass: DISABLED FOR DEBUGGING
-    # The repair pass was removing all platforms, so let's see if they get placed first
+    # Final connectivity verification: ensure all initially-reachable exits are still reachable
+    # (runs silently - only logs errors)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    final_reachable = _reachable_from_entrance(tiles, entrances, profile, config, tile_size, 
+                                                consider_exclusion=lambda x,y: _is_excluded(room, x, y))
+    
+    unreachable_exits = []
+    for dk, was_reachable in exit_initially_reachable.items():
+        if was_reachable:
+            # Find this exit and check if still reachable
+            for edk, ex, ey, ew, eh in exits:
+                if edk == dk:
+                    still_reachable = False
+                    for tx, ty in exit_rect_tiles(ex, ey, ew, eh):
+                        if (tx, ty) in final_reachable:
+                            still_reachable = True
+                            break
+                    if not still_reachable:
+                        unreachable_exits.append(dk)
+                    break
+    
+    # Only log if there's a problem
+    if unreachable_exits:
+        logger.warning(f"PCG: {len(unreachable_exits)} exit(s) unreachable after platform placement: {unreachable_exits}")
+    
     return platforms_added
 
 
@@ -999,6 +1018,8 @@ def add_enemy_spawn_areas(
     protected: Set[Tuple[int,int]] = set()
     pocket_rects: List[Tuple[int,int,int,int]] = []
     door_rects: List[Tuple[int,int,int,int]] = []
+    platform_rects: List[Tuple[int,int,int,int]] = []
+    
     for a in getattr(room, 'areas', []) or []:
         if not isinstance(a, dict):
             continue
@@ -1010,18 +1031,40 @@ def add_enemy_spawn_areas(
                 pocket_rects.append((rx, ry, rw, rh))
             if kind == 'door_carve':
                 door_rects.append((rx, ry, rw, rh))
+            if kind == 'platform':
+                platform_rects.append((rx, ry, rw, rh))
             for yy in range(ry, ry + rh):
                 for xx in range(rx, rx + rw):
                     if kind in ('exclusion_zone', 'platform'):
                         protected.add((xx, yy))
+    
+    # Expand platform protection zones to avoid spawning enemies on jump paths
+    PLATFORM_BUFFER = 2  # 2 tiles around platforms (for jump clearance)
+    for (prx, pry, prw, prh) in platform_rects:
+        for yy in range(max(0, pry - PLATFORM_BUFFER), min(h, pry + prh + PLATFORM_BUFFER)):
+            for xx in range(max(0, prx - PLATFORM_BUFFER), min(w, prx + prw + PLATFORM_BUFFER)):
+                protected.add((xx, yy))
 
     # Also protect tiles within a radius around doors (pad), but allow tiles inside pocket rooms
     DOOR_PAD = 10
+    ENTRANCE_SAFE_ZONE = 12  # Larger safe zone for entrance (no enemies)
+    
     for (drx, dry, drw, drh) in door_rects:
-        x0 = max(0, drx - DOOR_PAD)
-        x1 = min(w, drx + drw + DOOR_PAD)
-        y0 = max(0, dry - DOOR_PAD)
-        y1 = min(h, dry + drh + DOOR_PAD)
+        # Check if this is an entrance door by looking at door_key in room areas
+        is_entrance = False
+        for a in getattr(room, 'areas', []) or []:
+            if a.get('kind') == 'door_carve':
+                for r in a.get('rects', []):
+                    if r.get('x') == drx and r.get('y') == dry:
+                        if r.get('door_key') == 'entrance':
+                            is_entrance = True
+                            break
+        
+        pad = ENTRANCE_SAFE_ZONE if is_entrance else DOOR_PAD
+        x0 = max(0, drx - pad)
+        x1 = min(w, drx + drw + pad)
+        y0 = max(0, dry - pad)
+        y1 = min(h, dry + drh + pad)
         for yy in range(y0, y1):
             for xx in range(x0, x1):
                 # skip if inside any pocket rect (pocket areas still allowed)
@@ -1067,17 +1110,35 @@ def add_enemy_spawn_areas(
                 rx = int(r.get('x', 0)); ry = int(r.get('y', 0)); rw = int(r.get('w', 1)); rh = int(r.get('h', 1))
                 if rw <= 0 or rh <= 0:
                     continue
-                # determine allowed enemy types for pocket (default to both types)
+                # determine allowed enemy types for pocket with difficulty scaling
                 surface = 'both'
+                
+                # Calculate distance from entrance for difficulty scaling
+                entrance_positions = _find_entrance_positions(room, tiles, air_id)
+                if entrance_positions:
+                    ex, ey = entrance_positions[0]
+                    pocket_cx = rx + rw // 2
+                    pocket_cy = ry + rh // 2
+                    dist_from_entrance = ((pocket_cx - ex) ** 2 + (pocket_cy - ey) ** 2) ** 0.5
+                    max_dist = ((w - 2) ** 2 + (h - 2) ** 2) ** 0.5
+                    difficulty = min(1.0, dist_from_entrance / max(1, max_dist))
+                else:
+                    difficulty = 0.5
+                
                 if allowed_enemy_types is not None:
                     aet = allowed_enemy_types
                 else:
-                    if surface == 'ground':
-                        aet = ['Bug','Frog','Archer','Assassin','KnightMonster','Golem']
-                    elif surface == 'air':
-                        aet = ['Bee','WizardCaster']
-                    else:
-                        aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','KnightMonster','Golem']
+                    # Scale enemy difficulty based on distance from entrance
+                    easy = ['Bug', 'Frog', 'Bee']
+                    medium = ['Archer', 'Assassin', 'WizardCaster']
+                    hard = ['KnightMonster', 'Golem']
+                    
+                    if difficulty < 0.3:  # Near entrance (easy)
+                        aet = easy + medium
+                    elif difficulty < 0.6:  # Medium distance
+                        aet = easy + medium + hard
+                    else:  # Far from entrance (harder)
+                        aet = medium + hard
 
                 # Use square root scaling for caps/weights to prevent huge clusters in large rooms
                 area = rw * rh
@@ -1202,16 +1263,49 @@ def add_enemy_spawn_areas(
                 cur_x += rw
                 continue
 
-            # determine allowed enemy types for this region
+            # determine allowed enemy types for this region with difficulty scaling
+            # Calculate distance from entrance for difficulty scaling
+            entrance_positions = _find_entrance_positions(room, tiles, air_id)
+            if entrance_positions:
+                ex, ey = entrance_positions[0]
+                dist_from_entrance = ((x0 - ex) ** 2 + (y0 - ey) ** 2) ** 0.5
+                # Normalize distance (0.0 = entrance, 1.0 = far)
+                max_dist = ((w - 2) ** 2 + (h - 2) ** 2) ** 0.5
+                difficulty = min(1.0, dist_from_entrance / max(1, max_dist))
+            else:
+                difficulty = 0.5  # Default to medium difficulty
+            
             if allowed_enemy_types is not None:
                 aet = allowed_enemy_types
             else:
+                # Easy enemies (near entrance)
+                easy_ground = ['Bug', 'Frog']
+                easy_air = ['Bee']
+                # Medium enemies
+                med_ground = ['Archer', 'Assassin']
+                med_air = ['WizardCaster']
+                # Hard enemies (far from entrance)
+                hard_ground = ['KnightMonster', 'Golem']
+                
                 if surface == 'ground':
-                    aet = ['Bug','Frog','Archer','Assassin','KnightMonster','Golem']
+                    if difficulty < 0.3:  # Near entrance
+                        aet = easy_ground + med_ground
+                    elif difficulty < 0.6:  # Medium distance
+                        aet = easy_ground + med_ground + hard_ground
+                    else:  # Far from entrance
+                        aet = med_ground + hard_ground
                 elif surface == 'air':
-                    aet = ['Bee','WizardCaster']
-                else:
-                    aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','KnightMonster','Golem']
+                    if difficulty < 0.5:
+                        aet = easy_air
+                    else:
+                        aet = easy_air + med_air
+                else:  # both
+                    if difficulty < 0.3:
+                        aet = easy_ground + easy_air + med_ground
+                    elif difficulty < 0.6:
+                        aet = easy_ground + easy_air + med_ground + med_air
+                    else:
+                        aet = med_ground + med_air + hard_ground
 
             # Use square root scaling for caps/weights to prevent clustering
             area = rw * rh

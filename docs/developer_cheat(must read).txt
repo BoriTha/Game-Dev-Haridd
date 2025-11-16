@@ -17,6 +17,7 @@ Hotkeys (during gameplay):
 
 - F5  — Open Debugger Menu
   - Opens the comprehensive debug menu with additional options.
+  - Use arrow keys/WASD to navigate, Enter to activate, Esc/F5 to close.
 
 - F6  — Toggle Shop
   - Opens/closes the shop interface for purchasing items with money.
@@ -26,16 +27,34 @@ Hotkeys (during gameplay):
 
 - F8  — Toggle Tile Inspector
   - Shows/hides tile information overlay for debugging level geometry.
+  - Displays tile type, collision properties, and metadata at cursor position.
 
-- F10 — Toggle No-clip Mode
-  - Allows player to move through walls and obstacles (debug only).
-  - When combined with God Mode, use WASD to float in any direction.
+- F9  — Toggle Wall Jump Debug Visualization
+  - Shows/hides wall jump debug information (coyote time, wall attach state, etc.).
+  - Displays visual indicators for wall slide, wall jump state, and timers.
 
-- F11 — Reserved (no-op)
-  - Previously used for procedural regeneration; now disabled.
+- F10 — Toggle Area Overlay (PCG mode)
+  - Shows/hides area visualization for PCG rooms (spawn zones, combat areas, etc.).
+  - Displays semi-transparent colored overlays for different area types.
+  - Opacity can be adjusted from the debugger menu (F5).
 
-- F12 — Go to Boss Room
-  - Instantly teleports to Room 6 (boss room) for testing.
+- F11 — Follow door_exit_1 (PCG mode) / Reserved (Legacy mode)
+  - In PCG mode: Instantly teleports through the first exit door of the current room.
+  - In Legacy mode: Reserved/no-op.
+
+- F12 — Follow door_exit_2 (PCG mode) / Go to Boss Room (Legacy mode)
+  - In PCG mode: Instantly teleports through the second exit door of the current room.
+  - In Legacy mode: Teleports to Room 6 (boss room) for testing.
+
+- Z — Toggle Camera Zoom
+  - Cycles through zoom levels (1.0x, 1.5x, 2.0x).
+  - Shows zoom level notification on screen.
+
+- Double-tap Space (only in God Mode) — Toggle No-clip + Floating Mode
+  - First tap within ~0.33 seconds of previous tap activates no-clip and floating.
+  - Player can move through walls and use WASD to float in any direction.
+  - Double-tap again to deactivate.
+  - Requires God Mode to be enabled first.
 
 Notes:
 - Active cheats are shown on the HUD (top-right):
@@ -44,39 +63,81 @@ Notes:
 - Boss rooms keep doors locked until the boss is defeated.
 - No-clip mode requires God Mode for floating controls (WASD).
 
-Debugger Menu Features:
+Debugger Menu Features (F5):
 - Toggle God Mode, Infinite Mana, Zero Cooldown, and No-clip Mode
-- Teleport to any room via level picker
-- Give items and equipment directly to inventory
+- Teleport to any room or level via level/room picker (works for both PCG and legacy modes)
+- Give items and equipment directly to inventory via "Give Items" submenu
 - Refill all consumables instantly
 - Toggle enemy vision rays and nametags
-- Access additional debug options
+- Toggle area overlay visualization for PCG rooms
+- Adjust area overlay opacity (increase/decrease)
+- Toggle PCG mode on/off (switch between procedural and static legacy levels)
+- Navigate with arrow keys or WASD, Enter to activate, Esc/F5 to close
 
 Shop System (F6):
 - Purchase consumables and equipment with money
-- Random inventory selection (3 consumables, 3 equipment)
-- Stock limits prevent unlimited consumable purchases
+- Random inventory selection (3 consumables, 3 equipment per shop visit)
+- Stock limits prevent unlimited consumable purchases per visit
 - Equipment purchases are permanent per shop visit
+- Shops appear automatically after completing certain rooms in both PCG and legacy modes
+- Use mouse or keyboard navigation to browse and purchase items
 
 Tile Inspector (F8):
-- Shows tile type information at cursor position
+- Shows tile type information at mouse cursor position
 - Displays collision properties and tile metadata
+- Shows tile coordinates (grid x, y) and world coordinates
+- Displays tile name and collision type (full, platform, none, etc.)
 - Useful for debugging level geometry and collision issues
+- Works in both PCG and legacy level modes
 
-Procedural Generation:
-- Can be toggled on/off via the game menu system
-- When enabled, generates random levels instead of static rooms
-- Uses advanced algorithms for room placement and connectivity
+Wall Jump Debug (F9):
+- Displays wall jump state information overlaid on player
+- Shows coyote timer, buffer timer, wall jump cooldown
+- Visualizes wall attachment state (left/right wall)
+- Displays wall slide speed and gravity scale
+- Shows wall jump direction and active state
+- Useful for debugging and tuning wall jump physics
+
+Area Overlay (F10):
+- Visualizes PCG room areas with semi-transparent colored overlays
+- Shows spawn zones, combat areas, safe zones, etc.
+- Each area type has a distinct color for easy identification
+- Opacity can be adjusted from the debugger menu (F5)
+- Only works in PCG mode (procedurally generated levels)
+
+Procedural Generation (PCG):
+- Can be toggled on/off via the debugger menu (F5) or config/pcg_config.json
+- When enabled, generates random levels instead of static hardcoded rooms
+- Uses room-based system with level_id and room_code (e.g., 1A, 1B, 2A, etc.)
+- Each level can have multiple rooms connected by doors
+- Seed-based generation ensures reproducible levels (seed can be set in config)
+- Door system allows E-key interaction to transition between rooms
+- Rooms contain spawn areas for enemies, combat zones, and safe areas
 
 Where implemented:
+- src/core/input.py
+  - Centralized input handling via InputHandler.process_events()
+  - F1-F12 key handlers, consumable hotkeys, inventory/shop input
+  - Mouse wheel scrolling, left click handling
 - main.py
-  - Toggle handling: Game.run() KEYDOWN branch
-  - Effects applied: Game.update() (mana/cooldowns), Player.god flag
-  - Shop system: Shop class integration
-  - No-clip physics: Player.update() movement overrides
-  - Tile inspector: Game.render() overlay rendering
+  - Game.update() applies cheat effects (mana/cooldowns), double-space no-clip toggle
+  - Game.debug_menu() provides interactive debugger overlay (F5)
+  - Game.draw() renders debug overlays (tile inspector, area overlay, collision log)
+- src/debug/overlays.py
+  - DebugOverlays class handles all debug visualization rendering
+  - Tile inspector, collision boxes, area overlay, grid position, wall jump debug
+- src/systems/shop.py
+  - Shop class handles shop UI and purchase logic
+- src/systems/inventory.py
+  - Inventory class handles inventory UI and item management
 
-Tip:
+Tips:
 - If you add new skills with cooldowns, include their cooldown attributes in the zero-cooldown section in Game.update().
-- Use the tile inspector when debugging collision issues with new tile types.
-- Combine God Mode + No-clip for rapid level testing and navigation.
+- Use the tile inspector (F8) when debugging collision issues with new tile types.
+- Use the area overlay (F10) to visualize PCG room structure and spawn zones.
+- Use the wall jump debug (F9) to tune wall jump physics parameters.
+- Combine God Mode + No-clip (double-tap Space) for rapid level testing and navigation.
+- Use the debugger menu (F5) to access all debug features in one place.
+- Use F11/F12 to quickly test door transitions in PCG mode.
+- Toggle camera zoom (Z) to get a better view of large rooms or detailed areas.
+- Check config/pcg_config.json to change PCG settings (seed, use_pcg flag) without code changes.

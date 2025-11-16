@@ -22,9 +22,12 @@ Developer Cheats:
 - F6  Toggle Shop
 - F7  Add 1000 Money
 - F8  Toggle Tile Inspector
-- F10 No-clip Mode (toggle)
-- F11 Reserved (no-op)
-- F12 Go to Boss Room (Room 6)
+- F9  Toggle Wall Jump Debug Visualization
+- F10 Toggle Area Overlay (PCG room areas)
+- F11 Follow door_exit_1 (PCG mode) / Reserved (Legacy mode)
+- F12 Follow door_exit_2 (PCG mode) / Go to Boss Room (Legacy mode)
+- Z   Toggle Camera Zoom
+- Double-tap Space (in God Mode): Toggle No-clip + Floating Mode
 
 ASCII Map Legend (Canonical):
 - # : Wall
@@ -34,16 +37,17 @@ ASCII Map Legend (Canonical):
 -   : (space) Empty/Air
 - S : Spawn point
 - D : Door to next room
-- E, f, r, w, a, b, G, B : Enemies (see below)
+- E, f, r, w, a, b, k, G, B : Enemies (see below)
 
-Note on Legacy Maps (the current hardcoded rooms):
+Note on Legacy Maps (the hardcoded static rooms in src/level/legacy_level.py):
 - In legacy maps, '.' is used for Empty/Air instead of a space.
 - The character '=' is also treated as Empty/Air.
+- Legacy mode is preserved but game defaults to PCG (Procedural Content Generation) mode.
 
 Classes:
 - Knight: Tanky melee with Shield/Power/Charge skills
 - Ranger: Ranged with charge shots, triple-shot, and speed boost
-- Wizard: Spellcaster with Fireball, Cold Field, and Magic Missiles
+- Wizard: Spellcaster with Fireball, Cold Field, Magic Missiles, and Teleport
 
 Inventory System:
 - Press I to open inventory overlay
@@ -92,6 +96,10 @@ Monsters (color = rectangle fill color; darker variant indicates i-frames):
   - Color: RGB(140,140,160) steel; i-frames: RGB(100,100,120)
   - Patterns: "!" diagonal dash, "!!" shoot, "!!" radial stun AoE (applies stun tag, radius ~72).
 
+- Knight Monster (k)
+  - Color: RGB(100,120,140) dark blue-gray; i-frames: RGB(70,85,100)
+  - Armored ground enemy with shield and sword. Can block attacks from the front. Telegraphs strong sword strikes with "!" or "!!".
+
 Debugger Menu:
 - Toggle God Mode, Infinite Mana, Zero Cooldown
 - Toggle No-clip Mode
@@ -102,9 +110,13 @@ Debugger Menu:
 - Toggle enemy nametags
 
 New Features:
-- Procedural level generation (can be toggled on/off)
-- Component-based entity architecture
+- Procedural level generation (PCG) with room-based system (default mode)
+- Component-based entity architecture with CombatComponent, PhysicsComponent, VisionComponent
 - Advanced AI movement system with modular strategies
-- Comprehensive tile system with registry
-- Money system for shop purchases
-- Enhanced debug tools (tile inspector, nametags, no-clip)
+- Comprehensive tile system with TileRegistry and TileType enums
+- Money system for shop purchases with randomized inventory
+- Enhanced debug tools (tile inspector, area overlay, nametags, wall jump debug, collision log)
+- Physics-based wall jump system with coyote time and controlled slide
+- Camera zoom system (toggle with Z key)
+- Door system with proximity-based E-key interaction
+- PCG config file (config/pcg_config.json) for runtime level generation settings
