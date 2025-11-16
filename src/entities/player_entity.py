@@ -1,5 +1,6 @@
 import math
 import pygame
+import logging
 
 from config import (
     FPS, GRAVITY, TERMINAL_VY, PLAYER_SPEED, PLAYER_AIR_SPEED, PLAYER_JUMP_V,
@@ -18,6 +19,9 @@ from config import (
 )
 from .entity_common import Hitbox, DamageNumber, hitboxes, floating
 from .components.combat_component import CombatComponent
+from .animation_system import AnimationManager, AnimationState
+
+logger = logging.getLogger(__name__)
 
 class Player:
     def __init__(self, x, y, cls='Knight'):
@@ -33,6 +37,8 @@ class Player:
         self.on_left_wall = False
         self.on_right_wall = False
         self.wall_sliding = False
+        self._left_wall_contact_frames = 0
+        self._right_wall_contact_frames = 0
         self.wall_jump_cooldown = 0
         self.wall_jump_coyote_timer = 0
         self.wall_jump_buffer_timer = 0
@@ -148,6 +154,8 @@ class Player:
         self.charge_time = 0
         self.charge_threshold = int(0.5 * FPS)
         self._prev_lmb = False
+        # Animation smoothing
+        self._anim_grounded_buffer = 0
         self.triple_timer = 0
         self.sniper_ready = False
         self.sniper_mult = 2.5
@@ -175,6 +183,199 @@ class Player:
             'spell_lifesteal': float(getattr(self.combat, 'spell_lifesteal_pct', getattr(self.combat, 'spell_lifesteal', 0.0))),
         }
         self.money = 0
+
+        # Initialize animation system for Ranger/Archer class (call after all properties set)
+        self.anim_manager = None
+        if cls == 'Ranger':
+            self._setup_ranger_animations()
+
+    @property
+    def visual_center(self):
+        """Return the visual center point for arrow spawning (chest height for Ranger)"""
+        if self.cls == 'Ranger':
+            # For Ranger, offset upward to chest/bow height (approx 40% up from collision center)
+            # Sprite is 64px tall, collision is 30px tall, so offset by ~12 pixels upward
+            return (self.rect.centerx, self.rect.centery - 20)
+        return self.rect.center
+    
+    def _setup_ranger_animations(self):
+        """Setup animation system for Ranger class - clean implementation"""
+        try:
+            self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
+            sprite_size = (48, 64)
+            
+            # IDLE - Lowest priority, always available
+            self.anim_manager.load_animation(
+                AnimationState.IDLE,
+                ["assets/Player/Ranger/idle/Idle-1.png", "assets/Player/Ranger/idle/Idle-2.png"],
+                sprite_size=sprite_size,
+                frame_duration=10,
+                loop=True,
+                priority=0
+            )
+            
+            # RUN - Basic movement
+            self.anim_manager.load_animation(
+                AnimationState.RUN,
+                [f"assets/Player/Ranger/run/run-{i}.png" for i in range(1, 9)],
+                sprite_size=sprite_size,
+                frame_duration=5,
+                loop=True,
+                priority=1
+            )
+            
+            # JUMP - Moving upward
+            self.anim_manager.load_animation(
+                AnimationState.JUMP,
+                ["assets/Player/Ranger/jump.png"],
+                sprite_size=sprite_size,
+                frame_duration=1,
+                loop=True,
+                priority=2
+            )
+            
+            # FALL - Moving downward
+            self.anim_manager.load_animation(
+                AnimationState.FALL,
+                ["assets/Player/Ranger/fall.png"],
+                sprite_size=sprite_size,
+                frame_duration=1,
+                loop=True,
+                priority=2
+            )
+            
+            # WALL_SLIDE - On wall
+            self.anim_manager.load_animation(
+                AnimationState.WALL_SLIDE,
+                ["assets/Player/Ranger/climb.png"],
+                sprite_size=sprite_size,
+                frame_duration=1,
+                loop=True,
+                priority=3
+            )
+            
+            # DASH - High priority action (but lower than shoot/charge so they can override)
+            self.anim_manager.load_animation(
+                AnimationState.DASH,
+                [f"assets/Player/Ranger/dash/dash-{i}.png" for i in range(1, 4)],
+                sprite_size=sprite_size,
+                frame_duration=3,
+                loop=False,
+                priority=3,  # Same as wall slide
+                next_state=AnimationState.IDLE
+            )
+            
+            # CHARGE - Drawing bow (progressive)
+            self.anim_manager.load_animation(
+                AnimationState.CHARGE,
+                [f"assets/Player/Ranger/attk-adjust/charge/na-{i}.png" for i in range(1, 5)],
+                sprite_size=sprite_size,
+                frame_duration=5,
+                loop=False,
+                priority=4,
+                next_state=AnimationState.CHARGED
+            )
+            
+            # CHARGED - Holding at full draw
+            self.anim_manager.load_animation(
+                AnimationState.CHARGED,
+                ["assets/Player/Ranger/attk-adjust/charged/na-5.png"],
+                sprite_size=sprite_size,
+                frame_duration=1,
+                loop=True,
+                priority=4
+            )
+            
+            # SHOOT - Releasing arrow
+            self.anim_manager.load_animation(
+                AnimationState.SHOOT,
+                ["assets/Player/Ranger/attk-adjust/shoot/na-5.png", 
+                 "assets/Player/Ranger/attk-adjust/shoot/na-6.png"],
+                sprite_size=sprite_size,
+                frame_duration=4,
+                loop=False,
+                priority=4,
+                next_state=AnimationState.IDLE
+            )
+            
+            self.anim_manager.set_sprite_offset(0, 0)
+            logger.info("[Player] Ranger animations loaded successfully")
+        except Exception as e:
+            logger.exception(f"[Player] Failed to load Ranger animations: {e}")
+            self.anim_manager = None
+
+    def _update_ranger_animations(self):
+        """Update Ranger animation state - clean state machine with smoothing"""
+        if not self.anim_manager:
+            return
+        
+        # Smooth ground detection to prevent flicker (use coyote time concept)
+        if self.on_ground or self.coyote > 0:
+            self._anim_grounded_buffer = 5  # Stay "grounded" for animation for 5 frames
+        elif self._anim_grounded_buffer > 0:
+            self._anim_grounded_buffer -= 1
+        
+        anim_grounded = self._anim_grounded_buffer > 0
+        
+        current = self.anim_manager.current_state
+        
+        # Priority 1: DASH (only while actively dashing)
+        if self.dashing > 0:
+            if current != AnimationState.DASH:
+                self.anim_manager.play(AnimationState.DASH, force=True)
+            return
+        
+        # Priority 2: SHOOT (don't interrupt while playing)
+        if current == AnimationState.SHOOT and self.anim_manager.is_playing:
+            return
+        
+        # Priority 3: CHARGE/CHARGED
+        if self.charging:
+            if self.charge_time >= self.charge_threshold:
+                if current != AnimationState.CHARGED:
+                    self.anim_manager.play(AnimationState.CHARGED, force=True)
+            else:
+                if current != AnimationState.CHARGE:
+                    self.anim_manager.play(AnimationState.CHARGE, force=True)
+            return
+        
+        # Priority 4: RUN (on ground + moving) - CHECK BEFORE WALL_SLIDE
+        # This prevents flicker when pushing into wall on ground
+        if anim_grounded and abs(self.vx) > 0.3:
+            if current != AnimationState.RUN:
+                self.anim_manager.play(AnimationState.RUN, force=True)
+            return
+        
+        # Priority 5: IDLE when grounded and not moving - CHECK BEFORE WALL_SLIDE
+        if anim_grounded:
+            if current != AnimationState.IDLE:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+            return
+        
+        # Priority 6: WALL_SLIDE (only when airborne)
+        # CRITICAL: Must be truly airborne (no ground contact at all) AND on wall AND falling
+        is_truly_airborne = not self.on_ground and self.coyote == 0 and self._anim_grounded_buffer == 0
+        is_on_wall = self.on_left_wall or self.on_right_wall
+        is_falling_on_wall = self.vy > 0  # Moving downward
+        
+        if is_truly_airborne and is_on_wall and is_falling_on_wall:
+            if current != AnimationState.WALL_SLIDE:
+                self.anim_manager.play(AnimationState.WALL_SLIDE, force=True)
+            return
+        
+        # Priority 7: AIR STATES (jump/fall) - only if clearly in air
+        if self.vy < -1.0:  # Rising with clear upward velocity
+            if current != AnimationState.JUMP:
+                self.anim_manager.play(AnimationState.JUMP, force=True)
+            return
+        elif self.vy > 1.0:  # Falling with clear downward velocity
+            if current != AnimationState.FALL:
+                self.anim_manager.play(AnimationState.FALL, force=True)
+            return
+        
+        # Priority 8: Final fallback to IDLE
+        if current != AnimationState.IDLE:
+            self.anim_manager.play(AnimationState.IDLE, force=True)
 
     def _find_safe_landing_spot(self, level):
         """Find a safe landing spot when exiting floating mode. Places player on top of nearest platform with at least 2 tiles of headroom."""
@@ -271,6 +472,9 @@ class Player:
                 move -= 1
             if keys[pygame.K_d]:
                 move += 1
+        
+        # Store current movement input for dash direction
+        self._current_move_input = move
 
         # Track if we just exited floating mode
         just_exited_floating = getattr(self, '_was_floating_mode', False) and not getattr(self, 'floating_mode', False)
@@ -338,10 +542,28 @@ class Player:
                         # No input: air friction is handled in _apply_physics()
                         pass
 
-            # Update facing only when there is horizontal input
-            if move != 0:
+            # Update facing only when there is horizontal input AND not actively charging/shooting
+            # For Ranger: Lock facing to mouse direction during charge/shoot
+            is_ranger_aiming = (self.cls == 'Ranger' and 
+                               (getattr(self, 'charging', False) or 
+                                (self.anim_manager and self.anim_manager.current_state == AnimationState.SHOOT)))
+            
+            if move != 0 and not is_ranger_aiming:
                 self.facing = move
 
+        # Update Ranger facing direction when actively charging or shooting
+        if self.cls == 'Ranger':
+            # Lock facing to mouse during charge AND shoot animation
+            is_shooting = (self.anim_manager and self.anim_manager.current_state == AnimationState.SHOOT)
+            if getattr(self, 'charging', False) or is_shooting:
+                mx, my = pygame.mouse.get_pos()
+                # Convert mouse screen position to world position
+                world_x = (mx / camera.zoom) + camera.x
+                # Update facing based on mouse position relative to player
+                if world_x < self.rect.centerx:
+                    self.facing = -1  # Facing left
+                elif world_x > self.rect.centerx:
+                    self.facing = 1   # Facing right
       
         # Jump input buffering - allow jumping when in god mode with floating mode OFF
         in_no_clip_but_not_floating = getattr(self, 'no_clip', False) and not getattr(self, 'floating_mode', False)
@@ -450,11 +672,17 @@ class Player:
             # Dash cancels wall jump state
             self.wall_jump_state = None
         
+        # Determine dash direction from current movement input, fallback to facing
+        dash_direction = getattr(self, '_current_move_input', 0)
+        if dash_direction == 0:
+            # No input, use facing direction as fallback
+            dash_direction = self.facing
+        
         # grant short invincibility when dash starts (0.25s)
         self.combat.invincible_frames = int(0.25 * FPS)
         self.dashing = DASH_TIME
         self.vy = 0
-        self.vx = self.facing * DASH_SPEED
+        self.vx = dash_direction * DASH_SPEED
 
     def start_attack(self, keys, camera):
         # Wizard: ranged normal attack toward mouse
@@ -511,43 +739,55 @@ class Player:
         hitboxes.append(Hitbox(hb, ATTACK_LIFETIME, dmg, self, dir_vec, pogo=(dir_vec==(0,1))))
 
     def fire_arrow(self, damage, speed, camera, pierce=False):
+        # Trigger shoot animation when firing
+        if self.anim_manager:
+            self.anim_manager.play(AnimationState.SHOOT)
+        
         # spawn a moving arrow hitbox toward mouse direction
         mx, my = pygame.mouse.get_pos()
         # Convert mouse screen position to world position accounting for camera and zoom
         world_x = (mx / camera.zoom) + camera.x
         world_y = (my / camera.zoom) + camera.y
-        dx = world_x - self.rect.centerx
-        dy = world_y - self.rect.centery
+        # Use visual center (chest height) instead of collision box center
+        visual_x, visual_y = self.visual_center
+        dx = world_x - visual_x
+        dy = world_y - visual_y
         dist = (dx*dx + dy*dy) ** 0.5
         if dist == 0:
             nx, ny = (1, 0)
         else:
             nx, ny = dx / dist, dy / dist
         hb = pygame.Rect(0, 0, 10, 6)
-        hb.center = self.rect.center
+        hb.center = self.visual_center
         # Keep velocity as float for better precision
         vx = nx * speed
         vy = ny * speed
-        hitboxes.append(Hitbox(hb, 120, damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, pierce=pierce))
+        hitboxes.append(Hitbox(hb, 120, damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, pierce=pierce, has_sprite=True, arrow_sprite=True))
 
     def fire_triple_arrows(self, base_damage, speed, camera, pierce=False):
+        # Trigger shoot animation when firing
+        if self.anim_manager:
+            self.anim_manager.play(AnimationState.SHOOT)
+        
         # Fire three arrows with slight angle offsets
         import math
         mx, my = pygame.mouse.get_pos()
         # Convert mouse screen position to world position accounting for camera and zoom
         world_x = (mx / camera.zoom) + camera.x
         world_y = (my / camera.zoom) + camera.y
-        dx = world_x - self.rect.centerx
-        dy = world_y - self.rect.centery
+        # Use visual center (chest height) instead of collision box center
+        visual_x, visual_y = self.visual_center
+        dx = world_x - visual_x
+        dy = world_y - visual_y
         base_ang = math.atan2(dy, dx)
         for ang in (base_ang - math.radians(8), base_ang, base_ang + math.radians(8)):
             nx, ny = math.cos(ang), math.sin(ang)
             hb = pygame.Rect(0, 0, 10, 6)
-            hb.center = self.rect.center
+            hb.center = self.visual_center
             # Keep velocity as float for better precision
             vx = nx * speed
             vy = ny * speed
-            hitboxes.append(Hitbox(hb, 120, base_damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, pierce=pierce, bypass_ifr=True))
+            hitboxes.append(Hitbox(hb, 120, base_damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, pierce=pierce, bypass_ifr=True, has_sprite=True, arrow_sprite=True))
 
     # --- Wizard skill casts ---
     def cast_fireball(self, level, camera):
@@ -736,8 +976,6 @@ class Player:
         # Update all combat timers and states
         self.combat.update()
 
-
-
         # Tick shared mobility cooldown
         if self.mobility_cd > 0:
             self.mobility_cd -= 1
@@ -775,6 +1013,10 @@ class Player:
             self.wall_sliding = False
             self.wall_jump_coyote_timer = 0
             self.wall_jump_buffer_timer = 0
+            self.on_left_wall = False
+            self.on_right_wall = False
+            self._left_wall_contact_frames = 0
+            self._right_wall_contact_frames = 0
         else:
             self.coyote = max(0, self.coyote-1)
 
@@ -789,6 +1031,10 @@ class Player:
             self.wall_jump_buffer_timer -= 1
         if self.wall_reattach_timer > 0:
             self.wall_reattach_timer -= 1
+        if self._left_wall_contact_frames > 0:
+            self._left_wall_contact_frames -= 1
+        if self._right_wall_contact_frames > 0:
+            self._right_wall_contact_frames -= 1
 
         # CRITICAL FIX: Check wall sliding state BEFORE processing jumps
         # This ensures we know if player is actually in a wall slide state
@@ -876,16 +1122,58 @@ class Player:
                     self.rect = new_rect
                     self.vx = float(new_velocity.x)
                     self.vy = float(new_velocity.y)
-                    self.was_on_ground = self.on_ground
-                    self.on_ground = False
+                    
+                    # Store previous ground state
+                    self.was_on_ground = self.on_ground 
+                    
+                    # Reset collision states
+                    self.on_ground = False              
                     self.on_left_wall = False
                     self.on_right_wall = False
+                    
+                    # FIRST PASS: Check if we have ground collision
+                    has_ground_collision = any(c.get("side") == "top" for c in collision_info_list)
+                    
+                    # Update from collision results
                     for c in collision_info_list:
                         side = c.get("side")
-                        if side == "top": self.on_ground = True
-                        elif side == "left": self.on_right_wall = True
-                        elif side == "right": self.on_left_wall = True
-                        elif side == "bottom": self.on_ground = False
+                        if side == "top":
+                            self.on_ground = True
+                        elif side == "left":
+                            # Only set wall flags if NOT on ground
+                            if not has_ground_collision:
+                                self.on_right_wall = True
+                                self._right_wall_contact_frames = WALL_STICK_FRAMES
+                        elif side == "right":
+                            # Only set wall flags if NOT on ground
+                            if not has_ground_collision:
+                                self.on_left_wall = True
+                                self._left_wall_contact_frames = WALL_STICK_FRAMES
+                        elif side == "bottom":
+                            self.on_ground = False
+                    
+                    # CRITICAL FIX: Clear wall flags AND wall_sliding if on ground
+                    # Wall contact only matters when airborne (for wall jumps/slides)
+                    if self.on_ground:
+                        # DEBUG: Print when we clear wall flags
+                        if self.on_left_wall or self.on_right_wall or self.wall_sliding:
+                            logger.debug(f"CLEARING wall states - on_ground={self.on_ground}, was L={self.on_left_wall}, R={self.on_right_wall}, sliding={self.wall_sliding}")
+                        self.on_left_wall = False
+                        self.on_right_wall = False
+                        self._left_wall_contact_frames = 0
+                        self._right_wall_contact_frames = 0
+                        self.wall_sliding = False  # Also clear wall_sliding when landing
+                    else:
+                        # Only check for nearby walls when airborne
+                        if not (self.on_left_wall or self.on_right_wall):
+                            self._detect_wall_proximity(level)
+                            
+                            # Maintain wall contact briefly to prevent flicker (only when airborne)
+                            if not self.on_left_wall and self._left_wall_contact_frames > 0:
+                                self.on_left_wall = True
+                            if not self.on_right_wall and self._right_wall_contact_frames > 0:
+                                self.on_right_wall = True
+
                     if self.on_ground: self.coyote = COYOTE_FRAMES
                     collisions = collision_info_list
                 except Exception as e:
@@ -895,12 +1183,20 @@ class Player:
                     self.rect.y += int(self.vy)
                     self.was_on_ground = self.on_ground
                     self.on_ground = False
+                    self.on_left_wall = False
+                    self.on_right_wall = False
+                    self._left_wall_contact_frames = 0
+                    self._right_wall_contact_frames = 0
                     collisions = []
             else:
                 self.rect.x += int(self.vx)
                 self.rect.y += int(self.vy)
                 self.was_on_ground = self.on_ground
                 self.on_ground = False
+                self.on_left_wall = False
+                self.on_right_wall = False
+                self._left_wall_contact_frames = 0
+                self._right_wall_contact_frames = 0
                 collisions = []
 
         try:
@@ -953,6 +1249,11 @@ class Player:
             self.lucky_charm_timer -= 1
             if self.lucky_charm_timer <= 0:
                 self.lucky_charm_timer = 0
+
+        # Update animations after all physics is resolved
+        if self.anim_manager:
+            self._update_ranger_animations()
+            self.anim_manager.update()
 
     def move_and_collide(self, level):
         # Reset wall detection
@@ -1047,22 +1348,13 @@ class Player:
                         self.on_left_wall = True
                 self.vx = 0
 
-        # FIXED: Improved wall detection - only detect walls when player is actually in the air
-        # This prevents false wall detection when standing on ground next to walls
-        if not self.on_left_wall and not self.on_right_wall and self.wall_reattach_timer == 0 and not self.on_ground:
-            # Additional safety check: ensure player is actually falling (vy >= 0) or has been off ground for a few frames
-            if self.vy >= 0 or self.coyote < COYOTE_FRAMES - 2:
-                # Check a slightly expanded rect to detect wall proximity
-                expanded_rect = self.rect.inflate(2, 0)  # Expand horizontally by 1 pixel each side
-                for s in level.solids:
-                    if expanded_rect.colliderect(s):
-                        # Determine which side the wall is on
-                        if self.rect.centerx < s.centerx:  # Wall is to the right
-                            if abs(self.rect.right - s.left) <= 2:  # Within 2 pixels
-                                self.on_right_wall = True
-                        else:  # Wall is to the left
-                            if abs(self.rect.left - s.right) <= 2:  # Within 2 pixels
-                                self.on_left_wall = True
+        # FIXED: Improved wall detection - allow proximity attach even without fresh side collisions
+        if not self.on_left_wall and not self.on_right_wall:
+            self._detect_wall_proximity(level)
+            if not self.on_left_wall and self._left_wall_contact_frames > 0:
+                self.on_left_wall = True
+            if not self.on_right_wall and self._right_wall_contact_frames > 0:
+                self.on_right_wall = True
 
 
         # Vertical movement and collision
@@ -1085,20 +1377,17 @@ class Player:
 
 
     def draw(self, surf, camera):
-        # Change color for visual feedback
-        if getattr(self, 'no_clip', False):
-            if getattr(self, 'floating_mode', False):
-                # Cyan color for floating mode
-                col = (100, 255, 200) if not self.iframes_flash else (100, 255, 80)
-            else:
-                # Purple/magenta color for regular no-clip mode
-                col = (200, 100, 255) if not self.iframes_flash else (200, 100, 80)
-        elif self.wall_sliding:
-            col = (100, 150, 255) if not self.iframes_flash else (100, 150, 80)  # Blue tint when sliding
+        # For Ranger with animation system, use sprite rendering
+        if self.cls == 'Ranger' and self.anim_manager:
+            # Draw the animated sprite
+            sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
+            
+            # If sprite failed to draw, fall back to rectangle
+            if not sprite_drawn:
+                self._draw_fallback_rect(surf, camera)
         else:
-            col = ACCENT if not self.iframes_flash else (ACCENT[0], ACCENT[1], 80)
-
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=4)
+            # For other classes, use the rectangle rendering
+            self._draw_fallback_rect(surf, camera)
         
         # Draw Ranger crosshair/aim line
         if self.cls == 'Ranger' and self.alive:
@@ -1107,57 +1396,43 @@ class Player:
         # Draw debug overlays
         self._draw_debug_wall_jump(surf)
 
+    def _draw_fallback_rect(self, surf, camera):
+        """Draw player as colored rectangle (fallback or for non-Ranger classes)"""
+        # Change color for visual feedback
+        if getattr(self, 'no_clip', False):
+            if getattr(self, 'floating_mode', False):
+                # Cyan color for floating mode
+                col = (100, 255, 200) if not self.iframes_flash else (100, 255, 80)
+            else:
+                # Purple/magenta color for regular no-clip mode
+                col = (200, 100, 255) if not self.iframes_flash else (200, 100, 80)
+        # Check for wall sliding ONLY (not just wall contact)
+        # Wall sliding requires: NOT on ground AND falling with positive velocity AND on a wall
+        # This prevents flicker when touching walls on ground
+        elif not self.on_ground and self.vy > 1.0 and (self.on_left_wall or self.on_right_wall):
+            col = (100, 150, 255) if not self.iframes_flash else (100, 150, 80)  # Blue tint when wall sliding
+        else:
+            col = ACCENT if not self.iframes_flash else (ACCENT[0], ACCENT[1], 80)
+
+        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=4)
+
     def _draw_ranger_crosshair(self, surf, camera):
-        """Draw aim line and crosshair for Ranger class"""
+        """Draw crosshair for Ranger class"""
         mx, my = pygame.mouse.get_pos()
-        # Convert mouse screen position to world position accounting for camera and zoom
-        world_x = (mx / camera.zoom) + camera.x
-        world_y = (my / camera.zoom) + camera.y
         
-        # Calculate direction from player to mouse
-        dx = world_x - self.rect.centerx
-        dy = world_y - self.rect.centery
-        dist = (dx*dx + dy*dy) ** 0.5
-        
-        if dist < 1:
-            return  # Don't draw if mouse is too close
-        
-        # Normalize direction
-        nx = dx / dist
-        ny = dy / dist
-        
-        # Convert player position to screen coordinates
-        screen_player_x, screen_player_y = camera.to_screen(self.rect.center)
-        
-        # Draw aim line from player to mouse (with max length)
-        max_line_length = 300  # pixels on screen
-        actual_length = min(dist, max_line_length)
-        
-        end_x = screen_player_x + nx * actual_length
-        end_y = screen_player_y + ny * actual_length
-        
-        # Draw line with different colors based on charging state
+        # Determine crosshair color based on charging state
         if getattr(self, 'charging', False):
             charge_progress = min(1.0, self.charge_time / self.charge_threshold)
             # Gradient from yellow to red as charge increases
             r = int(255)
             g = int(255 * (1.0 - charge_progress * 0.5))
             b = int(50)
-            line_color = (r, g, b)
-            line_width = 2 if charge_progress < 1.0 else 3
+            crosshair_color = (r, g, b)
         else:
-            line_color = (100, 200, 255)  # Light blue when not charging
-            line_width = 1
-        
-        # Draw the aim line
-        pygame.draw.line(surf, line_color, 
-                        (int(screen_player_x), int(screen_player_y)),
-                        (int(end_x), int(end_y)), 
-                        line_width)
+            crosshair_color = (100, 200, 255)  # Light blue when not charging
         
         # Draw crosshair at mouse position
         crosshair_size = 8
-        crosshair_color = line_color
         
         # Horizontal line
         pygame.draw.line(surf, crosshair_color,
@@ -1170,19 +1445,6 @@ class Player:
         
         # Draw a circle at the center
         pygame.draw.circle(surf, crosshair_color, (mx, my), 3, 1)
-        
-        # If triple shot is active, show multiple aim lines
-        if getattr(self, 'triple_timer', 0) > 0:
-            angle_offset = math.radians(8)
-            for offset_angle in [-angle_offset, angle_offset]:
-                angle = math.atan2(ny, nx) + offset_angle
-                offset_nx = math.cos(angle)
-                offset_ny = math.sin(angle)
-                offset_end_x = screen_player_x + offset_nx * actual_length
-                offset_end_y = screen_player_y + offset_ny * actual_length
-                pygame.draw.line(surf, (255, 200, 100),
-                               (int(screen_player_x), int(screen_player_y)),
-                               (int(offset_end_x), int(offset_end_y)), 1)
     
     def _draw_debug_wall_jump(self, surf):
         """DEBUG: Draw wall jump state indicators (remove in production)"""
@@ -1218,6 +1480,39 @@ class Player:
             coyote_text = f"Coyote: {self.coyote}"
             text_surf = font.render(coyote_text, True, (255, 255, 255))
             surf.blit(text_surf, (10, 10 + y_offset))
+
+    def _detect_wall_proximity(self, level) -> None:
+        """Keep wall contact active when the player is adjacent without active horizontal input."""
+        if self.wall_reattach_timer != 0:
+            return
+
+        if self.on_ground:
+            return
+
+        # Only allow attachment when falling or shortly after leaving ground to avoid ceiling grabs
+        is_valid_air_state = self.vy >= 0 or self.coyote < COYOTE_FRAMES - 2
+        if not is_valid_air_state:
+            return
+
+        solids = getattr(level, 'solids', None)
+        if not solids:
+            return
+
+        expanded_rect = self.rect.inflate(2, 0)
+        for solid in solids:
+            if not expanded_rect.colliderect(solid):
+                continue
+
+            if self.rect.centerx < solid.centerx:
+                if abs(self.rect.right - solid.left) <= 3:
+                    self.on_right_wall = True
+                    self._right_wall_contact_frames = WALL_STICK_FRAMES
+                    return
+            else:
+                if abs(self.rect.left - solid.right) <= 3:
+                    self.on_left_wall = True
+                    self._left_wall_contact_frames = WALL_STICK_FRAMES
+                    return
 
     def _find_safe_position(self, level):
         """Find the nearest safe position where the player won't be stuck in a wall"""

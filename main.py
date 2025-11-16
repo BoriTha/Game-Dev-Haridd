@@ -164,6 +164,15 @@ class Game:
             self.debug_overlays = DebugOverlays(self)
         except Exception:
             self.debug_overlays = None
+        
+        # Load arrow sprite for Ranger projectiles
+        try:
+            self.arrow_sprite = pygame.image.load("assets/Player/Ranger/arrow.png").convert_alpha()
+            # Scale arrow to be more visible (32x16 pixels)
+            self.arrow_sprite = pygame.transform.scale(self.arrow_sprite, (32, 16))
+        except Exception as e:
+            logger.warning(f"Failed to load arrow sprite: {e}")
+            self.arrow_sprite = None
 
         # Input handler
         try:
@@ -922,116 +931,38 @@ class Game:
         except Exception:
             return
 
-
-            now = pygame.time.get_ticks()
-            RECENT_MS = 120
-
-            # On-map markers for very recent collisions
-            for ev in self.collision_events:
-                if not isinstance(ev, dict):
-                    continue
-                t = ev.get("time")
-                if t is None or now - t > RECENT_MS:
-                    continue
-                tx = ev.get("tile_x")
-                ty = ev.get("tile_y")
-                tile_data = ev.get("tile_data")
-                if tx is None or ty is None:
-                    continue
-
-                # Base rect from tile
-                wx = tx * TILE
-                wy = ty * TILE
-                ww = TILE
-                wh = TILE
-
-                # If detailed collision tile_rect is available, prefer that
-                tile_rect = ev.get("tile_rect")
-                if tile_rect is not None and hasattr(tile_rect, "x"):
-                    wx, wy, ww, wh = tile_rect.x, tile_rect.y, tile_rect.w, tile_rect.h
-
-                # Project to screen
-                zoom = getattr(self.camera, "zoom", 1.0) or 1.0
-                sx = int((wx - self.camera.x) * zoom)
-                sy = int((wy - self.camera.y) * zoom)
-                sw = int(ww * zoom)
-                sh = int(wh * zoom)
-                if sw <= 0 or sh <= 0:
-                    continue
-
-                side = ev.get("side")
-                col = (0, 255, 0)
-                if side == "top":
-                    col = (0, 255, 255)
-                elif side == "bottom":
-                    col = (255, 0, 255)
-                elif side == "left":
-                    col = (255, 255, 0)
-                elif side == "right":
-                    col = (255, 165, 0)
-
-                pygame.draw.rect(self.screen, col, (sx, sy, sw, sh), width=1)
-                # Small marker at impact edge
-                if side == "top":
-                    pygame.draw.line(self.screen, col, (sx, sy), (sx + sw, sy), 2)
-                elif side == "bottom":
-                    pygame.draw.line(self.screen, col, (sx, sy + sh), (sx + sw, sy + sh), 2)
-                elif side == "left":
-                    pygame.draw.line(self.screen, col, (sx, sy), (sx, sy + sh), 2)
-                elif side == "right":
-                    pygame.draw.line(self.screen, col, (sx + sw, sy), (sx + sw, sy + sh), 2)
-
-            # Text log panel: last N events (newest first)
-            font = self.font_small
-            lines = []
-            max_events = 8
-            for ev in reversed(self.collision_events[-40:]):
-                if len(lines) >= max_events:
-                    break
-                if not isinstance(ev, dict):
-                    continue
-                tile_name = ev.get("tile_name", "Unknown")
-                tx = ev.get("tile_x")
-                ty = ev.get("tile_y")
-                side = ev.get("side") or "-"
-                pen = ev.get("penetration")
-                if pen is None:
-                    pen = "-"
-                dmg = ev.get("damage")
-                if dmg is None:
-                    dmg = "-"
-                line = f"P vs {tile_name} @({tx},{ty}) side={side} pen={pen} dmg={dmg}"
-                lines.append(line)
-
-            if not lines:
-                return
-
-            pad_x = 8
-            pad_y = 6
-            line_h = font.get_linesize()
-            max_w = 0
-            for s in lines:
-                w, _ = font.render(s, True, (255, 255, 255)).get_size()
-                max_w = max(max_w, w)
-            panel_w = max_w + pad_x * 2
-            panel_h = line_h * len(lines) + pad_y * 2
-
-            x = 8
-            y = HEIGHT - panel_h - 8
-
-            panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-            panel.fill((5, 5, 10, 200))
-            pygame.draw.rect(panel, (120, 220, 255, 255), panel.get_rect(), 1)
-
-            cy = pad_y
-            for s in lines:
-                surf = font.render(s, True, (220, 240, 255))
-                panel.blit(surf, (pad_x, cy))
-                cy += line_h
-
-            self.screen.blit(panel, (x, y))
-        except Exception:
+    def _draw_arrow_sprite(self, hitbox):
+        """Draw arrow sprite for Ranger projectiles with proper rotation."""
+        if not self.arrow_sprite:
             return
+        
+        import math
+        
+        # Get arrow direction from hitbox
+        dir_vec = getattr(hitbox, 'dir_vec', (1, 0))
+        angle = math.atan2(dir_vec[1], dir_vec[0])
+        
+        # Rotate arrow sprite to match direction
+        # Convert radians to degrees (pygame uses degrees)
+        angle_degrees = -math.degrees(angle)  # Negative because pygame y-axis is flipped
+        rotated_sprite = pygame.transform.rotate(self.arrow_sprite, angle_degrees)
+        
+        # Get hitbox center in world coordinates
+        world_center = hitbox.rect.center
+        
+        # Convert to screen coordinates
+        screen_pos = self.camera.to_screen(world_center)
+        
+        # Apply camera zoom
+        scaled_width = int(rotated_sprite.get_width() * self.camera.zoom)
+        scaled_height = int(rotated_sprite.get_height() * self.camera.zoom)
+        scaled_sprite = pygame.transform.scale(rotated_sprite, (scaled_width, scaled_height))
+        
+        # Center the sprite on the hitbox position
+        sprite_rect = scaled_sprite.get_rect(center=screen_pos)
+        
+        # Draw the sprite
+        self.screen.blit(scaled_sprite, sprite_rect.topleft)
 
     def draw(self):
         # Draw dungeon background image
@@ -1046,6 +977,13 @@ class Game:
         self.level.draw(self.screen, self.camera)
         for e in self.enemies:
             e.draw(self.screen, self.camera, show_los=self.debug_enemy_rays, show_nametags=self.debug_enemy_nametags)
+        
+        # Draw arrow sprites for Ranger projectiles
+        if self.arrow_sprite:
+            for hb in hitboxes:
+                if getattr(hb, 'arrow_sprite', False) and hb.alive:
+                    self._draw_arrow_sprite(hb)
+        
         # Draw hitboxes: force draw all hitboxes if debug mode is on
         for hb in hitboxes:
             hb.draw(self.screen, self.camera, force_draw=self.debug_show_hitboxes)

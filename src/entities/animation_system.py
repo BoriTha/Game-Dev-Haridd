@@ -22,6 +22,10 @@ class AnimationState(Enum):
     WALK = "walk"
     RUN = "run"
     ATTACK = "attack"
+    # Ranger bow attack states
+    CHARGE = "charge"        # Drawing bow back
+    CHARGED = "charged"      # Holding at full draw
+    SHOOT = "shoot"          # Releasing arrow
     SKILL_1 = "skill_1"
     SKILL_2 = "skill_2"
     SKILL_3 = "skill_3"
@@ -31,6 +35,7 @@ class AnimationState(Enum):
     DASH = "dash"
     JUMP = "jump"
     FALL = "fall"
+    WALL_SLIDE = "wall_slide"
 
 
 @dataclass

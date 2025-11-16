@@ -37,7 +37,7 @@ hitboxes = []
 floating = []
 
 class Hitbox:
-    def __init__(self, rect, lifetime, damage, owner, dir_vec=(1,0), pogo=False, vx=0.0, vy=0.0, aoe_radius=0, visual_only=False, pierce=False, bypass_ifr=False, tag=None, has_sprite=False):
+    def __init__(self, rect, lifetime, damage, owner, dir_vec=(1,0), pogo=False, vx=0.0, vy=0.0, aoe_radius=0, visual_only=False, pierce=False, bypass_ifr=False, tag=None, has_sprite=False, arrow_sprite=False):
         self.rect = rect.copy()
         self.lifetime = lifetime
         self.damage = damage
@@ -56,6 +56,8 @@ class Hitbox:
         self.alive = True
         # When True, suppresses fallback rectangle drawing (sprite will be drawn separately)
         self.has_sprite = has_sprite
+        # When True, this hitbox should be rendered as an arrow sprite
+        self.arrow_sprite = arrow_sprite
 
     def tick(self):
         # move if velocity set (keep as float for precision, convert only when applying)
