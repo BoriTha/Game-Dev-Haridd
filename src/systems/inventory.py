@@ -772,8 +772,18 @@ class Inventory:
                 if not entry:
                     continue
                 pygame.draw.rect(self.game.screen, entry.color, cell, border_radius=8)
-                border_col = (255, 210, 120) if selection_key == key else (160, 160, 190)
+                # Default border color; override with rarity color for items
+                border_col = (110, 120, 150)
+                try:
+                    border_col = rarity_border_color(entry)
+                except Exception:
+                    border_col = (110, 120, 150)
+                is_selected = selection_key == key
+                # Draw rarity border first
                 pygame.draw.rect(self.game.screen, border_col, cell, width=2, border_radius=8)
+                # Draw white selection border inside rarity border if selected (thinner, smaller)
+                if is_selected:
+                    pygame.draw.rect(self.game.screen, (255, 255, 255), cell.inflate(-4, -4), width=2, border_radius=6)
                 if mode == 'gear' and key in self.gear_slots:
                     pygame.draw.rect(self.game.screen, (120, 230, 180), cell.inflate(6, 6), width=2, border_radius=10)
                 if mode == 'consumable':
@@ -902,8 +912,7 @@ class Inventory:
                     border_color = rarity_border_color(item)
                 except Exception:
                     border_color = (110, 120, 150)
-            if selection and selection.get('kind') == 'gear_slot' and selection.get('index') == idx:
-                border_color = (255, 210, 120)
+            is_selected = selection and selection.get('kind') == 'gear_slot' and selection.get('index') == idx
             
             if item:
                 pygame.draw.rect(self.game.screen, item.color, rect.inflate(-8, -8), border_radius=6)
@@ -929,7 +938,11 @@ class Inventory:
                     self.game.screen.blit(icon_surf, icon_surf.get_rect(center=rect.center))
             else:
                 draw_text(self.game.screen, str(idx+1), (rect.centerx-4, rect.centery-8), (80,90,110), size=18)
+            # Draw rarity border first
             pygame.draw.rect(self.game.screen, border_color, rect, width=2, border_radius=8)
+            # Draw white selection border inside rarity border if selected (thinner, smaller)
+            if is_selected:
+                pygame.draw.rect(self.game.screen, (255, 255, 255), rect.inflate(-4, -4), width=2, border_radius=6)
 
 
 
@@ -942,11 +955,9 @@ class Inventory:
             entry = self.consumable_catalog.get(stack.key) if stack else None
 
             pygame.draw.rect(self.game.screen, (46, 52, 72), rect, border_radius=8)
-            border_color = (110, 120, 150)
-            if selection and selection.get('kind') == 'consumable_slot' and selection.get('index') == idx:
-                border_color = (255, 210, 120)
+            is_selected = selection and selection.get('kind') == 'consumable_slot' and selection.get('index') == idx
 
-            # Draw entry contents regardless of selection; selection only affects border color
+            # Draw entry contents regardless of selection; selection only affects border
             if entry:
                 pygame.draw.rect(self.game.screen, entry.color, rect.inflate(-8, -8), border_radius=6)
                 # Determine border color from rarity (fallback to default)
@@ -954,8 +965,6 @@ class Inventory:
                     border_color = rarity_border_color(entry)
                 except Exception:
                     border_color = (110, 120, 150)
-                if selection and selection.get('kind') == 'consumable_slot' and selection.get('index') == idx:
-                    border_color = (255, 210, 120)
                 # Draw inner rarity outline to match stock styling
                 try:
                     inner_col = rarity_border_color(entry)
@@ -976,7 +985,12 @@ class Inventory:
             else:
                 key_label = self._hotkey_label(idx)
                 draw_text(self.game.screen, key_label, (rect.centerx-4, rect.centery-8), (80,90,110), size=18)
+                border_color = (110, 120, 150)
+            # Draw rarity border first
             pygame.draw.rect(self.game.screen, border_color, rect, width=2, border_radius=8)
+            # Draw white selection border inside rarity border if selected (thinner, smaller)
+            if is_selected:
+                pygame.draw.rect(self.game.screen, (255, 255, 255), rect.inflate(-4, -4), width=2, border_radius=6)
 
 
 
@@ -1093,8 +1107,7 @@ class Inventory:
                         border_col = rarity_border_color(entry)
                     except Exception:
                         border_col = (110, 120, 150)
-                    if selection and selection.get('kind') in ('gear_pool', 'gear_slot') and selection.get('key') == key:
-                        border_col = (255, 210, 120)
+                    is_selected = selection and selection.get('kind') in ('gear_pool', 'gear_slot') and selection.get('key') == key
                     # Show equipped items with green border
                     equipped_count = self.gear_slots.count(key)
                     if equipped_count > 0:
@@ -1119,7 +1132,11 @@ class Inventory:
                     else:
                         icon_surf = icon_font.render(entry.icon_letter, True, (20,20,28))
                         stock_surface.blit(icon_surf, icon_surf.get_rect(center=inner_panel.center))
+                    # Draw rarity border first
                     pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
+                    # Draw white selection border inside rarity border if selected (thinner, smaller)
+                    if is_selected:
+                        pygame.draw.rect(stock_surface, (255, 255, 255), cell.inflate(-4, -4), width=2, border_radius=6)
                 elif self.inventory_stock_mode == 'consumable':
                     # Map from body surface to screen coords for hit regions
                     self._register_inventory_region(cell.move(body_rect.topleft), 'consumable_pool', key=key)
@@ -1139,9 +1156,8 @@ class Inventory:
                         border_col = rarity_border_color(entry)
                     except Exception:
                         border_col = (110, 120, 150)
-                    if selection and selection.get('kind') in ('consumable_pool', 'consumable_slot') and selection.get('key') == key:
-                        border_col = (255, 210, 120)
-                    elif any(s and s.key == key for s in self.consumable_slots):
+                    is_selected = selection and selection.get('kind') in ('consumable_pool', 'consumable_slot') and selection.get('key') == key
+                    if any(s and s.key == key for s in self.consumable_slots):
                         border_col = (120, 230, 180)
                     # Draw inner rarity outline so stock items show rarity like slots
                     try:
@@ -1170,7 +1186,11 @@ class Inventory:
                         count_surface = count_font.render(str(total_count), True, (250, 250, 255))
                         count_rect = count_surface.get_rect(bottomright=(cell.right - 4, cell.bottom - 4))
                         stock_surface.blit(count_surface, count_rect)
+                    # Draw rarity border first
                     pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
+                    # Draw white selection border inside rarity border if selected (thinner, smaller)
+                    if is_selected:
+                        pygame.draw.rect(stock_surface, (255, 255, 255), cell.inflate(-4, -4), width=2, border_radius=6)
         
 
         
