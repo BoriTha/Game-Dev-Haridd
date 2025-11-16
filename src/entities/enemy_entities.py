@@ -52,6 +52,14 @@ class Enemy:
         self.last_seen = None
         self.repath_t = 0
         
+        # Improved vision/memory system
+        self.last_seen_pos = None  # Last known player position
+        self.pursuit_timer = 0  # How long to pursue after losing sight
+        self.pursuit_duration = 180  # 3 seconds at 60 FPS
+        self.alert_level = 0  # 0=idle, 1=investigating, 2=combat
+        self.investigation_point = None  # Where to investigate
+        self.idle_look_direction = 0  # Direction enemy looks when idle
+        
         # New movement system properties
         self.movement_strategy = None
         self.speed_multiplier = 1.0
@@ -86,8 +94,8 @@ class Enemy:
         # Initialize movement strategy as fallback
         self._initialize_movement_strategy()
     
-    def update_vision_cone(self, player_pos):
-        """Update facing direction based on player position."""
+    def update_vision_cone_and_memory(self, player_pos, has_los=False):
+        """Update facing direction based on player position and alert state with memory."""
         epos = (self.rect.centerx, self.rect.centery)
         ppos = player_pos
         
@@ -96,38 +104,94 @@ class Enemy:
         dy = ppos[1] - epos[1]
         dist_to_player = (dx*dx + dy*dy) ** 0.5
         
-        # Update facing direction
+        # Update alert level and pursuit timer
+        if has_los:
+            self.alert_level = 2  # Combat
+            self.pursuit_timer = self.pursuit_duration
+            self.last_seen_pos = ppos
+            self.investigation_point = None
+        elif self.pursuit_timer > 0:
+            self.pursuit_timer -= 1
+            if self.pursuit_timer > self.pursuit_duration * 0.5:
+                self.alert_level = 2  # Still in combat mode
+            else:
+                self.alert_level = 1  # Investigating
+                if self.investigation_point is None and self.last_seen_pos:
+                    self.investigation_point = self.last_seen_pos
+        else:
+            self.alert_level = 0  # Return to idle
+            self.investigation_point = None
+        
+        # Update facing direction based on alert level
         if dist_to_player > 0:
-            # Calculate angle to player
-            angle_to_player = math.atan2(dy, dx)
+            # Calculate angle to target (player or investigation point)
+            target_pos = ppos
+            if self.alert_level == 1 and self.investigation_point:
+                target_pos = self.investigation_point
             
-            # Update facing if player is within 1.2-1.5x vision_range
-            if dist_to_player < self.vision_range * 1.5:
-                # Smoothly turn toward player
-                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+            dx_target = target_pos[0] - epos[0]
+            dy_target = target_pos[1] - epos[1]
+            angle_to_target = math.atan2(dy_target, dx_target)
+            
+            if self.alert_level >= 1:
+                # Alert or investigating: turn toward target
+                angle_diff = (angle_to_target - self.facing_angle) % (2 * math.pi)
                 if angle_diff > math.pi:
                     angle_diff -= 2 * math.pi
-                self.facing_angle += angle_diff * self.turn_rate
+                # Faster turn rate when alert
+                turn_speed = self.turn_rate * (2.0 if self.alert_level == 2 else 1.5)
+                self.facing_angle += angle_diff * turn_speed
                 
                 # Update facing direction based on angle
                 self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
             else:
-                # Idle/patrol: subtle oscillation
-                self.facing_angle += 0.02 * self.facing
-                # Flip at bounds
-                if self.facing_angle > math.pi:
-                    self.facing_angle = math.pi
-                    self.facing = -1
-                elif self.facing_angle < 0:
-                    self.facing_angle = 0
-                    self.facing = 1
+                # Idle: slower patrol sweep
+                if not hasattr(self, 'idle_look_direction'):
+                    self.idle_look_direction = self.facing
+                
+                self.facing_angle += 0.015 * self.idle_look_direction
+                
+                # Flip at bounds (patrol sweep)
+                if self.facing_angle > math.pi / 3:
+                    self.idle_look_direction = -1
+                elif self.facing_angle < -math.pi / 3:
+                    self.idle_look_direction = 1
+                
+                # Update facing direction
+                self.facing = 1 if self.facing_angle > -math.pi/2 and self.facing_angle < math.pi/2 else -1
         
         return dist_to_player
     
-    def check_vision_cone(self, level, player_pos):
-        """Check if player is in vision cone and has line of sight."""
+    def update_vision_cone(self, player_pos):
+        """Simple vision cone update for backwards compatibility - just updates facing direction."""
         epos = (self.rect.centerx, self.rect.centery)
         ppos = player_pos
+        
+        # Calculate distance to player
+        dx = ppos[0] - epos[0]
+        dy = ppos[1] - epos[1]
+        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        # Just update facing direction (simple version for enemies that don't use advanced AI)
+        if dist_to_player > 0 and dist_to_player < self.vision_range * 1.5:
+            angle_to_player = math.atan2(dy, dx)
+            angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
+            if angle_diff > math.pi:
+                angle_diff -= 2 * math.pi
+            self.facing_angle += angle_diff * self.turn_rate
+            self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
+        
+        return dist_to_player
+
+    def check_vision_cone(self, level, player_pos):
+        """Check if player is in vision cone and has line of sight from eye level."""
+        # Use eye-level position for more realistic vision
+        eye_height_offset = -self.rect.height * 0.3  # Eyes are at upper 1/3 of body
+        epos = (self.rect.centerx, self.rect.centery + eye_height_offset)
+        
+        # Check player's center mass (torso level) not feet
+        player_target_height = -15 if hasattr(player_pos, '__len__') else 0
+        ppos = (player_pos[0], player_pos[1] + player_target_height) if hasattr(player_pos, '__len__') else player_pos
         
         # Check if player is in vision cone
         in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
@@ -136,6 +200,7 @@ class Enemy:
         # Store for debug drawing
         self._has_los = has_los
         self._los_point = ppos
+        self._eye_pos = epos
         
         return has_los, in_cone
     
@@ -212,6 +277,32 @@ class Enemy:
     def hit(self, hb: Hitbox, player: Player):
         """Handle being hit by a player attack."""
         self.combat.handle_hit_by_player_hitbox(hb)
+        
+        # Become alert when hit - enemy notices the player!
+        if self.combat.alive and hasattr(player, 'rect'):
+            self.last_seen_pos = (player.rect.centerx, player.rect.centery)
+            self.pursuit_timer = getattr(self, 'pursuit_duration', 180)
+            self.alert_level = 2  # Go into combat mode
+            # Turn to face attacker
+            if player.rect.centerx > self.rect.centerx:
+                self.facing = 1
+                self.facing_angle = 0
+            else:
+                self.facing = -1
+                self.facing_angle = math.pi
+        
+        # Become alert when hit - enemy notices the player!
+        if self.combat.alive and hasattr(player, 'rect'):
+            self.last_seen_pos = (player.rect.centerx, player.rect.centery)
+            self.pursuit_timer = self.pursuit_duration if hasattr(self, 'pursuit_duration') else 180
+            self.alert_level = 2  # Go into combat mode
+            # Turn to face attacker
+            if player.rect.centerx > self.rect.centerx:
+                self.facing = 1
+                self.facing_angle = 0
+            else:
+                self.facing = -1
+                self.facing_angle = math.pi
     
     def handle_movement(self, level, player=None, speed_multiplier=1.0):
         """Handle movement using enemy-specific hardcoded behaviors."""
@@ -369,17 +460,42 @@ class Enemy:
                     self.on_ground = True
     
     def draw_debug_vision(self, surf, camera, show_los=False):
-        """Draw debug vision cone and LOS line."""
+        """Draw debug vision cone and LOS line from eye position with alert state visualization."""
         if not show_los:
             return
             
+        # Use eye position if available, otherwise center
+        eye_pos = getattr(self, '_eye_pos', self.rect.center)
+        alert_level = getattr(self, 'alert_level', 0)
+        pursuit_timer = getattr(self, 'pursuit_timer', 0)
+        
         # Draw LOS line to last-checked player point if available
         if getattr(self, '_los_point', None) is not None:
-            col = GREEN if getattr(self, '_has_los', False) else RED
-            pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
+            has_los = getattr(self, '_has_los', False)
             
-            # Draw vision cone
-            center = camera.to_screen(self.rect.center)
+            # Color based on alert state
+            if has_los:
+                col = GREEN  # Can see player
+            elif alert_level == 2:
+                col = (255, 150, 0)  # Pursuing (orange)
+            elif alert_level == 1:
+                col = (255, 200, 100)  # Investigating (yellow-orange)
+            else:
+                col = RED  # Lost player
+            
+            pygame.draw.line(surf, col, camera.to_screen(eye_pos), camera.to_screen(self._los_point), 2)
+            
+            # Draw eye position indicator (color changes with alert)
+            if alert_level == 2:
+                eye_color = (255, 100, 100)  # Red - combat alert
+            elif alert_level == 1:
+                eye_color = (255, 200, 0)  # Orange - investigating
+            else:
+                eye_color = (255, 255, 100)  # Yellow - idle
+            pygame.draw.circle(surf, eye_color, camera.to_screen(eye_pos), 4, 2)
+            
+            # Draw vision cone from eye position
+            center = camera.to_screen(eye_pos)
             # Calculate cone edges
             left_angle = self.facing_angle - self.cone_half_angle
             right_angle = self.facing_angle + self.cone_half_angle
@@ -390,9 +506,50 @@ class Enemy:
             right_x = center[0] + math.cos(right_angle) * self.vision_range
             right_y = center[1] + math.sin(right_angle) * self.vision_range
             
-            # Draw cone lines
-            pygame.draw.line(surf, (255, 255, 0), center, (left_x, left_y), 1)
-            pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
+            # Draw cone lines (color based on alert level)
+            if alert_level == 2:
+                cone_color = (255, 100, 100)  # Red - combat
+                line_width = 2
+            elif alert_level == 1:
+                cone_color = (255, 180, 0)  # Orange - investigating
+                line_width = 2
+            else:
+                cone_color = (255, 255, 0)  # Yellow - idle
+                line_width = 1
+            
+            pygame.draw.line(surf, cone_color, center, (left_x, left_y), line_width)
+            pygame.draw.line(surf, cone_color, center, (right_x, right_y), line_width)
+            
+            # Draw investigation point if investigating
+            if getattr(self, 'investigation_point', None) and alert_level == 1:
+                inv_point = camera.to_screen(self.investigation_point)
+                pygame.draw.circle(surf, (255, 150, 0), inv_point, 8, 2)
+                pygame.draw.line(surf, (255, 150, 0), center, inv_point, 1)
+                # Draw "?" above investigation point
+                from src.core.utils import draw_text
+                draw_text(surf, "?", (inv_point[0] - 4, inv_point[1] - 15), (255, 200, 0), size=16, bold=True)
+            
+            # Draw pursuit timer bar if pursuing/investigating
+            if pursuit_timer > 0:
+                pursuit_duration = getattr(self, 'pursuit_duration', 180)
+                bar_width = 30
+                bar_height = 4
+                bar_x = center[0] - bar_width // 2
+                bar_y = center[1] - 20
+                
+                # Background
+                pygame.draw.rect(surf, (60, 60, 60), (bar_x, bar_y, bar_width, bar_height))
+                # Fill based on remaining time
+                fill_width = int(bar_width * (pursuit_timer / pursuit_duration))
+                fill_color = (255, 150, 0) if alert_level == 2 else (255, 200, 100)
+                pygame.draw.rect(surf, fill_color, (bar_x, bar_y, fill_width, bar_height))
+            
+            # Draw alert state text
+            if alert_level > 0:
+                from src.core.utils import draw_text
+                state_text = "COMBAT" if alert_level == 2 else "ALERT"
+                state_color = (255, 100, 100) if alert_level == 2 else (255, 200, 0)
+                draw_text(surf, state_text, (center[0] - 20, center[1] - 30), state_color, size=12, bold=True)
 
     def draw_telegraph(self, surf, camera, text, color=(255, 80, 80)):
         from src.core.utils import draw_text
@@ -600,10 +757,10 @@ class Boss(Enemy):
         self.handle_status_effects()
         
         ppos = (player.rect.centerx, player.rect.centery)
-        dist_to_player = self.update_vision_cone(ppos)
+        has_los, in_cone = self.check_vision_cone(level, ppos)
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
         epos = (self.rect.centerx, self.rect.centery)
-        has_los, in_cone = self.check_vision_cone(level, ppos)
         
         if has_los and dist_to_player < self.vision_range:
             dx = ppos[0] - epos[0]
@@ -661,10 +818,10 @@ class Frog(Enemy):
         self.handle_status_effects()
         
         ppos = (player.rect.centerx, player.rect.centery)
-        dist_to_player = self.update_vision_cone(ppos)
+        has_los, in_cone = self.check_vision_cone(level, ppos)
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
         epos = (self.rect.centerx, self.rect.centery)
-        has_los, in_cone = self.check_vision_cone(level, ppos)
         
         dx = ppos[0] - epos[0]
         dy = ppos[1] - epos[1]
@@ -751,10 +908,13 @@ class Archer(Enemy):
         if self.cool>0: self.cool-=1
         
         ppos = (player.rect.centerx, player.rect.centery)
-        dist_to_player = self.update_vision_cone(ppos)
+        # Check vision first
+        has_los, in_cone = self.check_vision_cone(level, ppos)
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
         epos = (self.rect.centerx, self.rect.centery)
-        has_los, in_cone = self.check_vision_cone(level, ppos)
+        
+        epos = (self.rect.centerx, self.rect.centery)
         
         if self.tele_t>0:
             self.tele_t -= 1
@@ -846,10 +1006,13 @@ class WizardCaster(Enemy):
             self.cool -= 1
         
         ppos = (player.rect.centerx, player.rect.centery)
-        dist_to_player = self.update_vision_cone(ppos)
+        # Check vision first
+        has_los, in_cone = self.check_vision_cone(level, ppos)
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
         epos = (self.rect.centerx, self.rect.centery)
-        has_los, in_cone = self.check_vision_cone(level, ppos)
+        
+        epos = (self.rect.centerx, self.rect.centery)
         
         if self.tele_t > 0:
             self.tele_t -= 1
@@ -939,10 +1102,10 @@ class Assassin(Enemy):
             self.jump_cooldown -= 1
          
         ppos = (player.rect.centerx, player.rect.centery)
-        dist_to_player = self.update_vision_cone(ppos)
-         
-        epos = (self.rect.centerx, self.rect.centery)
         has_los, in_cone = self.check_vision_cone(level, ppos)
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
+        
+        epos = (self.rect.centerx, self.rect.centery)
          
         self._in_cone = in_cone
          
@@ -1027,7 +1190,11 @@ class Assassin(Enemy):
                 self.tele_t = 12
                 self.tele_text = '!!'
         else:
+            # Movement behavior based on alert level
+            alert_level = getattr(self, 'alert_level', 0)
+            
             if has_los and dist_to_player < self.vision_range:
+                # Can see player - move toward them
                 dx = ppos[0] - epos[0]
                 dy = ppos[1] - epos[1]
                 
@@ -1042,13 +1209,20 @@ class Assassin(Enemy):
                     self.vy = -10
                     self.on_ground = False
                     self.jump_cooldown = 30
+            elif alert_level == 1 and getattr(self, 'investigation_point', None):
+                # Investigating - move toward last known position
+                inv_x, inv_y = self.investigation_point
+                dx_inv = inv_x - epos[0]
+                dy_inv = inv_y - epos[1]
+                if abs(dx_inv) > 20:
+                    self.vx = 2.0 if dx_inv > 0 else -2.0
+                else:
+                    self.vx = 0
             else:
+                # Idle patrol
                 import random as rnd
                 if not hasattr(self, 'patrol_direction') or rnd.random() < 0.02:
                     self.patrol_direction = rnd.choice([-1.5, 0, 1.5])
-                else:
-                    if not hasattr(self, 'patrol_direction'):
-                        self.patrol_direction = 0
                 
                 self.vx = self.patrol_direction
                 if self.vx == 0:
@@ -1107,10 +1281,10 @@ class Bee(Enemy):
             self.cool -= 1
         
         ppos = (player.rect.centerx, player.rect.centery)
-        dist_to_player = self.update_vision_cone(ppos)
+        has_los, in_cone = self.check_vision_cone(level, ppos)
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
         epos = (self.rect.centerx, self.rect.centery)
-        has_los, in_cone = self.check_vision_cone(level, ppos)
         
         import random
         if self.tele_t > 0:
@@ -1180,7 +1354,8 @@ class Golem(Enemy):
         if self.cool>0: self.cool-=1
         
         ppos = (player.rect.centerx, player.rect.centery)
-        dist_to_player = self.update_vision_cone(ppos)
+        has_los, in_cone = self.check_vision_cone(level, ppos)
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
         epos = (self.rect.centerx, self.rect.centery)
         has_los = los_clear(level, epos, ppos)
@@ -1318,11 +1493,12 @@ class KnightMonster(Enemy):
         dx, dy = ppos[0] - epos[0], ppos[1] - epos[1]
         dist = (dx*dx + dy*dy) ** 0.5
         
-        # Turn smoothly toward player
-        dist_to_player = self.update_vision_cone(ppos)
-        
-        # Vision and LOS check
+        # Check vision first for advanced AI
         has_los, in_cone = self.check_vision_cone(level, ppos)
+        # Turn smoothly toward player with memory
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
+        has_los, in_cone = self.check_vision_cone(level, ppos)
+        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
         # Player attack status detection
         player_attacking_now = bool(
