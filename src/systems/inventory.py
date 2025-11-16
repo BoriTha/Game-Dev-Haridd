@@ -1087,7 +1087,12 @@ class Inventory:
                     # Draw inner panel (match slot behavior) and inner rarity outline
                     inner_panel = cell.inflate(-8, -8)
                     pygame.draw.rect(stock_surface, entry.color, inner_panel, border_radius=6)
-                    border_col = (160, 160, 190)
+                    # Default border color; override with rarity color for items (like equipped slots)
+                    border_col = (110, 120, 150)
+                    try:
+                        border_col = rarity_border_color(entry)
+                    except Exception:
+                        border_col = (110, 120, 150)
                     if selection and selection.get('kind') in ('gear_pool', 'gear_slot') and selection.get('key') == key:
                         border_col = (255, 210, 120)
                     # Show equipped items with green border
@@ -1103,9 +1108,17 @@ class Inventory:
                         pygame.draw.rect(stock_surface, inner_col, inner_panel.inflate(-2, -2), width=3, border_radius=6)
                     except Exception:
                         pass
-                    # Draw the icon centered in the inner panel
-                    inner_rect = inner_panel.inflate(-6, -6)
-                    _draw_icon_in_rect(stock_surface, inner_rect, entry, icon_font, radius=6)
+                    # Draw the icon at the same size as equipped slots (48x48)
+                    icon_img = None
+                    if hasattr(entry, 'icon_path') and entry.icon_path:
+                        icon_img = _safe_load_icon(entry.icon_path, (inner_panel.width, inner_panel.height))
+                        if not icon_img:
+                            icon_img = load_icon_masked(entry.icon_path, (inner_panel.width, inner_panel.height), radius=6)
+                    if icon_img:
+                        stock_surface.blit(icon_img, icon_img.get_rect(center=inner_panel.center))
+                    else:
+                        icon_surf = icon_font.render(entry.icon_letter, True, (20,20,28))
+                        stock_surface.blit(icon_surf, icon_surf.get_rect(center=inner_panel.center))
                     pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
                 elif self.inventory_stock_mode == 'consumable':
                     # Map from body surface to screen coords for hit regions
@@ -1120,7 +1133,12 @@ class Inventory:
                     # Draw inner panel (match slot behavior) and inner rarity outline
                     inner_panel = cell.inflate(-8, -8)
                     pygame.draw.rect(stock_surface, entry.color, inner_panel, border_radius=6)
-                    border_col = (160, 160, 190)
+                    # Default border color; override with rarity color for items (like equipped slots)
+                    border_col = (110, 120, 150)
+                    try:
+                        border_col = rarity_border_color(entry)
+                    except Exception:
+                        border_col = (110, 120, 150)
                     if selection and selection.get('kind') in ('consumable_pool', 'consumable_slot') and selection.get('key') == key:
                         border_col = (255, 210, 120)
                     elif any(s and s.key == key for s in self.consumable_slots):
@@ -1134,9 +1152,17 @@ class Inventory:
                         pygame.draw.rect(stock_surface, inner_col, inner_panel.inflate(-2, -2), width=3, border_radius=6)
                     except Exception:
                         pass
-                    # Draw the icon centered in the inner panel
-                    inner_rect = inner_panel.inflate(-6, -6)
-                    _draw_icon_in_rect(stock_surface, inner_rect, entry, icon_font, radius=6)
+                    # Draw the icon at the same size as equipped slots (48x48)
+                    icon_img = None
+                    if hasattr(entry, 'icon_path') and entry.icon_path:
+                        icon_img = _safe_load_icon(entry.icon_path, (inner_panel.width, inner_panel.height))
+                        if not icon_img:
+                            icon_img = load_icon_masked(entry.icon_path, (inner_panel.width, inner_panel.height), radius=6)
+                    if icon_img:
+                        stock_surface.blit(icon_img, icon_img.get_rect(center=inner_panel.center))
+                    else:
+                        icon_surf = icon_font.render(entry.icon_letter, True, (20,20,28))
+                        stock_surface.blit(icon_surf, icon_surf.get_rect(center=inner_panel.center))
                     
                     # Display the count for consumables in stock
                     total_count = self._total_available_count(key)
