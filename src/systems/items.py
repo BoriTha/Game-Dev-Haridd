@@ -436,6 +436,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Health Flask",
             color=(215, 110, 120),
             icon_letter="H",
+            icon_path="assets/consumable/health_flask.jpg",
             max_stack=5,
             amount=3,
             effect_text="Restore 3 HP instantly.",
