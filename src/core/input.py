@@ -40,9 +40,29 @@ class InputHandler:
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
 
-                # Mouse button handling (wheel + left click)
+                # Mouse wheel scrolling (using MOUSEWHEEL event for modern pygame)
+                elif ev.type == pygame.MOUSEWHEEL:
+                    # Shop wheel scroll
+                    if getattr(game, 'shop', None) and getattr(game.shop, 'shop_open', False):
+                        try:
+                            game.shop.handle_event(ev)
+                        except Exception:
+                            logger.exception("shop wheel scroll failed")
+                        continue
+                    # Inventory wheel scroll (stock panel)
+                    elif getattr(game, 'inventory', None) and getattr(game.inventory, 'inventory_open', False):
+                        try:
+                            if ev.y > 0:
+                                game.inventory._scroll_stock(-50)
+                            elif ev.y < 0:
+                                game.inventory._scroll_stock(50)
+                        except Exception:
+                            logger.exception("inventory wheel scroll failed")
+                        continue
+
+                # Mouse button handling (legacy wheel + left click)
                 elif ev.type == pygame.MOUSEBUTTONDOWN:
-                    # Wheel scroll for inventory stock panel
+                    # Legacy wheel scroll for inventory stock panel (fallback for older pygame)
                     if getattr(game, 'inventory', None) and getattr(game.inventory, 'inventory_open', False):
                         if ev.button == 4:
                             try:
@@ -55,6 +75,20 @@ class InputHandler:
                                 game.inventory._scroll_stock(50)
                             except Exception:
                                 logger.exception("inventory _scroll_stock failed")
+                            continue
+                    # Legacy wheel scroll for shop (fallback for older pygame)
+                    elif getattr(game, 'shop', None) and getattr(game.shop, 'shop_open', False):
+                        if ev.button == 4:
+                            try:
+                                game.shop._scroll_up()
+                            except Exception:
+                                logger.exception("shop scroll up failed")
+                            continue
+                        elif ev.button == 5:
+                            try:
+                                game.shop._scroll_down()
+                            except Exception:
+                                logger.exception("shop scroll down failed")
                             continue
 
                     # Left click

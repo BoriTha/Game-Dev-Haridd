@@ -1037,6 +1037,11 @@ class Game:
         # Draw shop if open
         if self.shop.shop_open:
             self.shop.draw(self.screen)
+            # Draw tooltip overlay last so it's always on top
+            try:
+                self.shop.draw_tooltip_overlay(self.screen)
+            except Exception:
+                pass
 
 
 
