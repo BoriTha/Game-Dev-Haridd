@@ -212,6 +212,7 @@ class Consumable(TooltipMixin):
     flavor: str = ""
     icon_letter: str = ""
     icon_path: str = ""
+    rarity: str = "Normal"
 
     def use(self, game) -> bool:
         """Apply the consumable effect to the running game. Returns True when consumed."""
@@ -313,6 +314,7 @@ class PhoenixFeather(Consumable, ConsumableEffect):
     description: str = "A mystical feather that ignites when life fades."
     flavor: str = "Reborn from ashes, just like the legendary phoenix."
     icon_letter: str = "P"
+    rarity: str = "Legendary"
 
     def use(self, game) -> bool:
         player = game.player
@@ -335,6 +337,7 @@ class TimeCrystal(Consumable, ConsumableEffect):
     color: Color = (150, 150, 255)
     max_stack: int = 2
     effect_text: str = "Slows all enemies for 10 seconds"
+    rarity: str = "Epic"
     description: str = "Crystallized time that bends reality around foes."
     flavor: str = "Feel time itself slow to a crawl."
     icon_letter: str = "T"
@@ -359,8 +362,9 @@ class LuckyCharm(Consumable, ConsumableEffect):
     max_stack: int = 1
     effect_text: str = "+50% money drops for 2 minutes"
     description: str = "A charm that attracts wealth from defeated foes."
-    flavor: str = "Fortune favors the bold... and the charmed."
+    flavor: str = "Fortune favors the bold... and charmed."
     icon_letter: str = "L"
+    rarity: str = "Epic"
 
     def use(self, game) -> bool:
         player = game.player
@@ -441,6 +445,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             amount=3,
             effect_text="Restore 3 HP instantly.",
             description="Distilled petals from palace gardens.",
+            rarity='Normal',
         ),
         ItemFactory.create_consumable(
             'mana',
@@ -452,6 +457,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             amount=10,
             effect_text="Restore 10 mana.",
             description="Clinks with crystallized star-salts.",
+            rarity='Normal',
         ),
         ItemFactory.create_consumable(
             'speed',
@@ -464,6 +470,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             duration=8.0,
             effect_text="Short burst of speed and cooldown haste.",
             description="Citrus fizz harvested from sun-basil.",
+            rarity='Rare',
         ),
         ItemFactory.create_consumable(
             'skyroot',
@@ -478,6 +485,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             effect_text="Higher jumps and triple-jump for 12s.",
             description="Sap of levitating Skyroot tree.",
             flavor="Feels like standing on stormclouds.",
+            rarity='Epic',
         ),
         ItemFactory.create_consumable(
             'stamina',
@@ -491,6 +499,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             effect_text="+25% stamina for 30s. Bar glows green.",
             description="Hidden-cave tonic that stretches every breath.",
             flavor="Thick, earthy, stubborn.",
+            rarity='Rare',
         ),
     ]
     
