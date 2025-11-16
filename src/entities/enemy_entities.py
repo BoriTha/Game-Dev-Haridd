@@ -860,11 +860,11 @@ class WizardCaster(Enemy):
                 nx, ny = dx/dist, dy/dist
                 if self.action == 'missile':
                     hb = pygame.Rect(0,0,18,6); hb.center = self.rect.center
-                    hitboxes.append(Hitbox(hb, 36, 12, self, dir_vec=(nx,ny), vx=nx*20.0, vy=ny*20.0))
+                    hitboxes.append(Hitbox(hb, 36, 4, self, dir_vec=(nx,ny), vx=nx*14.0, vy=ny*14.0))
                     self.cool = 70
                 elif self.action == 'fireball':
                     hb = pygame.Rect(0,0,12,12); hb.center = self.rect.center
-                    hitboxes.append(Hitbox(hb, 180, 6, self, dir_vec=(nx,ny), vx=nx*6.0, vy=ny*6.0, aoe_radius=48))
+                    hitboxes.append(Hitbox(hb, 180, 3, self, dir_vec=(nx,ny), vx=nx*6.0, vy=ny*6.0, aoe_radius=48))
                     self.cool = 80
                 else:
                     hb = pygame.Rect(0,0,8,8); hb.center = self.rect.center
@@ -874,8 +874,15 @@ class WizardCaster(Enemy):
         elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
             import random
             self.action = random.choices(['bolt','missile','fireball'], weights=[0.5,0.3,0.2])[0]
-            self.tele_t = 16
-            self.tele_text = '!!'
+            if self.action == 'missile':
+                self.tele_t = 24
+                self.tele_text = '!!!'
+            elif self.action == 'fireball':
+                self.tele_t = 18
+                self.tele_text = '!!'
+            else:
+                self.tele_t = 16
+                self.tele_text = '!!'
         
         from ..ai.enemy_movement import clamp_enemy_to_level
         self.handle_movement(level, player)

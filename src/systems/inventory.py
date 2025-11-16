@@ -1,6 +1,9 @@
+import logging
 import pygame
 import random
 from config import WIDTH, HEIGHT, FPS, WHITE
+
+logger = logging.getLogger(__name__)
 from ..core.utils import draw_text, get_font
 from .items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog, build_consumable_catalog, load_icon, icon_has_transparency, load_icon_masked, rarity_border_color
 from ..entities.entities import floating, DamageNumber
@@ -628,6 +631,19 @@ class Inventory:
                 payload['lines'] = ["Unknown Armament"]
                 return payload
             lines = item.tooltip_lines()
+            # Insert rarity after effect_text if present, otherwise after the name
+            try:
+                rarity = getattr(item, 'rarity', 'Normal')
+                rarity_line = f"Rarity: {rarity}"
+                insert_index = 1
+                if hasattr(item, 'effect_text') and item.effect_text:
+                    for idx, l in enumerate(lines):
+                        if l == item.effect_text:
+                            insert_index = idx + 1
+                            break
+                lines.insert(insert_index, rarity_line)
+            except Exception:
+                pass
             lines.extend(self._format_modifier_lines(item.modifiers))
             payload['lines'] = lines
             payload['item'] = item
@@ -659,10 +675,17 @@ class Inventory:
                 payload['lines'] = ["Unknown Consumable"]
                 return payload
             lines = entry.tooltip_lines()
-            # Insert rarity as the second line for consistency with shop tooltips
+            # Insert rarity after effect_text if present, otherwise after the name
             try:
                 rarity = getattr(entry, 'rarity', 'Normal')
-                lines.insert(1, f"Rarity: {rarity}")
+                rarity_line = f"Rarity: {rarity}"
+                insert_index = 1
+                if hasattr(entry, 'effect_text') and entry.effect_text:
+                    for idx, l in enumerate(lines):
+                        if l == entry.effect_text:
+                            insert_index = idx + 1
+                            break
+                lines.insert(insert_index, rarity_line)
             except Exception:
                 pass
             if stack_count is not None:
@@ -746,18 +769,37 @@ class Inventory:
         for i, line in enumerate(lines):
             # Different colors and sizes for different tooltip parts
             item = payload.get('item')
-            if i == 0:  # Name line (bigger and gold)
-                text_font = get_font(18, bold=True)
-                text_color = (255, 215, 0)  # Gold color for name
+            # Rarity line detection (we insert as 'Rarity: <Name>')
+            if isinstance(line, str) and line.startswith("Rarity:"):
+                text_font = get_font(16, bold=True)
+                try:
+                    rarity_name = line.split(':', 1)[1].strip()
+                except Exception:
+                    rarity_name = getattr(item, 'rarity', 'Normal') if item else 'Normal'
+                try:
+                    rarity_col = rarity_border_color(rarity_name)
+                except Exception:
+                    rarity_col = (200, 200, 200)
+                text_color = rarity_col
+                # Draw small swatch
+                swatch_size = 10
+                sw_x = text_x
+                sw_y = tooltip_rect.y + 6 + i * 22 + (16 - swatch_size) // 2
+                try:
+                    pygame.draw.rect(self.game.screen, rarity_col, (sw_x, sw_y, swatch_size, swatch_size), border_radius=2)
+                    pygame.draw.rect(self.game.screen, (10,10,10), (sw_x, sw_y, swatch_size, swatch_size), width=1, border_radius=2)
+                except Exception:
+                    pass
+                text_to_draw_x = text_x + swatch_size + 6
+                self.game.screen.blit(text_font.render(line, True, text_color), (text_to_draw_x, tooltip_rect.y + 6 + i * 22))
             elif i == 1 and item and hasattr(item, 'effect_text') and item.effect_text:  # Effect text (cyan and normal size)
                 text_font = get_font(16)
                 text_color = (100, 200, 255)  # Cyan color for effect
+                self.game.screen.blit(text_font.render(line, True, text_color), (text_x, tooltip_rect.y + 6 + i * 22))
             else:  # Description and flavor (white and normal size)
                 text_font = get_font(16)
                 text_color = (230, 230, 245)  # Light gray/white for description
-            
-            self.game.screen.blit(text_font.render(line, True, text_color), 
-                             (text_x, tooltip_rect.y + 6 + i * 22))
+                self.game.screen.blit(text_font.render(line, True, text_color), (text_x, tooltip_rect.y + 6 + i * 22))
 
     def _draw_unequip_stock_cell(self, surface, rect, mode, icon_font, highlighted):
         info = self._UNEQUIP_CELL_INFO.get(mode)
@@ -929,6 +971,13 @@ class Inventory:
             status_lines.append((f"Stamina: {self.game.player.stamina:.1f}/{self.game.player.max_stamina:.1f}", (150, 255, 150)))
         
         status_lines.append((f"Speed: {self.game.player.player_speed:.1f}", (200, 200, 255)))
+        # Show lifesteal percentages if present (>0)
+        ls_pct = getattr(self.game.player.combat, 'lifesteal_pct', 0.0) if hasattr(self.game.player, 'combat') else 0.0
+        spell_ls = getattr(self.game.player.combat, 'spell_lifesteal_pct', getattr(self.game.player.combat, 'spell_lifesteal', 0.0)) if hasattr(self.game.player, 'combat') else 0.0
+        if ls_pct and ls_pct > 0.0:
+            status_lines.append((f"Lifesteal: {ls_pct*100:.1f}%", (160, 220, 180)))
+        if spell_ls and spell_ls > 0.0:
+            status_lines.append((f"Spell Lifesteal: {spell_ls*100:.1f}%", (120, 180, 255)))
         
         status_spacing = 20  # Reduced spacing from 24 to 20
         
@@ -1714,7 +1763,18 @@ class Inventory:
             if not item:
                 continue
             for mod_key, value in item.modifiers.items():
-                stats[mod_key] = stats.get(mod_key, 0.0) + value
+                # Deep-merge modifiers into stats dict. Some modifiers are fractional (percentages).
+                if mod_key in ('lifesteal_pct', 'spell_lifesteal', 'spell_lifesteal_pct'):
+                    # Normalize 'spell_lifesteal' variant
+                    if mod_key == 'spell_lifesteal':
+                        mod_key_norm = 'spell_lifesteal'
+                    elif mod_key == 'spell_lifesteal_pct':
+                        mod_key_norm = 'spell_lifesteal'
+                    else:
+                        mod_key_norm = mod_key
+                    stats[mod_key_norm] = stats.get(mod_key_norm, 0.0) + float(value)
+                else:
+                    stats[mod_key] = stats.get(mod_key, 0.0) + value
         stamina_mult = getattr(player, 'stamina_buff_mult', 1.0)
         stats['max_stamina'] = stats.get('max_stamina', 0.0) * stamina_mult
         default_max_hp = getattr(player, 'max_hp', base.get('max_hp', 1))
@@ -1734,9 +1794,49 @@ class Inventory:
         if hasattr(player, '_mana_regen'):
             player._mana_regen = stats.get('mana_regen', player._mana_regen)
         
+        # Update percentage lifesteal values on the player's combat component
+        try:
+            if hasattr(player, 'combat') and player.combat:
+                # Base lifesteal from equipment + base stats
+                base_lifesteal_pct = stats.get('lifesteal_pct', getattr(player.combat, 'lifesteal_pct', 0.0) or 0.0)
+                # Support both 'spell_lifesteal' and 'spell_lifesteal_pct' modifier keys
+                base_spell_lifesteal = stats.get('spell_lifesteal', stats.get('spell_lifesteal_pct', getattr(player.combat, 'spell_lifesteal_pct', 0.0) or 0.0))
+                # Preserve temporary buffs from power skill - _power_buff_lifesteal_add may be set
+                power_add = getattr(player.combat, '_power_buff_lifesteal_add', 0.0)
+                power_spell_add = getattr(player.combat, '_power_buff_spell_lifesteal_add', 0.0)
+                player.combat.lifesteal_pct = float(base_lifesteal_pct) + float(power_add)
+                player.combat.spell_lifesteal_pct = float(base_spell_lifesteal) + float(power_spell_add)
+                try:
+                    logger.debug("recalculate_player_stats: base_lifesteal=%s base_spell_lifesteal=%s power_add=%s power_spell_add=%s final_lifesteal=%s final_spell_lifesteal=%s gear_slots=%s",
+                                 base_lifesteal_pct, base_spell_lifesteal, power_add, power_spell_add, player.combat.lifesteal_pct, player.combat.spell_lifesteal_pct, self.gear_slots)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Apply attack speed modifier (reduces attack cooldown)
+        attack_speed_bonus = stats.get('attack_speed', 0.0)
+        player.attack_speed_mult = 1.0 + attack_speed_bonus  # 0.15 = 15% faster = 1.15x multiplier
+        
+        # Apply skill cooldown reduction
+        skill_cdr = stats.get('skill_cooldown_reduction', 0.0)
+        player.skill_cooldown_mult = 1.0 - skill_cdr  # 0.20 = 20% reduction = 0.8x multiplier
+        
+        # Apply dash stamina cost multiplier
+        player.dash_stamina_mult = stats.get('dash_stamina_cost_mult', 1.0)
+        
+        # Apply extra dash charges
+        player.extra_dash_charges = int(stats.get('extra_dash_charges', 0))
+        
+        # Apply poison damage boost
+        player.poison_damage_mult = 1.0 + stats.get('poison_damage_pct', 0.0)
+        
+        # Apply skill damage boost
+        player.skill_damage_mult = 1.0 + stats.get('skill_damage_mult', 0.0)
+        
         # Clear on-hit effects cache when equipment changes
         try:
-            from systems.on_hit_effects import clear_on_hit_cache
+            from src.systems.on_hit_effects import clear_on_hit_cache
             clear_on_hit_cache()
         except Exception:
             pass  # Fail silently if on-hit effects system has issues

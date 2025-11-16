@@ -35,19 +35,44 @@ def draw_hud(game, screen: pygame.Surface) -> None:
             pygame.draw.rect(screen, c, pygame.Rect(x + i * 18, y, 16, 10), border_radius=3)
         y += 16
 
-        # Dash cooldown bar (cyan)
-        if getattr(game.player, 'dash_cd', 0):
-            pct = 1 - (game.player.dash_cd / 24)
-            pygame.draw.rect(screen, (80, 80, 80), pygame.Rect(x, y, 120, 6), border_radius=3)
-            pygame.draw.rect(screen, CYAN, pygame.Rect(x, y, int(120 * pct), 6), border_radius=3)
+        # Dash charges indicator (show charges as small circles)
+        dash_charges = getattr(game.player, 'dash_charges', 1)
+        dash_charges_max = getattr(game.player, 'dash_charges_max', 1)
+        if dash_charges_max > 0:
+            for i in range(dash_charges_max):
+                charge_x = x + i * 14
+                charge_color = CYAN if i < dash_charges else (60, 80, 80)
+                pygame.draw.circle(screen, charge_color, (charge_x + 6, y + 4), 5)
             y += 12
-
-        # Wall jump cooldown bar (orange)
-        if getattr(game.player, 'wall_jump_cooldown', 0) > 0:
-            pct = 1 - (game.player.wall_jump_cooldown / WALL_JUMP_COOLDOWN)
+        
+        # Shared cooldown bar - shows both dash and wall jump with different colors
+        dash_cd = getattr(game.player, 'dash_cd', 0)
+        wall_jump_cd = getattr(game.player, 'wall_jump_cooldown', 0)
+        
+        # Draw the bar if either cooldown is active
+        if dash_cd > 0 or wall_jump_cd > 0:
+            # Background
             pygame.draw.rect(screen, (80, 80, 80), pygame.Rect(x, y, 120, 6), border_radius=3)
-            pygame.draw.rect(screen, (255, 165, 0), pygame.Rect(x, y, int(120 * pct), 6), border_radius=3)
-        y += 12
+            
+            # If both are active, split the bar
+            if dash_cd > 0 and wall_jump_cd > 0:
+                # Dash on left half (cyan)
+                dash_pct = 1 - (dash_cd / 24)
+                pygame.draw.rect(screen, CYAN, pygame.Rect(x, y, int(60 * dash_pct), 6), border_radius=3)
+                
+                # Wall jump on right half (orange)
+                wall_pct = 1 - (wall_jump_cd / WALL_JUMP_COOLDOWN)
+                pygame.draw.rect(screen, (255, 165, 0), pygame.Rect(x + 60, y, int(60 * wall_pct), 6), border_radius=3)
+            elif dash_cd > 0:
+                # Only dash cooldown (cyan)
+                dash_pct = 1 - (dash_cd / 24)
+                pygame.draw.rect(screen, CYAN, pygame.Rect(x, y, int(120 * dash_pct), 6), border_radius=3)
+            else:
+                # Only wall jump cooldown (orange)
+                wall_pct = 1 - (wall_jump_cd / WALL_JUMP_COOLDOWN)
+                pygame.draw.rect(screen, (255, 165, 0), pygame.Rect(x, y, int(120 * wall_pct), 6), border_radius=3)
+            
+            y += 12
 
         # Stamina bar
         if hasattr(game.player, 'stamina') and hasattr(game.player, 'max_stamina'):
@@ -97,6 +122,24 @@ def draw_hud(game, screen: pygame.Surface) -> None:
             from src.level.legacy_level import ROOM_COUNT
             draw_text(screen, f"Room {getattr(game, 'level_index', 0) + 1}/{ROOM_COUNT}", (WIDTH - 220, 8), WHITE, size=16)
 
+        # Active item modifiers (show if significant)
+        active_mods = []
+        if getattr(game.player, 'attack_speed_mult', 1.0) > 1.1:
+            active_mods.append(('⚔', (255, 200, 100), f"+{int((game.player.attack_speed_mult - 1.0) * 100)}% ATK SPD"))
+        if getattr(game.player, 'skill_cooldown_mult', 1.0) < 0.9:
+            active_mods.append(('⏱', (150, 200, 255), f"-{int((1.0 - game.player.skill_cooldown_mult) * 100)}% CDR"))
+        if getattr(game.player, 'skill_damage_mult', 1.0) > 1.1:
+            active_mods.append(('🔮', (200, 150, 255), f"+{int((game.player.skill_damage_mult - 1.0) * 100)}% SKILL"))
+        if getattr(game.player, 'dash_stamina_mult', 1.0) < 0.95:
+            active_mods.append(('💨', (100, 255, 200), f"-{int((1.0 - game.player.dash_stamina_mult) * 100)}% DASH"))
+        
+        if active_mods:
+            mod_y = y
+            for icon, color, text in active_mods:
+                draw_text(screen, f"{icon} {text}", (x, mod_y), color, size=12, bold=True)
+                mod_y += 14
+            y = mod_y + 4
+        
         # Class and coins
         draw_text(screen, f"Class: {getattr(game.player, 'cls', 'Unknown')}", (WIDTH - 220, 28), (200, 200, 200), size=16)
         draw_text(screen, f"Coins: {game.player.money}", (WIDTH - 220, 48), (255, 215, 0), bold=True)

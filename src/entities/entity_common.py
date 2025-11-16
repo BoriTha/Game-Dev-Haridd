@@ -37,7 +37,7 @@ hitboxes = []
 floating = []
 
 class Hitbox:
-    def __init__(self, rect, lifetime, damage, owner, dir_vec=(1,0), pogo=False, vx=0, vy=0, aoe_radius=0, visual_only=False, pierce=False, bypass_ifr=False, tag=None):
+    def __init__(self, rect, lifetime, damage, owner, dir_vec=(1,0), pogo=False, vx=0.0, vy=0.0, aoe_radius=0, visual_only=False, pierce=False, bypass_ifr=False, tag=None):
         self.rect = rect.copy()
         self.lifetime = lifetime
         self.damage = damage
@@ -56,11 +56,13 @@ class Hitbox:
         self.alive = True
 
     def tick(self):
-        # move if velocity set
-        if getattr(self, 'vx', 0) != 0:
-            self.rect.x += int(self.vx)
-        if getattr(self, 'vy', 0) != 0:
-            self.rect.y += int(self.vy)
+        # move if velocity set (keep as float for precision, convert only when applying)
+        vx = getattr(self, 'vx', 0)
+        vy = getattr(self, 'vy', 0)
+        if vx != 0:
+            self.rect.x += int(vx)
+        if vy != 0:
+            self.rect.y += int(vy)
         self.lifetime -= 1
         if self.lifetime <= 0:
             self.alive = False

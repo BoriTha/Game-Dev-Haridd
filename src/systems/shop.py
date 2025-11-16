@@ -528,12 +528,18 @@ class Shop:
         lines = item.tooltip_lines()
         if not lines:
             return
-        # Insert rarity line after the name so the tooltip shows item rarity
+        # Insert rarity line after the effect text if present, otherwise after the name
         try:
             rarity = getattr(item, 'rarity', 'Normal')
             rarity_line = f"Rarity: {rarity}"
-            # Insert as second line (after name)
-            lines.insert(1, rarity_line)
+            insert_index = 1  # default after name
+            if hasattr(item, 'effect_text') and item.effect_text:
+                # find first occurrence of effect_text in lines
+                for idx, l in enumerate(lines):
+                    if l == item.effect_text:
+                        insert_index = idx + 1
+                        break
+            lines.insert(insert_index, rarity_line)
         except Exception:
             pass
 
@@ -634,15 +640,39 @@ class Shop:
             if i == 0:  # Name line (bigger and gold)
                 text_font = get_font(18, bold=True)
                 text_color = (255, 215, 0)  # Gold color for name
+            # Rarity line detection (we insert as 'Rarity: <Name>')
+            if isinstance(line, str) and line.startswith("Rarity:"):
+                text_font = get_font(16, bold=True)
+                # Parse rarity name and get the border color
+                try:
+                    rarity_name = line.split(':', 1)[1].strip()
+                except Exception:
+                    rarity_name = getattr(item, 'rarity', 'Normal') if item else 'Normal'
+                try:
+                    rarity_col = rarity_border_color(rarity_name)
+                except Exception:
+                    rarity_col = (200, 200, 200)
+                text_color = rarity_col
+                # Draw a small swatch before the text
+                swatch_size = 10
+                sw_x = text_x
+                sw_y = tooltip_rect.y + 6 + i * 22 + (16 - swatch_size) // 2
+                try:
+                    pygame.draw.rect(screen, rarity_col, (sw_x, sw_y, swatch_size, swatch_size), border_radius=2)
+                    pygame.draw.rect(screen, (10,10,10), (sw_x, sw_y, swatch_size, swatch_size), width=1, border_radius=2)
+                except Exception:
+                    pass
+                # Shift text_x to account for swatch + gap
+                text_to_draw_x = text_x + swatch_size + 6
+                screen.blit(text_font.render(line, True, text_color), (text_to_draw_x, tooltip_rect.y + 6 + i * 22))
             elif i == 1 and hasattr(item, 'effect_text') and item.effect_text:  # Effect text (cyan and normal size)
                 text_font = get_font(16)
                 text_color = (100, 200, 255)  # Cyan color for effect
+                screen.blit(text_font.render(line, True, text_color), (text_x, tooltip_rect.y + 6 + i * 22))
             else:  # Description and flavor (white and normal size)
                 text_font = get_font(16)
                 text_color = (230, 230, 245)  # Light gray/white for description
-            
-            screen.blit(text_font.render(line, True, text_color), 
-                     (text_x, tooltip_rect.y + 6 + i * 22))
+                screen.blit(text_font.render(line, True, text_color), (text_x, tooltip_rect.y + 6 + i * 22))
     
     def draw(self, screen):
         """Draw 3-column shop interface (inventory-style)"""

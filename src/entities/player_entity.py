@@ -41,9 +41,12 @@ class Player:
         self.wall_reattach_timer = 0
         self.double_jumps = DOUBLE_JUMPS
         self.can_dash = True
+        self.dash_charges = 1  # Base dash charges
+        self.dash_charges_max = 1  # Maximum dash charges
         self.dashing = 0
         self.dash_cd = 0
         self.mobility_cd = 0
+        self.dash_key_pressed = False  # Track dash key state to prevent holding
 
         self.cls = cls
         combat_config = {}
@@ -167,6 +170,9 @@ class Player:
             'max_stamina': float(getattr(self, 'max_stamina', 0.0)),
             'stamina_regen': float(getattr(self, '_stamina_regen', 0.0)),
             'mana_regen': float(getattr(self, '_mana_regen', 0.0)),
+            # Lifesteal base values (percentages)
+            'lifesteal_pct': float(getattr(self.combat, 'lifesteal_pct', 0.0)),
+            'spell_lifesteal': float(getattr(self.combat, 'spell_lifesteal_pct', getattr(self.combat, 'spell_lifesteal', 0.0))),
         }
         self.money = 0
 
@@ -352,15 +358,19 @@ class Player:
 
         # NEW: Simplified dash - only if mobility cooldown is free
         free_dash_available = False
+        dash_key_down = keys[pygame.K_LSHIFT] or keys[pygame.K_j]
         if (
             not stunned
             and (self.mobility_cd == 0 or free_dash_available)
-            and (keys[pygame.K_LSHIFT] or keys[pygame.K_j])
-            and (self.can_dash or free_dash_available)
-            and (self.dash_cd == 0 or free_dash_available)
+            and dash_key_down
+            and not self.dash_key_pressed  # Only trigger on press, not hold
+            and (self.dash_charges > 0 or free_dash_available)
             and not self.dashing
         ):
             self.start_dash(free_action=free_dash_available)
+        
+        # Update dash key state
+        self.dash_key_pressed = dash_key_down
 
         # Parry: Right mouse button or E (Knight only)
         rmb = pygame.mouse.get_pressed()[2]
@@ -411,7 +421,8 @@ class Player:
                             self.sniper_ready = False
                         speed = 14 if charged else 10
                         self.fire_arrow(dmg, speed, camera, pierce=charged)
-                    self.attack_cd = ATTACK_COOLDOWN
+                    attack_speed_mult = getattr(self, 'attack_speed_mult', 1.0)
+                    self.attack_cd = ATTACK_COOLDOWN / attack_speed_mult
                     self.charging = False
             else:
                 if keys[pygame.K_l] or lmb:
@@ -422,7 +433,7 @@ class Player:
     def start_dash(self, free_action=False):
         # require some stamina to dash (unless it's a free action)
         if not free_action:
-            dash_cost = 2.0
+            dash_cost = 2.0 * getattr(self, 'dash_stamina_mult', 1.0)
             if getattr(self, 'stamina', 0) <= 0:
                 return
             # consume stamina if available
@@ -430,7 +441,8 @@ class Player:
                 self.stamina = max(0.0, self.stamina - dash_cost)
             # start stamina regen cooldown (1 second)
             self._stamina_cooldown = int(FPS)
-            self.can_dash = False
+            # Consume a dash charge
+            self.dash_charges = max(0, self.dash_charges - 1)
             self.dash_cd = DASH_COOLDOWN
             # trigger shared mobility cooldown
             self.mobility_cd = MOBILITY_COOLDOWN_FRAMES
@@ -447,12 +459,14 @@ class Player:
     def start_attack(self, keys, camera):
         # Wizard: ranged normal attack toward mouse
         if self.cls == 'Wizard':
-            self.attack_cd = ATTACK_COOLDOWN
+            attack_speed_mult = getattr(self, 'attack_speed_mult', 1.0)
+            self.attack_cd = ATTACK_COOLDOWN / attack_speed_mult
             self.combo_t = COMBO_RESET
             self.combo = (self.combo + 1) % 3
             mx, my = pygame.mouse.get_pos()
-            world_x = mx + camera.x
-            world_y = my + camera.y
+            # Convert mouse screen position to world position accounting for camera and zoom
+            world_x = (mx / camera.zoom) + camera.x
+            world_y = (my / camera.zoom) + camera.y
             dx = world_x - self.rect.centerx
             dy = world_y - self.rect.centery
             dist = (dx*dx + dy*dy) ** 0.5
@@ -461,9 +475,10 @@ class Player:
             else:
                 nx, ny = dx / dist, dy / dist
             speed = 9.0
+            damage = int(1 * getattr(self, 'skill_damage_mult', 1.0))
             hb = pygame.Rect(0, 0, 8, 8)
             hb.center = self.rect.center
-            hitboxes.append(Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=int(nx*speed), vy=int(ny*speed)))
+            hitboxes.append(Hitbox(hb, 90, damage, self, dir_vec=(nx,ny), vx=nx*speed, vy=ny*speed, tag='spell'))
             return
 
         up = keys[pygame.K_w] or keys[pygame.K_UP]
@@ -471,7 +486,8 @@ class Player:
         dir_vec = (self.facing, 0)
         if up: dir_vec = (0, -1)
         elif down: dir_vec = (0, 1)
-        self.attack_cd = ATTACK_COOLDOWN
+        attack_speed_mult = getattr(self, 'attack_speed_mult', 1.0)
+        self.attack_cd = ATTACK_COOLDOWN / attack_speed_mult
         self.combo_t = COMBO_RESET
         self.combo = (self.combo + 1) % 3
 
@@ -497,8 +513,9 @@ class Player:
     def fire_arrow(self, damage, speed, camera, pierce=False):
         # spawn a moving arrow hitbox toward mouse direction
         mx, my = pygame.mouse.get_pos()
-        world_x = mx + camera.x
-        world_y = my + camera.y
+        # Convert mouse screen position to world position accounting for camera and zoom
+        world_x = (mx / camera.zoom) + camera.x
+        world_y = (my / camera.zoom) + camera.y
         dx = world_x - self.rect.centerx
         dy = world_y - self.rect.centery
         dist = (dx*dx + dy*dy) ** 0.5
@@ -508,16 +525,18 @@ class Player:
             nx, ny = dx / dist, dy / dist
         hb = pygame.Rect(0, 0, 10, 6)
         hb.center = self.rect.center
+        # Keep velocity as float for better precision
         vx = nx * speed
         vy = ny * speed
-        hitboxes.append(Hitbox(hb, 120, damage, self, dir_vec=(nx,ny), vx=int(vx), vy=int(vy), pierce=pierce))
+        hitboxes.append(Hitbox(hb, 120, damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, pierce=pierce))
 
     def fire_triple_arrows(self, base_damage, speed, camera, pierce=False):
         # Fire three arrows with slight angle offsets
         import math
         mx, my = pygame.mouse.get_pos()
-        world_x = mx + camera.x
-        world_y = my + camera.y
+        # Convert mouse screen position to world position accounting for camera and zoom
+        world_x = (mx / camera.zoom) + camera.x
+        world_y = (my / camera.zoom) + camera.y
         dx = world_x - self.rect.centerx
         dy = world_y - self.rect.centery
         base_ang = math.atan2(dy, dx)
@@ -525,9 +544,10 @@ class Player:
             nx, ny = math.cos(ang), math.sin(ang)
             hb = pygame.Rect(0, 0, 10, 6)
             hb.center = self.rect.center
+            # Keep velocity as float for better precision
             vx = nx * speed
             vy = ny * speed
-            hitboxes.append(Hitbox(hb, 120, base_damage, self, dir_vec=(nx,ny), vx=int(vx), vy=int(vy), pierce=pierce, bypass_ifr=True))
+            hitboxes.append(Hitbox(hb, 120, base_damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, pierce=pierce, bypass_ifr=True))
 
     # --- Wizard skill casts ---
     def cast_fireball(self, level, camera):
@@ -535,10 +555,12 @@ class Player:
         if getattr(self, 'mana', 0) < cost or self.skill_cd1 > 0:
             return
         self.mana = max(0.0, self.mana - cost)
-        self.skill_cd1 = self.skill_cd1_max = int(1 * FPS)  # 1s CD
+        skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
+        self.skill_cd1 = self.skill_cd1_max = int(1 * FPS * skill_cdr)  # 1s CD
         mx, my = pygame.mouse.get_pos()
-        world_x = mx + camera.x
-        world_y = my + camera.y
+        # Convert mouse screen position to world position accounting for camera and zoom
+        world_x = (mx / camera.zoom) + camera.x
+        world_y = (my / camera.zoom) + camera.y
         dx = world_x - self.rect.centerx
         dy = world_y - self.rect.centery
         dist = (dx*dx + dy*dy) ** 0.5
@@ -547,20 +569,23 @@ class Player:
         nx = dx / dist
         ny = dy / dist
         speed = 6.0
+        damage = int(6 * getattr(self, 'skill_damage_mult', 1.0))
         hb = pygame.Rect(0, 0, 12, 12)
         hb.center = self.rect.center
         # small moving projectile that explodes on hit (AOE)
-        hitboxes.append(Hitbox(hb, 180, 6, self, dir_vec=(nx, ny), vx=int(nx*speed), vy=int(ny*speed), aoe_radius=48))
+        hitboxes.append(Hitbox(hb, 180, damage, self, dir_vec=(nx, ny), vx=nx*speed, vy=ny*speed, aoe_radius=48, tag='spell'))
 
     def cast_coldfeet(self, level, camera):
         cost = 25
         if getattr(self, 'mana', 0) < cost or self.skill_cd2 > 0:
             return
         self.mana = max(0.0, self.mana - cost)
-        self.skill_cd2 = self.skill_cd2_max = int(8 * FPS)  # 8s CD
+        skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
+        self.skill_cd2 = self.skill_cd2_max = int(8 * FPS * skill_cdr)  # 8s CD
         mx, my = pygame.mouse.get_pos()
-        world_x = mx + camera.x
-        world_y = my + camera.y
+        # Convert mouse screen position to world position accounting for camera and zoom
+        world_x = (mx / camera.zoom) + camera.x
+        world_y = (my / camera.zoom) + camera.y
         radius = 48
         # visual indicator for the cold feet area (no instant damage)
         hb = pygame.Rect(0,0,int(radius*2), int(radius*2))
@@ -584,10 +609,12 @@ class Player:
         if getattr(self, 'mana', 0) < cost or self.skill_cd3 > 0:
             return
         self.mana = max(0.0, self.mana - cost)
-        self.skill_cd3 = self.skill_cd3_max = int(2 * FPS)  # 2s CD
+        skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
+        self.skill_cd3 = self.skill_cd3_max = int(2 * FPS * skill_cdr)  # 2s CD
         mx, my = pygame.mouse.get_pos()
-        world_x = mx + camera.x
-        world_y = my + camera.y
+        # Convert mouse screen position to world position accounting for camera and zoom
+        world_x = (mx / camera.zoom) + camera.x
+        world_y = (my / camera.zoom) + camera.y
         dx = world_x - self.rect.centerx
         dy = world_y - self.rect.centery
         dist = (dx*dx + dy*dy) ** 0.5
@@ -596,12 +623,13 @@ class Player:
         else:
             nx, ny = dx / dist, dy / dist
         speed = 20.0
-    # a narrow fast projectile representing the magic missile
+        damage = int(12 * getattr(self, 'skill_damage_mult', 1.0))
+        # a narrow fast projectile representing the magic missile
         hb = pygame.Rect(0, 0, 18, 6)
         hb.center = self.rect.center
         vx = nx * speed
         vy = ny * speed
-        hitboxes.append(Hitbox(hb, 36, 12, self, dir_vec=(nx,ny), vx=int(vx), vy=int(vy)))
+        hitboxes.append(Hitbox(hb, 36, damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, tag='spell'))
 
 
 
@@ -618,15 +646,16 @@ class Player:
                 self.cast_magic_missile(level, camera)
         elif self.cls == 'Knight':
             # Knight skills: Shield, Power, Charge
+            skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
             if idx == 1 and self.skill_cd1 == 0:
                 if self.combat.activate_shield():
-                    self.skill_cd1 = self.skill_cd1_max = 15 * FPS
+                    self.skill_cd1 = self.skill_cd1_max = int(15 * FPS * skill_cdr)
             elif idx == 2 and self.skill_cd2 == 0:
                 if self.combat.activate_power_buff():
-                    self.skill_cd2 = self.skill_cd2_max = 25 * FPS
+                    self.skill_cd2 = self.skill_cd2_max = int(25 * FPS * skill_cdr)
             elif idx == 3 and self.skill_cd3 == 0:
                 # charge: a short fast moving hitbox that deals 4 dmg
-                self.skill_cd3 = self.skill_cd3_max = 6 * FPS
+                self.skill_cd3 = self.skill_cd3_max = int(6 * FPS * skill_cdr)
                 dash_speed = 10
                 hb = pygame.Rect(0, 0, int(self.rect.w*1.2), self.rect.h)
                 if self.facing > 0:
@@ -639,15 +668,16 @@ class Player:
                 self.dashing = 8
         elif self.cls == 'Ranger':
             # Ranger skills: Triple shot, Sniper, Speed boost
+            skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
             if idx == 1 and self.skill_cd1 == 0:
                 self.triple_timer = 7 * FPS
-                self.skill_cd1 = self.skill_cd1_max = 20 * FPS
+                self.skill_cd1 = self.skill_cd1_max = int(20 * FPS * skill_cdr)
             elif idx == 2 and self.skill_cd2 == 0:
                 self.sniper_ready = True
-                self.skill_cd2 = self.skill_cd2_max = 10 * FPS
+                self.skill_cd2 = self.skill_cd2_max = int(10 * FPS * skill_cdr)
             elif idx == 3 and self.skill_cd3 == 0:
                 self.speed_timer = 7 * FPS
-                self.skill_cd3 = self.skill_cd3_max = 15 * FPS
+                self.skill_cd3 = self.skill_cd3_max = int(15 * FPS * skill_cdr)
 
     def teleport_to_mouse(self, level, camera):
         """Teleport the player toward the mouse world position up to teleport_distance,
@@ -660,8 +690,9 @@ class Player:
             return
 
         mx, my = pygame.mouse.get_pos()
-        world_x = mx + camera.x
-        world_y = my + camera.y
+        # Convert mouse screen position to world position accounting for camera and zoom
+        world_x = (mx / camera.zoom) + camera.x
+        world_y = (my / camera.zoom) + camera.y
         dx = world_x - self.rect.centerx
         dy = world_y - self.rect.centery
         dist = (dx*dx + dy*dy) ** 0.5
@@ -733,7 +764,10 @@ class Player:
         if self.on_ground:
             self.coyote = COYOTE_FRAMES
             self.double_jumps = DOUBLE_JUMPS + int(getattr(self, 'extra_jump_charges', 0))
-            self.can_dash = True if self.dash_cd == 0 else self.can_dash
+            # Restore dash charges when landing
+            extra_charges = int(getattr(self, 'extra_dash_charges', 0))
+            self.dash_charges_max = 1 + extra_charges
+            self.dash_charges = self.dash_charges_max
             # FIXED: Reset all wall jump related states when landing on ground
             if self.wall_jump_state is not None:
                 self.wall_jump_state = None
@@ -877,7 +911,11 @@ class Player:
 
         speed_bonus = self.speed_potion_bonus if self.speed_potion_timer > 0 else 0.0
         cd_step = 1.0 + speed_bonus
-        if self.dash_cd > 0: self.dash_cd = max(0.0, self.dash_cd - cd_step)
+        if self.dash_cd > 0:
+            self.dash_cd = max(0.0, self.dash_cd - cd_step)
+            # Restore a dash charge when cooldown finishes
+            if self.dash_cd == 0 and self.dash_charges < self.dash_charges_max:
+                self.dash_charges = min(self.dash_charges + 1, self.dash_charges_max)
         if self.skill_cd1 > 0: self.skill_cd1 = max(0.0, self.skill_cd1 - cd_step)
         if self.skill_cd2 > 0: self.skill_cd2 = max(0.0, self.skill_cd2 - cd_step)
         if self.skill_cd3 > 0: self.skill_cd3 = max(0.0, self.skill_cd3 - cd_step)
@@ -1062,7 +1100,92 @@ class Player:
 
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=4)
         
-        # DEBUG: Draw wall jump state indicators (remove in production)
+        # Draw Ranger crosshair/aim line
+        if self.cls == 'Ranger' and self.alive:
+            self._draw_ranger_crosshair(surf, camera)
+        
+        # Draw debug overlays
+        self._draw_debug_wall_jump(surf)
+
+    def _draw_ranger_crosshair(self, surf, camera):
+        """Draw aim line and crosshair for Ranger class"""
+        mx, my = pygame.mouse.get_pos()
+        # Convert mouse screen position to world position accounting for camera and zoom
+        world_x = (mx / camera.zoom) + camera.x
+        world_y = (my / camera.zoom) + camera.y
+        
+        # Calculate direction from player to mouse
+        dx = world_x - self.rect.centerx
+        dy = world_y - self.rect.centery
+        dist = (dx*dx + dy*dy) ** 0.5
+        
+        if dist < 1:
+            return  # Don't draw if mouse is too close
+        
+        # Normalize direction
+        nx = dx / dist
+        ny = dy / dist
+        
+        # Convert player position to screen coordinates
+        screen_player_x, screen_player_y = camera.to_screen(self.rect.center)
+        
+        # Draw aim line from player to mouse (with max length)
+        max_line_length = 300  # pixels on screen
+        actual_length = min(dist, max_line_length)
+        
+        end_x = screen_player_x + nx * actual_length
+        end_y = screen_player_y + ny * actual_length
+        
+        # Draw line with different colors based on charging state
+        if getattr(self, 'charging', False):
+            charge_progress = min(1.0, self.charge_time / self.charge_threshold)
+            # Gradient from yellow to red as charge increases
+            r = int(255)
+            g = int(255 * (1.0 - charge_progress * 0.5))
+            b = int(50)
+            line_color = (r, g, b)
+            line_width = 2 if charge_progress < 1.0 else 3
+        else:
+            line_color = (100, 200, 255)  # Light blue when not charging
+            line_width = 1
+        
+        # Draw the aim line
+        pygame.draw.line(surf, line_color, 
+                        (int(screen_player_x), int(screen_player_y)),
+                        (int(end_x), int(end_y)), 
+                        line_width)
+        
+        # Draw crosshair at mouse position
+        crosshair_size = 8
+        crosshair_color = line_color
+        
+        # Horizontal line
+        pygame.draw.line(surf, crosshair_color,
+                        (mx - crosshair_size, my),
+                        (mx + crosshair_size, my), 2)
+        # Vertical line
+        pygame.draw.line(surf, crosshair_color,
+                        (mx, my - crosshair_size),
+                        (mx, my + crosshair_size), 2)
+        
+        # Draw a circle at the center
+        pygame.draw.circle(surf, crosshair_color, (mx, my), 3, 1)
+        
+        # If triple shot is active, show multiple aim lines
+        if getattr(self, 'triple_timer', 0) > 0:
+            angle_offset = math.radians(8)
+            for offset_angle in [-angle_offset, angle_offset]:
+                angle = math.atan2(ny, nx) + offset_angle
+                offset_nx = math.cos(angle)
+                offset_ny = math.sin(angle)
+                offset_end_x = screen_player_x + offset_nx * actual_length
+                offset_end_y = screen_player_y + offset_ny * actual_length
+                pygame.draw.line(surf, (255, 200, 100),
+                               (int(screen_player_x), int(screen_player_y)),
+                               (int(offset_end_x), int(offset_end_y)), 1)
+    
+    def _draw_debug_wall_jump(self, surf):
+        """DEBUG: Draw wall jump state indicators (remove in production)"""
         if getattr(self, '_debug_wall_jump', False):
             font = pygame.font.Font(None, 16)
             y_offset = 0

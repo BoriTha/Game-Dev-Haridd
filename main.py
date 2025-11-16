@@ -145,6 +145,9 @@ class Game:
         self.inventory = Inventory(self)
         self.inventory._refresh_inventory_defaults()
         self.shop = Shop(self)
+        
+        # Link inventory to player for on-hit effects
+        self.player.inventory = self.inventory
 
         # Debug overlays helper
         try:
@@ -211,6 +214,9 @@ class Game:
         self.inventory = Inventory(self)
         self.inventory._refresh_inventory_defaults()
         self.shop = Shop(self)
+        
+        # Link inventory to player for on-hit effects
+        self.player.inventory = self.inventory
 
     def restart_run(self):
         """
@@ -786,9 +792,11 @@ class Game:
                         
                         # Apply on-hit effects from player augmentations
                         try:
-                            from systems.on_hit_effects import process_on_hit_effects
-                            process_on_hit_effects(e, self.player, hb)
-                        except Exception:
+                            from src.systems.on_hit_effects import process_on_hit_effects
+                            process_on_hit_effects(e, self.player, hb, self.inventory)
+                        except Exception as ex:
+                            import traceback
+                            traceback.print_exc()
                             pass  # Fail silently if on-hit effects system has issues
                         
                         # moving projectiles should disappear after first enemy hit unless they can pierce

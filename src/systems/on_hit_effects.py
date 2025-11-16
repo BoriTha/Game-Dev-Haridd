@@ -32,6 +32,9 @@ class PoisonEffect(OnHitEffect):
             return False
         
         dps = self.effect_data.get('on_hit_poison_dps', 1.0)
+        # Apply poison damage multiplier from player gear
+        poison_mult = getattr(player, 'poison_damage_mult', 1.0)
+        dps *= poison_mult
         duration = self.effect_data.get('on_hit_poison_duration', 4.0) * FPS
         
         # Apply or stack poison
@@ -64,8 +67,11 @@ class BurnEffect(OnHitEffect):
     
     def apply(self, enemy, player, hitbox) -> bool:
         always = self.effect_data.get('on_hit_burn_always', False)
-        if not always and random.random() > 0.01:  # 99% chance to not apply (for non-always items)
-            return False
+        # For non-always burn items, apply every hit (not random)
+        # The "always" flag is for legendary items that guarantee burn
+        if not always:
+            # Regular burn items apply on every hit
+            pass
         
         dps = self.effect_data.get('on_hit_burn_dps', 1.0)
         duration = self.effect_data.get('on_hit_burn_duration', 1.0) * FPS
@@ -185,16 +191,8 @@ class DoubleAttackEffect(OnHitEffect):
         floating.append(DamageNumber(
             enemy.rect.centerx,
             enemy.rect.top - 10,
-            "DOUBLE HIT!",
+            "x2!",
             (255, 255, 100)  # Yellow double hit color
-        ))
-        
-        # Visual feedback on player
-        floating.append(DamageNumber(
-            player.rect.centerx,
-            player.rect.top - 20,
-            "DOUBLE STRIKE!",
-            (255, 220, 100)  # Orange-yellow for player
         ))
         
         return True
@@ -206,19 +204,26 @@ class OnHitEffectProcessor:
     def __init__(self):
         self.effect_cache: Dict[str, List[OnHitEffect]] = {}
     
-    def build_effect_cache(self, player) -> None:
+    def build_effect_cache(self, player, inventory=None) -> None:
         """Build cache of on-hit effects from player's equipped augmentations"""
         self.effect_cache.clear()
         
-        if not hasattr(player, 'inventory') or not player.inventory:
+        # Try to get inventory from player or use passed inventory
+        player_inventory = None
+        if hasattr(player, 'inventory') and player.inventory:
+            player_inventory = player.inventory
+        elif inventory:
+            player_inventory = inventory
+        
+        if not player_inventory:
             return
         
         # Get all equipped armaments
-        for gear_key in player.inventory.gear_slots:
+        for gear_key in player_inventory.gear_slots:
             if not gear_key:
                 continue
             
-            item = player.inventory.armament_catalog.get(gear_key)
+            item = player_inventory.armament_catalog.get(gear_key)
             if not item or not hasattr(item, 'modifiers'):
                 continue
             
@@ -249,22 +254,26 @@ class OnHitEffectProcessor:
             if effects:
                 self.effect_cache[gear_key] = effects
     
-    def process_on_hit_effects(self, enemy, player, hitbox) -> None:
+    def process_on_hit_effects(self, enemy, player, hitbox, inventory=None) -> None:
         """Process all on-hit effects when enemy is successfully hit"""
-        if not hasattr(player, 'inventory'):
-            return
+        import logging
+        logger = logging.getLogger(__name__)
         
         # Rebuild cache if needed (lazy initialization)
         if not self.effect_cache:
-            self.build_effect_cache(player)
+            logger.debug(f"Building on-hit effect cache for player")
+            self.build_effect_cache(player, inventory)
+            logger.debug(f"Effect cache built with {len(self.effect_cache)} items")
         
         # Apply all effects from equipped items
         for gear_key, effects in self.effect_cache.items():
             for effect in effects:
                 try:
+                    logger.debug(f"Applying {effect.__class__.__name__} from {gear_key}")
                     effect.apply(enemy, player, hitbox)
                 except Exception as e:
                     # Log error but don't crash game
+                    logger.exception(f"Error applying on-hit effect from {gear_key}: {e}")
                     print(f"Error applying on-hit effect from {gear_key}: {e}")
     
     def clear_cache(self) -> None:
@@ -281,9 +290,9 @@ def get_on_hit_processor() -> OnHitEffectProcessor:
     return _on_hit_processor
 
 
-def process_on_hit_effects(enemy, player, hitbox) -> None:
+def process_on_hit_effects(enemy, player, hitbox, inventory=None) -> None:
     """Convenience function to process on-hit effects"""
-    _on_hit_processor.process_on_hit_effects(enemy, player, hitbox)
+    _on_hit_processor.process_on_hit_effects(enemy, player, hitbox, inventory)
 
 
 def clear_on_hit_cache() -> None:

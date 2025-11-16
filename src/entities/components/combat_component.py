@@ -45,6 +45,15 @@ class CombatComponent:
 
         # Lifesteal is now a temporary buff, not a default state.
         self.lifesteal_on_hit = 0
+        # Percentage-based lifesteal and spell lifesteal (from equipment/modifiers)
+        self.lifesteal_pct = float(self.config.get('lifesteal_pct', 0.0))
+        self.spell_lifesteal_pct = float(self.config.get('spell_lifesteal', 0.0))
+        # Accumulators to handle fractional lifesteal values across multiple hits
+        self._lifesteal_accum = 0.0
+        self._spell_lifesteal_accum = 0.0
+        # Track temporary additions from power buffs so we can remove them later
+        self._power_buff_lifesteal_add = 0.0
+        self._power_buff_spell_lifesteal_add = 0.0
 
         self.power_buff_duration = self.config.get('power_buff_duration', 0)
         self.power_buff_atk_bonus = self.config.get('power_buff_atk_bonus', 0)
@@ -157,12 +166,42 @@ class CombatComponent:
 
         player_combat = hitbox.owner.combat
 
-        # Handle Lifesteal for the player
+        # Handle Lifesteal for the player (flat and percentage-based)
         if player_combat.lifesteal_on_hit > 0 and hitbox.damage > 0:
             old_hp = player_combat.hp
             player_combat.hp = min(player_combat.max_hp, player_combat.hp + player_combat.lifesteal_on_hit)
             if player_combat.hp != old_hp:
                 floating.append(DamageNumber(hitbox.owner.rect.centerx, hitbox.owner.rect.top - 10, f"+{player_combat.lifesteal_on_hit}", GREEN))
+
+        # Percentage lifesteal (equipment-based) - physical attacks vs spells
+        if hitbox.damage > 0:
+            owner = hitbox.owner
+            # Determine whether this was a spell - treat Wizard class attacks & tagged hits as spells
+            is_spell = getattr(owner, 'cls', None) == 'Wizard' or getattr(hitbox, 'tag', None) == 'spell'
+            owner_combat = getattr(owner, 'combat', None)
+            physical_pct = float(getattr(owner_combat, 'lifesteal_pct', getattr(owner, 'lifesteal_pct', 0.0)) if owner_combat is not None else getattr(owner, 'lifesteal_pct', 0.0))
+            spell_pct = float(getattr(owner_combat, 'spell_lifesteal_pct', getattr(owner, 'spell_lifesteal', 0.0)) if owner_combat is not None else getattr(owner, 'spell_lifesteal', 0.0))
+            pct = spell_pct if is_spell else physical_pct
+            if pct > 0 and owner_combat is not None:
+                heal_float = hitbox.damage * pct
+                if is_spell:
+                    owner_combat._spell_lifesteal_accum = getattr(owner_combat, '_spell_lifesteal_accum', 0.0) + heal_float
+                    heal_int = int(owner_combat._spell_lifesteal_accum)
+                    if heal_int > 0:
+                        old_hp = owner_combat.hp
+                        owner_combat.hp = min(owner_combat.max_hp, owner_combat.hp + heal_int)
+                        owner_combat._spell_lifesteal_accum -= heal_int
+                        if owner_combat.hp != old_hp:
+                            floating.append(DamageNumber(owner.rect.centerx, owner.rect.top - 10, f"+{heal_int}", GREEN))
+                else:
+                    owner_combat._lifesteal_accum = getattr(owner_combat, '_lifesteal_accum', 0.0) + heal_float
+                    heal_int = int(owner_combat._lifesteal_accum)
+                    if heal_int > 0:
+                        old_hp = owner_combat.hp
+                        owner_combat.hp = min(owner_combat.max_hp, owner_combat.hp + heal_int)
+                        owner_combat._lifesteal_accum -= heal_int
+                        if owner_combat.hp != old_hp:
+                            floating.append(DamageNumber(owner.rect.centerx, owner.rect.top - 10, f"+{heal_int}", GREEN))
 
         # Handle Pogo effect for the player
         if self.pogoable and getattr(hitbox, 'pogo', False):
@@ -216,6 +255,16 @@ class CombatComponent:
                 # Reset all power buff effects when the timer expires.
                 self.atk_bonus = 0
                 self.lifesteal_on_hit = 0
+                # Remove temporary percentage lifesteal additions from power buff
+                if hasattr(self, '_power_buff_lifesteal_add') and self._power_buff_lifesteal_add:
+                    self.lifesteal_pct = max(0.0, self.lifesteal_pct - self._power_buff_lifesteal_add)
+                    self._power_buff_lifesteal_add = 0.0
+                if hasattr(self, '_power_buff_spell_lifesteal_add') and self._power_buff_spell_lifesteal_add:
+                    self.spell_lifesteal_pct = max(0.0, self.spell_lifesteal_pct - self._power_buff_spell_lifesteal_add)
+                    self._power_buff_spell_lifesteal_add = 0.0
+                # Also clear accumulators to avoid carry-over
+                self._lifesteal_accum = 0.0
+                self._spell_lifesteal_accum = 0.0
 
 
     # --- Ability Activation Methods ---
@@ -242,5 +291,15 @@ class CombatComponent:
             self.atk_bonus = self.power_buff_atk_bonus
             # Activate lifesteal from the config value for the duration of the buff.
             self.lifesteal_on_hit = self.config.get('power_buff_lifesteal', 0)
+            # Also temporarily set percentage-based lifesteal (if provided)
+            # This allows buffs to grant percentage lifesteal as well.
+            if 'power_buff_lifesteal_pct' in self.config:
+                add_val = float(self.config.get('power_buff_lifesteal_pct', 0.0))
+                self._power_buff_lifesteal_add = add_val
+                self.lifesteal_pct = self.lifesteal_pct + add_val
+            if 'power_buff_spell_lifesteal' in self.config:
+                add_val = float(self.config.get('power_buff_spell_lifesteal', 0.0))
+                self._power_buff_spell_lifesteal_add = add_val
+                self.spell_lifesteal_pct = self.spell_lifesteal_pct + add_val
             return True
         return False
