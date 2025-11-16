@@ -681,11 +681,21 @@ class Inventory:
         if not lines:
             return
         font = get_font(16)
+        name_font = get_font(18, bold=True)
         icon_space = 0
         # Use new icon system if item is available
         if payload.get('item'):
             icon_space = 34
-        width = max(font.size(line)[0] for line in lines) + 20 + icon_space
+        
+        # Calculate width using appropriate font for each line
+        widths = []
+        for i, line in enumerate(lines):
+            if i == 0:  # Name line uses bigger font
+                widths.append(name_font.size(line)[0])
+            else:  # Other lines use normal font
+                widths.append(font.size(line)[0])
+        
+        width = max(widths) + 20 + icon_space
         height = len(lines) * 22 + 12
         mx, my = pygame.mouse.get_pos()
         tooltip_rect = pygame.Rect(mx + 18, my + 18, width, height)
@@ -717,7 +727,19 @@ class Inventory:
                     self.game.screen.blit(icon_surf, icon_surf.get_rect(center=icon_rect.center))
             text_x += icon_space
         for i, line in enumerate(lines):
-            self.game.screen.blit(font.render(line, True, (230, 230, 245)),
+            # Different colors and sizes for different tooltip parts
+            item = payload.get('item')
+            if i == 0:  # Name line (bigger and gold)
+                text_font = get_font(18, bold=True)
+                text_color = (255, 215, 0)  # Gold color for name
+            elif i == 1 and item and hasattr(item, 'effect_text') and item.effect_text:  # Effect text (cyan and normal size)
+                text_font = get_font(16)
+                text_color = (100, 200, 255)  # Cyan color for effect
+            else:  # Description and flavor (white and normal size)
+                text_font = get_font(16)
+                text_color = (230, 230, 245)  # Light gray/white for description
+            
+            self.game.screen.blit(text_font.render(line, True, text_color), 
                              (text_x, tooltip_rect.y + 6 + i * 22))
 
     def _draw_unequip_stock_cell(self, surface, rect, mode, icon_font, highlighted):
@@ -869,7 +891,7 @@ class Inventory:
         pygame.draw.rect(self.game.screen, (25, 25, 35), left_pane_rect, border_radius=10) # Outline for left pane
         pygame.draw.rect(self.game.screen, (100, 100, 120), left_pane_rect, width=1, border_radius=10)
 
-        model_frame = pygame.Rect(left_pane_rect.x + 20, left_pane_rect.y + 20, left_pane_width - 40, 232)
+        model_frame = pygame.Rect(left_pane_rect.x + 20, left_pane_rect.y + 20, left_pane_width - 40, 180)
         pygame.draw.rect(self.game.screen, (32, 36, 52), model_frame, border_radius=16)
         pygame.draw.rect(self.game.screen, (160, 180, 220), model_frame, width=1, border_radius=16)
         
@@ -881,18 +903,20 @@ class Inventory:
 
         stats_y = model_frame.bottom + 25  # Reduced spacing from 30 to 25
         status_lines = [
-            f"HP: {self.game.player.hp}/{self.game.player.max_hp}",
-            f"Attack: {getattr(self.game.player, 'attack_damage', '?')}",
+            (f"HP: {self.game.player.hp}/{self.game.player.max_hp}", (255, 150, 150)),
+            (f"Attack: {getattr(self.game.player, 'attack_damage', '?')}", (255, 200, 100)),
         ]
         if hasattr(self.game.player, 'mana') and hasattr(self.game.player, 'max_mana'):
-            status_lines.append(f"Mana: {self.game.player.mana:.1f}/{self.game.player.max_mana:.1f}")
+            status_lines.append((f"Mana: {self.game.player.mana:.1f}/{self.game.player.max_mana:.1f}", (100, 150, 255)))
         if hasattr(self.game.player, 'stamina') and hasattr(self.game.player, 'max_stamina'):
-            status_lines.append(f"Stamina: {self.game.player.stamina:.1f}/{self.game.player.max_stamina:.1f}")
+            status_lines.append((f"Stamina: {self.game.player.stamina:.1f}/{self.game.player.max_stamina:.1f}", (150, 255, 150)))
+        
+        status_lines.append((f"Speed: {self.game.player.player_speed:.1f}", (200, 200, 255)))
         
         status_spacing = 20  # Reduced spacing from 24 to 20
         
-        for i, line in enumerate(status_lines):
-            draw_text(self.game.screen, line, (left_pane_rect.x + 20, stats_y + i * status_spacing), (210,210,225), size=18)
+        for i, (line, color) in enumerate(status_lines):
+            draw_text(self.game.screen, line, (left_pane_rect.x + 20, stats_y + i * status_spacing), color, size=18)
 
         # --- Right Pane: Equipped Slots and Stock ---
         pygame.draw.rect(self.game.screen, (25, 25, 35), right_pane_rect, border_radius=10) # Outline for right pane

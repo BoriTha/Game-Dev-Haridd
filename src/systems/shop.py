@@ -533,8 +533,17 @@ class Shop:
                     lines.append(f"Speed: {stats['speed'][0]} {stats['speed'][1]}")
 
         font = get_font(16)
+        name_font = get_font(18, bold=True)
         icon_space = 34
-        width = max(font.size(line)[0] for line in lines) + 20 + icon_space
+        # Calculate width using appropriate font for each line
+        widths = []
+        for i, line in enumerate(lines):
+            if i == 0:  # Name line uses bigger font
+                widths.append(name_font.size(line)[0])
+            else:  # Other lines use normal font
+                widths.append(font.size(line)[0])
+        
+        width = max(widths) + 20 + icon_space
         height = len(lines) * 22 + 12
 
         tooltip_rect = pygame.Rect(mouse_pos[0] + 18, mouse_pos[1] + 18, width, height)
@@ -578,10 +587,18 @@ class Shop:
         # Draw text
         text_x = tooltip_rect.x + 10 + icon_space
         for i, line in enumerate(lines):
-            color = (230, 230, 245)
-            if "→" in line:  # Preview lines
-                color = (100, 255, 100)  # Green for stat increases
-            screen.blit(font.render(line, True, color),
+            # Different colors and sizes for different tooltip parts
+            if i == 0:  # Name line (bigger and gold)
+                text_font = get_font(18, bold=True)
+                text_color = (255, 215, 0)  # Gold color for name
+            elif i == 1 and hasattr(item, 'effect_text') and item.effect_text:  # Effect text (cyan and normal size)
+                text_font = get_font(16)
+                text_color = (100, 200, 255)  # Cyan color for effect
+            else:  # Description and flavor (white and normal size)
+                text_font = get_font(16)
+                text_color = (230, 230, 245)  # Light gray/white for description
+            
+            screen.blit(text_font.render(line, True, text_color), 
                      (text_x, tooltip_rect.y + 6 + i * 22))
     
     def draw(self, screen):
