@@ -1349,7 +1349,28 @@ class Player:
                 self.combat.alive = True
                 self.combat.hp = max(1, self.combat.max_hp // 2)
                 self.hp = self.combat.hp
-                floating.append(DamageNumber(self.rect.centerx, self.rect.top - 12, "PHOENIX REVIVE!", (255, 150, 50)))
+                
+                # Visual feedback: Multiple large floating texts with staggered timing
+                floating.append(DamageNumber(self.rect.centerx, self.rect.top - 30, "PHOENIX", (255, 200, 100)))
+                floating.append(DamageNumber(self.rect.centerx, self.rect.top - 10, "REVIVE!", (255, 120, 50)))
+                floating.append(DamageNumber(self.rect.centerx, self.rect.top + 10, f"+{self.combat.hp} HP", GREEN))
+                
+                # Create visual particle burst effect (spawn multiple damage numbers as "particles")
+                import random
+                for i in range(8):
+                    angle = (i / 8.0) * 2 * math.pi
+                    offset_x = int(math.cos(angle) * 30)
+                    offset_y = int(math.sin(angle) * 20)
+                    floating.append(DamageNumber(
+                        self.rect.centerx + offset_x,
+                        self.rect.centery + offset_y,
+                        "✦",  # Sparkle/star character
+                        (255, 180, 80)
+                    ))
+                
+                # Grant brief invincibility after revival (3 seconds)
+                self.combat.invincible_frames = 3 * FPS
+                self.iframes_flash = True
             return
 
         # Update all combat timers and states

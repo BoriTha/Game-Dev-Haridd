@@ -199,8 +199,17 @@ def draw_hud(game, screen: pygame.Surface) -> None:
         if getattr(game.player, 'lucky_charm_timer', 0) > 0:
             secs = max(0, int(game.player.lucky_charm_timer / FPS))
             draw_text(screen, f"Lucky! {secs}s", (WIDTH - 180, HEIGHT - 180), (255, 215, 0), size=16, bold=True)
+        
+        # Phoenix Feather - enhanced display with pulsing effect
         if getattr(game.player, 'phoenix_feather_active', False):
-            draw_text(screen, "Phoenix Blessing", (WIDTH - 180, HEIGHT - 200), (255, 150, 50), size=16, bold=True)
+            import math
+            # Pulsing color effect to make it more noticeable
+            pulse = abs(math.sin(pygame.time.get_ticks() * 0.003)) * 0.4 + 0.6
+            color = (int(255 * pulse), int(150 * pulse), int(50 * pulse))
+            
+            # Draw with icon-like symbol and larger text
+            draw_text(screen, "✦ PHOENIX BLESSING ✦", (WIDTH - 220, HEIGHT - 200), color, size=18, bold=True)
+            draw_text(screen, "Auto-revive ready!", (WIDTH - 220, HEIGHT - 180), (255, 200, 150), size=14, bold=False)
 
         # Time crystal enemy effect
         time_crystal_active = any(getattr(e, 'slow_remaining', 0) > 0 for e in game.enemies if getattr(e, 'alive', False))

@@ -358,7 +358,29 @@ class PhoenixFeather(Consumable, ConsumableEffect):
             return False
             
         player.phoenix_feather_active = True
-        self._show_feedback(player, "Phoenix Blessing", self.color)
+        
+        # Enhanced feedback with multiple messages
+        self._show_feedback(player, "✦ PHOENIX BLESSING ✦", self.color)
+        floating.append(DamageNumber(
+            player.rect.centerx, 
+            player.rect.top - 30, 
+            "Auto-revive on death!", 
+            (255, 200, 100)
+        ))
+        
+        # Create a visual ring effect around player when activated
+        import math
+        for i in range(12):
+            angle = (i / 12.0) * 2 * math.pi
+            offset_x = int(math.cos(angle) * 40)
+            offset_y = int(math.sin(angle) * 25)
+            floating.append(DamageNumber(
+                player.rect.centerx + offset_x,
+                player.rect.centery + offset_y,
+                "✦",
+                (255, 180, 80)
+            ))
+        
         return True
 
 
