@@ -13,6 +13,30 @@ from typing import Optional, Any
 from typing import Optional as _Optional
 from typing import Tuple
 
+# ============================================================================
+# PLAYER MODEL DISPLAY CONFIGURATION
+# ============================================================================
+# Adjust these values to fine-tune how player sprites appear in inventory
+
+# Scale factors for each class (multiplier applied to sprite size)
+PLAYER_MODEL_SCALES = {
+    'Knight': 1.8,      # Knight sprites: 93x64
+    'Ranger': 1.6,      # Ranger sprites: 48x64
+    'Wizard': 2.0,      # Default for future classes
+    'Assassin': 2.0,    # Default for future classes
+}
+
+# Offset from center position (x, y) in pixels
+# Positive X = move right, Positive Y = move down
+PLAYER_MODEL_OFFSETS = {
+    'Knight': (-20, -15),      # Centered
+    'Ranger': (-10, -10),      # Centered
+    'Wizard': (0, 0),      # Centered (placeholder)
+    'Assassin': (0, 0),    # Centered (placeholder)
+}
+
+# ============================================================================
+
 
 def _safe_load_icon(path: str, size: tuple = (24,24)) -> _Optional[pygame.Surface]:
     """Return loaded surface only if the image contains transparent pixels."""
@@ -126,7 +150,89 @@ class Inventory:
         self.armament_order = list(self.armament_catalog.keys())
         self.consumable_catalog = build_consumable_catalog()
         self.consumable_order: list[str] = []
+        
+        # Player model animation state
+        self._model_anim_timer = 0
+        self._model_attack_cooldown = 0
+        self._model_is_attacking = False
 
+    def _draw_player_model(self, model_frame):
+        """Draw animated player sprite in the inventory model frame with idle animation and random attacks."""
+        player = self.game.player
+        
+        # Update animation timer
+        self._model_anim_timer += 1
+        
+        # Update run animation cooldown (renamed from attack cooldown)
+        if self._model_attack_cooldown > 0:
+            self._model_attack_cooldown -= 1
+            if self._model_attack_cooldown == 0:
+                self._model_is_attacking = False
+        
+        # Random chance to trigger run animation when not on cooldown
+        if not self._model_is_attacking and self._model_attack_cooldown == 0:
+            if random.random() < 0.008:  # ~0.8% chance per frame = run roughly every 2-3 seconds
+                self._model_is_attacking = True
+                self._model_attack_cooldown = 90  # 1.5 second cooldown at 60 FPS
+        
+        # If player has animation manager and sprite rendering, use it
+        if hasattr(player, 'anim_manager') and player.anim_manager and player.anim_manager.animations:
+            # Decide which animation to show based on model state
+            from ..entities.animation_system import AnimationState
+            
+            # Use RUN animation for action, IDLE for rest
+            if self._model_is_attacking:
+                target_state = AnimationState.RUN
+            else:
+                target_state = AnimationState.IDLE
+            
+            # Get the animation for the target state
+            anim_data = player.anim_manager.animations.get(target_state)
+            if anim_data and anim_data.frames:
+                # Calculate which frame to show based on timer
+                frame_duration = anim_data.frame_duration
+                total_frames = len(anim_data.frames)
+                
+                # For run animation, progress through once then reset
+                if self._model_is_attacking:
+                    run_progress = 90 - self._model_attack_cooldown  # 0 to 90
+                    frame_index = min(int(run_progress / frame_duration), total_frames - 1)
+                else:
+                    # For idle, loop continuously
+                    frame_index = (self._model_anim_timer // frame_duration) % total_frames
+                
+                # Get the current frame surface
+                current_frame = anim_data.frames[frame_index]
+                
+                if current_frame:
+                    sprite_size = current_frame.get_size()
+                    
+                    # Get scale factor from configuration (or use default)
+                    scale_factor = PLAYER_MODEL_SCALES.get(player.cls, 2.0)
+                    
+                    # Get offset from configuration (or use default)
+                    offset_x, offset_y = PLAYER_MODEL_OFFSETS.get(player.cls, (0, 0))
+                    
+                    scaled_w = int(sprite_size[0] * scale_factor)
+                    scaled_h = int(sprite_size[1] * scale_factor)
+                    scaled_sprite = pygame.transform.scale(current_frame, (scaled_w, scaled_h))
+                    
+                    # Flip sprite to face right
+                    scaled_sprite = pygame.transform.flip(scaled_sprite, True, False)
+                    
+                    # Center the sprite in the model frame with offset
+                    sprite_rect = scaled_sprite.get_rect()
+                    sprite_rect.center = (model_frame.centerx + offset_x, model_frame.centery + offset_y)
+                    
+                    # Draw the sprite
+                    self.game.screen.blit(scaled_sprite, sprite_rect)
+                    return  # Successfully drew sprite
+            
+        # Fallback to colored rectangle for classes without animation or if sprite fails
+        model_rect = pygame.Rect(0, 0, player.rect.width * 3.5, player.rect.height * 3.5)
+        model_rect.center = model_frame.center
+        pygame.draw.rect(self.game.screen, (120, 200, 235), model_rect, border_radius=12)
+    
     def _refresh_inventory_defaults(self):
         consumable_defaults = {
             'Knight': ['health', 'stamina', 'mana'],
@@ -1206,9 +1312,8 @@ class Inventory:
         pygame.draw.rect(self.game.screen, (32, 36, 52), model_frame, border_radius=16)
         pygame.draw.rect(self.game.screen, (160, 180, 220), model_frame, width=1, border_radius=16)
         
-        model_rect = pygame.Rect(0, 0, self.game.player.rect.width * 3.5, self.game.player.rect.height * 3.5)
-        model_rect.center = model_frame.center
-        pygame.draw.rect(self.game.screen, (120, 200, 235), model_rect, border_radius=12)
+        # Draw animated player sprite in the model frame
+        self._draw_player_model(model_frame)
         
         draw_text(self.game.screen, self.game.player.cls, (model_frame.centerx - 40, model_frame.bottom - 25), (210,210,225), size=20, bold=True)
 
