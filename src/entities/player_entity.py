@@ -472,7 +472,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.RUN,
             [f"assets/Player/wizard/run-wizard/run{i}.png" for i in range(1, 9)],
-            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
+            sprite_size=(80,70),  # 2.8× bigger to compensate for padding
             frame_duration=5,
             loop=True,
             priority=1
