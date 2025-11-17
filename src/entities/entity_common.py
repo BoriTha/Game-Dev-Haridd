@@ -159,6 +159,11 @@ class Hitbox:
         self.has_sprite = has_sprite
         # When True, this hitbox should be rendered as an arrow sprite
         self.arrow_sprite = arrow_sprite
+        # Animated projectile support
+        self.anim_frames = None  # List of pygame Surfaces for animation
+        self.anim_index = 0      # Current frame index
+        self.anim_timer = 0      # Timer for frame progression
+        self.anim_speed = 5      # Ticks per frame
 
     def tick(self):
         # move if velocity set (keep as float for precision, convert only when applying)
@@ -171,6 +176,13 @@ class Hitbox:
         self.lifetime -= 1
         if self.lifetime <= 0:
             self.alive = False
+        
+        # Update animation if frames are attached
+        if self.anim_frames and len(self.anim_frames) > 1:
+            self.anim_timer += 1
+            if self.anim_timer >= self.anim_speed:
+                self.anim_timer = 0
+                self.anim_index = (self.anim_index + 1) % len(self.anim_frames)
 
     def draw(self, surf, camera, force_draw=False):
         # Skip drawing if this hitbox has a sprite (sprite is drawn separately by enemy's draw_projectile_sprites)

@@ -854,7 +854,7 @@ class Bug(Enemy):
             'max_hp': 30,
             'money_drop': (5, 15)
         }
-        super().__init__(x, ground_y, width=28, height=22, combat_config=combat_config,
+        super().__init__(x, ground_y, width=32, height=32, combat_config=combat_config,
                          vision_range=200, cone_half_angle=math.pi/6, turn_rate=0.05)
         # Bug-specific initialization
         self.vx = random.choice([-1,1]) * 1.6
@@ -866,6 +866,68 @@ class Bug(Enemy):
         self.type = "Bug"
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
+        self.attacking = False
+        
+        # Initialize animation system
+        from src.entities.animation_system import AnimationManager, AnimationState
+        self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
+        self.anim_manager.set_sprite_offset_y(0)
+        
+        # Sprite size for bug (original 32×32, scale to 48×48 for better visibility)
+        sprite_size = (48, 48)
+        
+        # Load idle animation (5 frames)
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            [
+                "assets/enemy/Spider/Idle/Bug_idle_ (1).png",
+                "assets/enemy/Spider/Idle/Bug_idle_ (2).png",
+                "assets/enemy/Spider/Idle/Bug_idle_ (3).png",
+                "assets/enemy/Spider/Idle/Bug_idle_ (4).png",
+                "assets/enemy/Spider/Idle/Bug_idle_ (5).png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=8,
+            loop=True,
+            priority=0
+        )
+        
+        # Load move animation (6 frames)
+        self.anim_manager.load_animation(
+            AnimationState.RUN,
+            [
+                "assets/enemy/Spider/move/bug_move_ (1).png",
+                "assets/enemy/Spider/move/bug_move_ (2).png",
+                "assets/enemy/Spider/move/bug_move_ (3).png",
+                "assets/enemy/Spider/move/bug_move_ (4).png",
+                "assets/enemy/Spider/move/bug_move_ (5).png",
+                "assets/enemy/Spider/move/bug_move_ (6).png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=5,
+            loop=True,
+            priority=5
+        )
+        
+        # Load attack animation (4 frames) - for potential future use
+        def on_attack_complete():
+            self.attacking = False
+        
+        self.anim_manager.load_animation(
+            AnimationState.ATTACK,
+            [
+                "assets/enemy/Spider/attack/bug_attack_(1).png",
+                "assets/enemy/Spider/attack/bug_attack_(2).png",
+                "assets/enemy/Spider/attack/bug_attack_(3).png",
+                "assets/enemy/Spider/attack/bug_attack_(4).png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=4,
+            loop=False,
+            priority=10,
+            next_state=AnimationState.IDLE,
+            on_complete_callback=on_attack_complete
+        )
     
     def _get_terrain_traits(self):
         """Bug can navigate through narrow spaces"""
@@ -900,6 +962,20 @@ class Bug(Enemy):
         self.facing = 1 if self.vx > 0 else -1
         self.facing_angle = 0 if self.facing > 0 else math.pi
         
+        # Animation state logic
+        from src.entities.animation_system import AnimationState
+        if abs(self.vx) > 0.5:
+            # Moving - play run animation
+            if self.anim_manager.current_state != AnimationState.RUN:
+                self.anim_manager.play(AnimationState.RUN)
+        else:
+            # Idle
+            if self.anim_manager.current_state != AnimationState.IDLE:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+        
+        # Update animation system
+        self.anim_manager.update()
+        
         # Update position tracking
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
@@ -907,6 +983,33 @@ class Bug(Enemy):
     def get_base_color(self):
         """Get the base color for Bug enemy."""
         return (180, 70, 160) if not self.combat.is_invincible() else (120, 40, 100)
+    
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
+        """Custom draw with sprite animations"""
+        if not self.combat.alive:
+            return
+        
+        # Draw debug vision cone
+        self.draw_debug_vision(surf, camera, show_los)
+        
+        # Draw sprite with animation
+        sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
+        
+        # Fallback to colored rect if sprite failed
+        if not sprite_drawn:
+            base_color = self.get_base_color()
+            status_color = self.get_status_effect_color(base_color)
+            pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=4)
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
+        
+        # Draw status effects
+        self.draw_status_effects(surf, camera)
+        
+        # Draw nametag
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Boss(Enemy):
@@ -1004,6 +1107,7 @@ class Frog(Enemy):
         # Initialize animation manager
         self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
         self.anim_manager.set_sprite_offset_y(-1)  # Adjust sprite positioning
+        self.anim_manager.reverse_facing = True  # Frog sprites face left by default, so reverse flip logic
         
         # Original frog sprite is roughly 32x32, scale to 40x40 to match hitbox better
         sprite_size = (32, 32)
@@ -1106,12 +1210,30 @@ class Frog(Enemy):
             # Play bounce/telegraph animation
             self.anim_manager.play(AnimationState.TELEGRAPH)
             if self.tele_t==0:
-                spd = 8.0
-                distv = max(1.0, (dx*dx + dy*dy) ** 0.5)
-                nx, ny = dx/distv, dy/distv
-                self.vx = nx * spd
-                self.vy = ny * spd
-                self.dash_t = 26
+                # Improved jump mechanics with better arc trajectory
+                # Calculate horizontal and vertical components separately for more natural jump
+                dist_horizontal = abs(dx)
+                dist_vertical = dy
+                
+                # Base horizontal speed (reduced from 8.0 for better control)
+                base_speed = 5.5
+                
+                # Horizontal velocity - simple direction-based
+                self.vx = base_speed if dx > 0 else -base_speed
+                
+                # Vertical velocity - always jump upward first, then arc down
+                # This creates a parabolic arc instead of straight line dash
+                if dist_vertical < -20:
+                    # Player is above - stronger upward velocity
+                    self.vy = -8.0
+                elif dist_vertical > 20:
+                    # Player is below - weaker upward velocity (more horizontal jump)
+                    self.vy = -4.0
+                else:
+                    # Player at similar height - medium upward velocity
+                    self.vy = -6.0
+                
+                self.dash_t = 20  # Reduced from 26 for tighter control
                 self.state = 'dash'
                 self.cool = 56
                 # Play jump animation when launching
@@ -1291,10 +1413,10 @@ class Archer(Enemy):
             on_complete_callback=on_attack_complete
         )
         
-        # Load projectile sprite (arrow)
+        # Load projectile sprite (arrow) - increased from 16×16 to 24×24
         self.load_projectile_sprite(
             "assets/enemy/Archer-enemy/projectile.png",
-            sprite_size=(16, 16)
+            sprite_size=(24, 24)
         )
     
     def _get_terrain_traits(self):
@@ -1343,8 +1465,8 @@ class Archer(Enemy):
                     dist = max(1.0, (dx*dx + dy*dy) ** 0.5)
                     nx, ny = dx/dist, dy/dist
                     
-                    # Create arrow hitbox
-                    hb = pygame.Rect(0, 0, 10, 6)
+                    # Create arrow hitbox (increased from 10×6 to 16×10)
+                    hb = pygame.Rect(0, 0, 16, 10)
                     hb.center = self.rect.center
                     arrow = Hitbox(
                         hb, 120, 1, self,
@@ -1448,7 +1570,7 @@ class WizardCaster(Enemy):
             'max_hp': 14,
             'money_drop': (15, 30)
         }
-        super().__init__(x, ground_y, width=28, height=22, combat_config=combat_config,
+        super().__init__(x, ground_y, width=40, height=56, combat_config=combat_config,
                         vision_range=280, cone_half_angle=math.pi/3, turn_rate=0.05)
         # Wizard-specific properties
         self.cool = 0
@@ -1460,6 +1582,124 @@ class WizardCaster(Enemy):
         self.base_speed = 0.8
         self.can_jump = False
         self.gravity_affected = False  # Wizards float
+        self.attacking = False
+        
+        # Initialize animation system for Evil Wizard
+        from src.entities.animation_system import AnimationManager, AnimationState
+        self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
+        self.anim_manager.set_sprite_offset_y(0)
+        
+        # Sprite size for wizard (original 140×97 with lots of transparent padding)
+        # Scale much larger (3x original) to compensate for transparency and match assassin visual size
+        # Assassin: 17×29 → 48×48 (2.8x scale), Wizard: 140×97 → 168×116 (1.2x scale for similar visual presence)
+        sprite_size = (168, 116)
+        
+        # Load idle animation (10 frames, slow floating)
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            [
+                "assets/enemy/ener_wizard/idle-evil-w/idle1.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle2.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle3.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle4.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle5.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle6.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle7.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle8.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle9.png",
+                "assets/enemy/ener_wizard/idle-evil-w/idle10.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=8,
+            loop=True,
+            priority=0
+        )
+        
+        # Load walk animation (8 frames, smooth floating movement)
+        self.anim_manager.load_animation(
+            AnimationState.WALK,
+            [
+                "assets/enemy/ener_wizard/walk-evil-w/walk1.png",
+                "assets/enemy/ener_wizard/walk-evil-w/walk2.png",
+                "assets/enemy/ener_wizard/walk-evil-w/walk3.png",
+                "assets/enemy/ener_wizard/walk-evil-w/walk4.png",
+                "assets/enemy/ener_wizard/walk-evil-w/walk5.png",
+                "assets/enemy/ener_wizard/walk-evil-w/walk6.png",
+                "assets/enemy/ener_wizard/walk-evil-w/walk7.png",
+                "assets/enemy/ener_wizard/walk-evil-w/walk8.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=6,
+            loop=True,
+            priority=5
+        )
+        
+        # Load attack animation (13 frames, spell casting)
+        def on_attack_complete():
+            """Called when attack animation finishes"""
+            self.attacking = False
+        
+        self.anim_manager.load_animation(
+            AnimationState.ATTACK,
+            [
+                "assets/enemy/ener_wizard/attk-evil-w/attk1.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk2.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk3.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk4.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk5.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk6.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk7.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk8.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk10.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk11.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk12.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attk13.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=3,
+            loop=False,
+            priority=10,
+            next_state=AnimationState.IDLE,
+            on_complete_callback=on_attack_complete
+        )
+        
+        # Load animated projectile sprites for each spell type using animation system helper
+        from src.entities.animation_system import load_projectile_animation
+        
+        self.projectile_animations = {}
+        
+        # Bolt projectile (2 frames) - normal attack (increased from 16×16 to 32×32)
+        self.projectile_animations['bolt'] = load_projectile_animation(
+            [
+                "assets/enemy/ener_wizard/Projectile/nm-attk/nm-attk1.png",
+                "assets/enemy/ener_wizard/Projectile/nm-attk/nm-attk2.png"
+            ],
+            sprite_size=(32, 32)
+        )
+        
+        # Magic missile projectile (4 frames) - laser (increased from 24×12 to 48×24)
+        self.projectile_animations['missile'] = load_projectile_animation(
+            [
+                "assets/enemy/ener_wizard/Projectile/e_magic_missile/lazer-skill-evil-w5.png",
+                "assets/enemy/ener_wizard/Projectile/e_magic_missile/lazer-skill-evil-w6.png",
+                "assets/enemy/ener_wizard/Projectile/e_magic_missile/lazer-skill-evil-w7.png",
+                "assets/enemy/ener_wizard/Projectile/e_magic_missile/lazer-skill-evil-w8.png"
+            ],
+            sprite_size=(48, 24)
+        )
+        
+        # Fireball projectile (6 frames)
+        self.projectile_animations['fireball'] = load_projectile_animation(
+            [
+                "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil2.png",
+                "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil3.png",
+                "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil5.png",
+                "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil6.png",
+                "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil7.png",
+                "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil9.png"
+            ],
+            sprite_size=(20, 20)
+        )
     
     def _get_terrain_traits(self):
         """Wizard can float over most terrain"""
@@ -1486,26 +1726,65 @@ class WizardCaster(Enemy):
         
         epos = (self.rect.centerx, self.rect.centery)
         
-        epos = (self.rect.centerx, self.rect.centery)
+        # Animation state machine
+        from src.entities.animation_system import AnimationState
         
         if self.tele_t > 0:
             self.tele_t -= 1
+            
+            # Start attack animation at beginning of telegraph
+            if self.tele_t == 15 and not self.attacking:
+                self.attacking = True
+                self.anim_manager.play(AnimationState.ATTACK, force=True)
+            
+            # Spawn projectile at end of telegraph
             if self.tele_t == 0 and has_los and dist_to_player < self.vision_range:
                 dx = ppos[0] - epos[0]
                 dy = ppos[1] - epos[1]
                 dist = max(1.0, (dx*dx+dy*dy)**0.5)
                 nx, ny = dx/dist, dy/dist
+                
+                # Spawn point higher up (chest/hand level instead of center)
+                spawn_x = self.rect.centerx
+                spawn_y = self.rect.top + int(self.rect.height * 0.3)  # 30% from top
+                
                 if self.action == 'missile':
-                    hb = pygame.Rect(0,0,18,6); hb.center = self.rect.center
-                    hitboxes.append(Hitbox(hb, 36, 4, self, dir_vec=(nx,ny), vx=nx*14.0, vy=ny*14.0))
+                    # Increased missile hitbox from 18×6 to 32×12 for better visibility
+                    hb = pygame.Rect(0,0,32,12)
+                    hb.center = (spawn_x, spawn_y)
+                    proj = Hitbox(hb, 36, 4, self, dir_vec=(nx,ny), vx=nx*14.0, vy=ny*14.0, has_sprite=True, tag='missile')
+                    # Attach animation data
+                    proj.anim_frames = self.projectile_animations.get('missile', [])
+                    proj.anim_index = 0
+                    proj.anim_timer = 0
+                    proj.anim_speed = 3  # Change frame every 3 ticks
+                    hitboxes.append(proj)
+                    self.projectile_hitboxes.append(proj)
                     self.cool = 70
                 elif self.action == 'fireball':
-                    hb = pygame.Rect(0,0,12,12); hb.center = self.rect.center
-                    hitboxes.append(Hitbox(hb, 180, 3, self, dir_vec=(nx,ny), vx=nx*6.0, vy=ny*6.0, aoe_radius=48))
+                    hb = pygame.Rect(0,0,12,12)
+                    hb.center = (spawn_x, spawn_y)
+                    proj = Hitbox(hb, 180, 3, self, dir_vec=(nx,ny), vx=nx*6.0, vy=ny*6.0, aoe_radius=48, has_sprite=True, tag='fireball')
+                    # Attach animation data
+                    proj.anim_frames = self.projectile_animations.get('fireball', [])
+                    proj.anim_index = 0
+                    proj.anim_timer = 0
+                    proj.anim_speed = 4  # Change frame every 4 ticks
+                    hitboxes.append(proj)
+                    self.projectile_hitboxes.append(proj)
                     self.cool = 80
                 else:
-                    hb = pygame.Rect(0,0,8,8); hb.center = self.rect.center
-                    hitboxes.append(Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=nx*9.0, vy=ny*9.0))
+                    # Increased bolt hitbox from 8×8 to 16×16 for better visibility
+                    hb = pygame.Rect(0,0,16,16)
+                    hb.center = (spawn_x, spawn_y)
+                    proj = Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=nx*9.0, vy=ny*9.0, has_sprite=True, tag='bolt')
+                    # Attach animation data
+                    proj.anim_frames = self.projectile_animations.get('bolt', [])
+                    proj.anim_index = 0
+                    proj.anim_timer = 0
+                    proj.anim_speed = 5  # Change frame every 5 ticks
+                    hitboxes.append(proj)
+                    self.projectile_hitboxes.append(proj)
                     self.cool = 50
                 self.action = None
         elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
@@ -1529,6 +1808,20 @@ class WizardCaster(Enemy):
         if has_los and dist_to_player < self.vision_range:
             self.facing = 1 if ppos[0] > epos[0] else -1
             self.facing_angle = 0 if self.facing > 0 else math.pi
+        
+        # Animation state logic
+        if not self.attacking:
+            # Choose between idle and walk based on movement
+            desired_state = AnimationState.WALK if abs(self.vx) > 0.3 else AnimationState.IDLE
+            if self.anim_manager.current_state != desired_state:
+                force_idle = (desired_state == AnimationState.IDLE)
+                self.anim_manager.play(desired_state, force=force_idle)
+        
+        # Update animation system
+        self.anim_manager.update()
+        
+        # Clean up old projectiles
+        self.clean_projectile_hitboxes()
 
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.centery)
@@ -1536,6 +1829,42 @@ class WizardCaster(Enemy):
     def get_base_color(self):
         """Get the base color for WizardCaster enemy."""
         return (180, 120, 220) if not self.combat.is_invincible() else (110, 80, 140)
+    
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
+        """Custom draw with sprite animations"""
+        if not self.combat.alive:
+            return
+        
+        # Draw debug vision cone
+        self.draw_debug_vision(surf, camera, show_los)
+        
+        # Draw sprite with animation
+        sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
+        
+        # Fallback to colored rect if sprite failed
+        if not sprite_drawn:
+            base_color = self.get_base_color()
+            status_color = self.get_status_effect_color(base_color)
+            pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
+        
+        # Draw animated projectiles using animation system helper
+        from src.entities.animation_system import draw_animated_projectiles
+        draw_animated_projectiles(self.projectile_hitboxes, surf, camera)
+        
+        # Draw status effects
+        self.draw_status_effects(surf, camera)
+        
+        # Draw telegraph
+        if self.tele_t > 0 and self.tele_text:
+            from src.core.utils import draw_text
+            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        
+        # Draw nametag
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Assassin(Enemy):
@@ -1545,7 +1874,7 @@ class Assassin(Enemy):
             'max_hp': 20,
             'money_drop': (20, 35)
         }
-        super().__init__(x, ground_y, width=40, height=40, combat_config=combat_config,
+        super().__init__(x, ground_y, width=40, height=56, combat_config=combat_config,
                         vision_range=240, cone_half_angle=math.pi/4, turn_rate=0.06)  # Wider vision cone (45 degrees)
         # Assassin-specific properties
         self.state = 'idle'
@@ -1920,13 +2249,13 @@ class Assassin(Enemy):
 
 
 class Bee(Enemy):
-    """Hybrid shooter/dasher. Chooses randomly between actions."""
+    """Hybrid shooter/dasher with two-phase attack cycle: charge (1s) then cooldown (1s)."""
     def __init__(self, x, ground_y):
         combat_config = {
             'max_hp': 12,
             'money_drop': (10, 25)
         }
-        super().__init__(x, ground_y, width=24, height=20, combat_config=combat_config,
+        super().__init__(x, ground_y, width=32, height=32, combat_config=combat_config,
                         vision_range=240, cone_half_angle=math.pi/4, turn_rate=0.05)
         # Bee-specific properties
         self.cool = 0
@@ -1938,6 +2267,85 @@ class Bee(Enemy):
         self.base_speed = 1.8
         self.can_jump = False
         self.gravity_affected = False  # Bees float
+        
+        # Two-phase attack system: charge phase -> sting spawns -> cooldown phase
+        self.attack_phase = None  # 'charging' or 'cooldown'
+        self.attack_timer = 0  # Tracks current phase progress
+        self.sting_spawned = False  # Ensure we only spawn one sting per cycle
+        
+        # Initialize animation system
+        from src.entities.animation_system import AnimationManager, AnimationState
+        self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
+        self.anim_manager.set_sprite_offset_y(0)
+        self.anim_manager.reverse_facing = True  # Bee sprites face left by default, so reverse flip logic
+        
+        # Sprite size for bee (original 25×27, scale to 48×48 for visibility)
+        sprite_size = (48, 48)
+        
+        # Load idle animation (4 frames - floating)
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            [
+                "assets/enemy/Bee/Bee_idle/bee_idle0.png",
+                "assets/enemy/Bee/Bee_idle/bee_idle1.png",
+                "assets/enemy/Bee/Bee_idle/bee_idle2.png",
+                "assets/enemy/Bee/Bee_idle/bee_idle3.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=8,
+            loop=True,
+            priority=0
+        )
+        
+        # Load charging animation (7 frames - 1 second at 60 FPS)
+        # 60 frames total / 7 frames = ~8.57 frames per sprite → use 9 frame_duration
+        self.anim_manager.load_animation(
+            AnimationState.CHARGE,
+            [
+                "assets/enemy/Bee/Bee_attack/Bee_shot/bee_attack1.png",
+                "assets/enemy/Bee/Bee_attack/Bee_shot/bee_attack2.png",
+                "assets/enemy/Bee/Bee_attack/Bee_shot/bee_attack3.png",
+                "assets/enemy/Bee/Bee_attack/Bee_shot/bee_attack4.png",
+                "assets/enemy/Bee/Bee_attack/Bee_shot/bee_attack5.png",
+                "assets/enemy/Bee/Bee_attack/Bee_shot/bee_attack6.png",
+                "assets/enemy/Bee/Bee_attack/Bee_shot/bee_attack7.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=9,  # 7 frames × 9 = 63 frames ≈ 1.05 seconds at 60 FPS
+            loop=False,
+            priority=10
+        )
+        
+        # Load cooldown animation (5 frames - 1 second at 60 FPS)
+        # 60 frames total / 5 frames = 12 frames per sprite
+        def on_cooldown_complete():
+            """Called when cooldown animation finishes - reset to idle"""
+            self.attack_phase = None
+            self.attack_timer = 0
+            self.sting_spawned = False
+        
+        self.anim_manager.load_animation(
+            AnimationState.SKILL_1,  # Using SKILL_1 as cooldown state
+            [
+                "assets/enemy/Bee/Bee_attack/Bee_cooldown/bee_attack8.png",
+                "assets/enemy/Bee/Bee_attack/Bee_cooldown/bee_attack9.png",
+                "assets/enemy/Bee/Bee_attack/Bee_cooldown/bee_attack10.png",
+                "assets/enemy/Bee/Bee_attack/Bee_cooldown/bee_attack11.png",
+                "assets/enemy/Bee/Bee_attack/Bee_cooldown/bee_attack12.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=12,  # 5 frames × 12 = 60 frames = 1.0 seconds at 60 FPS
+            loop=False,
+            priority=10,
+            next_state=AnimationState.IDLE,
+            on_complete_callback=on_cooldown_complete
+        )
+        
+        # Load projectile sprite (sting) - better balanced hitbox and sprite size
+        self.load_projectile_sprite(
+            "assets/enemy/Bee/sting.png",
+            sprite_size=(24, 24)
+        )
     
     def _get_terrain_traits(self):
         """Bee can fly over most terrain"""
@@ -1952,8 +2360,7 @@ class Bee(Enemy):
             return
         
         self.combat.update()
-        if self.cool > 0:
-            self.cool -= 1
+        self.handle_status_effects()
         
         ppos = (player.rect.centerx, player.rect.centery)
         has_los, in_cone = self.check_vision_cone(level, ppos)
@@ -1961,40 +2368,162 @@ class Bee(Enemy):
         
         epos = (self.rect.centerx, self.rect.centery)
         
+        from src.entities.animation_system import AnimationState
         import random
-        if self.tele_t > 0:
-            self.tele_t -= 1
-            if self.tele_t == 0 and has_los and dist_to_player < self.vision_range:
-                if self.action == 'dash':
-                    self.vx = 7 if ppos[0] > epos[0] else -7
-                elif self.action == 'shoot':
+        
+        # Two-phase attack cycle management
+        if self.attack_phase == 'charging':
+            # Phase 1: Charging/shooting (1 second)
+            self.attack_timer += 1
+            
+            # Spawn sting at end of charge phase (60 frames = 1 second at 60 FPS)
+            if self.attack_timer >= 60 and not self.sting_spawned:
+                self.sting_spawned = True
+                if has_los and dist_to_player < self.vision_range:
                     dx = ppos[0] - epos[0]
                     dy = ppos[1] - epos[1]
                     dist = max(1.0, (dx*dx+dy*dy)**0.5)
                     nx, ny = dx/dist, dy/dist
-                    hb = pygame.Rect(0,0,10,6); hb.center = self.rect.center
-                    hitboxes.append(Hitbox(hb, 120, 1, self, dir_vec=(nx,ny), vx=nx*7.5, vy=ny*7.5))
-                self.cool = 50
-        elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
-            self.action = 'dash' if random.random() < 0.5 else 'shoot'
-            self.tele_t = 14 if self.action == 'dash' else 16
-            self.tele_text = '!' if self.action == 'dash' else '!!'
+                    # Better balanced sting hitbox (16×10)
+                    hb = pygame.Rect(0,0,16,10); hb.center = self.rect.center
+                    sting = Hitbox(hb, 120, 1, self, dir_vec=(nx,ny), vx=nx*7.5, vy=ny*7.5, has_sprite=True)
+                    hitboxes.append(sting)
+                    self.projectile_hitboxes.append(sting)
+                
+                # Transition to cooldown phase
+                self.attack_phase = 'cooldown'
+                self.attack_timer = 0
+                self.anim_manager.play(AnimationState.SKILL_1, force=True)  # Play cooldown animation
+            
+        elif self.attack_phase == 'cooldown':
+            # Phase 2: Cooldown/regen (1 second)
+            self.attack_timer += 1
+            
+            # After cooldown completes (60 frames), allow next attack
+            if self.attack_timer >= 60:
+                self.attack_phase = None
+                self.attack_timer = 0
+                self.sting_spawned = False
+                # Animation system will handle transition to idle via callback
+            
+        elif has_los and self.attack_phase is None and dist_to_player < self.vision_range:
+            # Can only start new attack if no phase is active
+            # Start charge phase
+            self.attack_phase = 'charging'
+            self.attack_timer = 0
+            self.sting_spawned = False
+            self.anim_manager.play(AnimationState.CHARGE, force=True)
+            self.tele_text = '!!'
         
         from ..ai.enemy_movement import clamp_enemy_to_level
         self.handle_movement(level, player)
         clamp_enemy_to_level(self, level, respect_solids=True)
         
-        # Update facing direction based on movement
-        if abs(self.vx) > 0.1:
+        # Update facing direction based on player position when alert
+        if has_los and dist_to_player < self.vision_range:
+            self.facing = 1 if ppos[0] > epos[0] else -1
+            self.facing_angle = 0 if self.facing > 0 else math.pi
+        elif abs(self.vx) > 0.1:
             self.facing = 1 if self.vx > 0 else -1
             self.facing_angle = 0 if self.facing > 0 else math.pi
+        
+        # Animation state logic
+        if self.attack_phase is None:
+            # Default to idle when not attacking
+            if self.anim_manager.current_state != AnimationState.IDLE:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+        
+        # Update animation system
+        self.anim_manager.update()
+        
+        # Clean up old projectiles
+        self.clean_projectile_hitboxes()
 
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.centery)
 
     def get_base_color(self):
-        """Get the base color for Frog enemy."""
-        return (80, 200, 80) if not self.combat.is_invincible() else (60, 120, 60)
+        """Get the base color for Bee enemy."""
+        return (255, 200, 50) if not self.combat.is_invincible() else (180, 140, 30)
+    
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
+        """Custom draw with sprite animations"""
+        if not self.combat.alive:
+            return
+        
+        # Draw debug vision cone
+        self.draw_debug_vision(surf, camera, show_los)
+        
+        # Draw sprite with animation
+        sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
+        
+        # Fallback to colored rect if sprite failed
+        if not sprite_drawn:
+            base_color = self.get_base_color()
+            status_color = self.get_status_effect_color(base_color)
+            pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
+        
+        # Draw projectile sprites (stings)
+        self.draw_projectile_sprites(surf, camera)
+        
+        # Draw status effects
+        self.draw_status_effects(surf, camera)
+        
+        # Draw telegraph during charge phase
+        if self.attack_phase == 'charging' and self.tele_text:
+            from src.core.utils import draw_text
+            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        
+        # Draw attack phase debug info (F3)
+        if debug_hitboxes and self.attack_phase is not None:
+            from src.core.utils import draw_text
+            
+            # Position for debug info (above the bee)
+            debug_y_offset = -35
+            center_screen = camera.to_screen((self.rect.centerx, self.rect.top + debug_y_offset))
+            
+            # Phase indicator with color coding
+            if self.attack_phase == 'charging':
+                phase_text = "CHARGE"
+                phase_color = (255, 100, 100)  # Red for charging
+                bar_color = (255, 120, 120)
+                max_time = 60  # 1 second
+            else:  # cooldown
+                phase_text = "COOLDOWN"
+                phase_color = (100, 150, 255)  # Blue for cooldown
+                bar_color = (120, 170, 255)
+                max_time = 60  # 1 second
+            
+            # Draw phase text
+            draw_text(surf, phase_text, (center_screen[0] - 20, center_screen[1]), phase_color, size=12, bold=True)
+            
+            # Draw timer bar (40px wide, 6px tall)
+            bar_width = 40
+            bar_height = 6
+            bar_x = center_screen[0] - bar_width // 2
+            bar_y = center_screen[1] + 14
+            
+            # Background (dark gray)
+            pygame.draw.rect(surf, (40, 40, 40), (bar_x, bar_y, bar_width, bar_height))
+            
+            # Fill based on timer progress
+            progress = min(1.0, self.attack_timer / max_time)
+            fill_width = int(bar_width * progress)
+            pygame.draw.rect(surf, bar_color, (bar_x, bar_y, fill_width, bar_height))
+            
+            # Border
+            pygame.draw.rect(surf, (200, 200, 200), (bar_x, bar_y, bar_width, bar_height), 1)
+            
+            # Draw frame count / max frames
+            timer_text = f"{self.attack_timer}/{max_time}"
+            draw_text(surf, timer_text, (center_screen[0] - 12, center_screen[1] + 22), (200, 200, 200), size=10)
+        
+        # Draw nametag
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Golem(Enemy):
@@ -2289,7 +2818,7 @@ class KnightMonster(Enemy):
         # Initialize base enemy
         super().__init__(
             x, ground_y, 
-            width=28, height=28,
+            width=40, height=64,
             combat_config=combat_config,
             vision_range=280,
             cone_half_angle=math.pi/4,
@@ -2334,7 +2863,9 @@ class KnightMonster(Enemy):
         self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
         self.anim_manager.set_sprite_offset_y(-2)
         
-        sprite_size = (56, 56)
+        # Knight sprite size - scaled much larger to ensure head is visible and hittable
+        # Original 39×44, scaled to 78×88 (2x) to match tall hitbox
+        sprite_size = (78, 88)
         
         # Idle animation (4 frames)
         self.anim_manager.load_animation(

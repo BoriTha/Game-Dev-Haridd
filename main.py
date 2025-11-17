@@ -170,8 +170,8 @@ class Game:
         # Load arrow sprite for Ranger projectiles
         try:
             self.arrow_sprite = pygame.image.load("assets/Player/Ranger/arrow.png").convert_alpha()
-            # Scale arrow to be more visible (32x16 pixels)
-            self.arrow_sprite = pygame.transform.scale(self.arrow_sprite, (32, 16))
+            # Scale arrow to be more visible (increased from 32×16 to 40×20 pixels)
+            self.arrow_sprite = pygame.transform.scale(self.arrow_sprite, (40, 20))
         except Exception as e:
             logger.warning(f"Failed to load arrow sprite: {e}")
             self.arrow_sprite = None

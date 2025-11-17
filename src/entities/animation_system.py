@@ -99,6 +99,7 @@ class AnimationManager:
         # Sprite rendering properties
         self.sprite_offset = (0, 0)  # (x, y) offset from entity rect
         self.sprite_offset_y = 0  # Backward compatibility
+        self.reverse_facing = False  # Set to True if sprites are drawn facing opposite direction
     
     def load_animation(
         self,
@@ -342,7 +343,9 @@ class AnimationManager:
         
         # Flip sprite based on entity facing direction
         facing = getattr(self.entity, 'facing', 1)
-        draw_sprite = pygame.transform.flip(frame, facing == -1, False)
+        # If reverse_facing is True, flip the logic (for sprites drawn facing opposite direction)
+        should_flip = (facing == -1) if not self.reverse_facing else (facing == 1)
+        draw_sprite = pygame.transform.flip(frame, should_flip, False)
         
         # Scale sprite to match camera zoom (use scale_by for pixel-perfect zoom)
         if hasattr(pygame.transform, 'scale_by') and camera.zoom > 0:
@@ -549,3 +552,76 @@ def load_numbered_frames(
         List of frame paths
     """
     return [f"{base_path}{i}{extension}" for i in range(start, end + 1)]
+
+
+def load_projectile_animation(
+    frame_paths: List[str],
+    sprite_size: Tuple[int, int] = (16, 16)
+) -> List[pygame.Surface]:
+    """
+    Load animated projectile frames from file paths.
+    
+    Args:
+        frame_paths: List of paths to projectile sprite frames
+        sprite_size: (width, height) to scale frames to
+    
+    Returns:
+        List of loaded and scaled pygame Surfaces
+    
+    Example:
+        # Load fireball frames
+        frames = load_projectile_animation(
+            ["assets/projectile/fire1.png", "assets/projectile/fire2.png"],
+            sprite_size=(20, 20)
+        )
+    """
+    frames = []
+    for path in frame_paths:
+        try:
+            frame = pygame.image.load(path).convert_alpha()
+            scaled_frame = pygame.transform.scale(frame, sprite_size)
+            frames.append(scaled_frame)
+        except Exception as e:
+            print(f"[AnimationSystem] Failed to load projectile frame {path}: {e}")
+    return frames
+
+
+def draw_animated_projectiles(projectile_hitboxes: List, surf: pygame.Surface, camera):
+    """
+    Helper function to draw animated projectiles for any enemy.
+    Supports both single-frame and multi-frame animated projectiles.
+    
+    This is a convenience function that should be called from an enemy's draw() method.
+    It reads the anim_frames attribute attached to hitboxes and renders the current frame.
+    
+    Args:
+        projectile_hitboxes: List of Hitbox objects with anim_frames attached
+        surf: Surface to draw on
+        camera: Camera for screen position conversion
+    
+    Example:
+        # In enemy draw() method:
+        from src.entities.animation_system import draw_animated_projectiles
+        draw_animated_projectiles(self.projectile_hitboxes, surf, camera)
+    """
+    for hb in projectile_hitboxes:
+        # Get current frame (or first frame if no animation)
+        frames = getattr(hb, 'anim_frames', None)
+        if not frames or len(frames) == 0:
+            continue
+        
+        frame_index = getattr(hb, 'anim_index', 0)
+        # Clamp index to valid range
+        frame_index = min(frame_index, len(frames) - 1)
+        current_frame = frames[frame_index]
+        
+        if current_frame:
+            # Scale sprite to match hitbox dimensions AND camera zoom for visual accuracy
+            hitbox_w = int(hb.rect.width * camera.zoom)
+            hitbox_h = int(hb.rect.height * camera.zoom)
+            scaled_sprite = pygame.transform.scale(current_frame, (hitbox_w, hitbox_h))
+            
+            # Center sprite on hitbox
+            px = hb.rect.x
+            py = hb.rect.y
+            surf.blit(scaled_sprite, camera.to_screen((px, py)))

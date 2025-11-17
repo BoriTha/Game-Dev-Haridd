@@ -911,16 +911,16 @@ class Player:
         dir_vec = getattr(self, '_attack_dir_vec', (self.facing, 0))
         
         if dir_vec == (0, -1):
-            # upward hitbox (unchanged width, tall)
-            hb = pygame.Rect(0, 0, self.rect.w, int(self.rect.h * 0.9))
+            # upward hitbox: increased reach to match sword arc
+            hb = pygame.Rect(0, 0, int(self.rect.w * 1.2), int(self.rect.h * 1.0))
             hb.midbottom = self.rect.midtop
         elif dir_vec == (0, 1):
-            # downward hitbox (unchanged)
-            hb = pygame.Rect(0, 0, self.rect.w, int(self.rect.h * 1.2))
+            # downward hitbox: increased reach to match sword swing
+            hb = pygame.Rect(0, 0, int(self.rect.w * 1.2), int(self.rect.h * 1.4))
             hb.midtop = self.rect.midbottom
         else:
-            # forward hitbox: increase horizontal reach
-            hb = pygame.Rect(0, 0, int(self.rect.w * 1.6), int(self.rect.h * 1.0))
+            # forward hitbox: increased horizontal reach to match sword sprite extension
+            hb = pygame.Rect(0, 0, int(self.rect.w * 2.2), int(self.rect.h * 1.1))
             if self.facing > 0:
                 hb.midleft = (self.rect.right, self.rect.centery)
             else:
@@ -936,7 +936,8 @@ class Player:
         Called automatically by frame event system on dash attack animation frame 3.
         """
         dash_speed = 10
-        hb = pygame.Rect(0, 0, int(self.rect.w*1.2), self.rect.h)
+        # Increased dash attack range to match animation sprite
+        hb = pygame.Rect(0, 0, int(self.rect.w*1.8), int(self.rect.h*1.2))
         if self.facing > 0:
             hb.midleft = (self.rect.right, self.rect.centery)
         else:
@@ -1042,7 +1043,8 @@ class Player:
             nx, ny = (1, 0)
         else:
             nx, ny = dx / dist, dy / dist
-        hb = pygame.Rect(0, 0, 10, 6)
+        # Increased arrow hitbox from 10×6 to 16×10 for better visibility
+        hb = pygame.Rect(0, 0, 16, 10)
         hb.center = self.visual_center
         # Keep velocity as float for better precision
         vx = nx * speed
@@ -1067,7 +1069,8 @@ class Player:
         base_ang = math.atan2(dy, dx)
         for ang in (base_ang - math.radians(8), base_ang, base_ang + math.radians(8)):
             nx, ny = math.cos(ang), math.sin(ang)
-            hb = pygame.Rect(0, 0, 10, 6)
+            # Increased arrow hitbox from 10×6 to 16×10 for better visibility
+            hb = pygame.Rect(0, 0, 16, 10)
             hb.center = self.visual_center
             # Keep velocity as float for better precision
             vx = nx * speed
