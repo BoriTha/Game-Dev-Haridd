@@ -154,6 +154,8 @@ class Player:
         self.charge_time = 0
         self.charge_threshold = int(0.5 * FPS)
         self._prev_lmb = False
+        # Wizard skill selection system (for select-then-cast)
+        self.selected_skill = None  # None, 'fireball', 'coldfeet', or 'magic_missile'
         # Animation smoothing
         self._anim_grounded_buffer = 0
         self.triple_timer = 0
@@ -822,18 +824,53 @@ class Player:
         if not stunned and keys[pygame.K_r] and self.cls == 'Wizard':
             self.teleport_to_mouse(level, camera)
 
-        # Skill keys per class (1/2/3)
-        if not stunned and keys[pygame.K_1]:
-            self.activate_skill(1, level, camera)
-        elif not stunned and keys[pygame.K_2]:
-            self.activate_skill(2, level, camera)
-        elif not stunned and keys[pygame.K_3]:
-            self.activate_skill(3, level, camera)
+        # Skill keys per class (1/2/3) - Wizard uses select-then-cast system
+        if self.cls == 'Wizard':
+            # Press 1/2/3 to select skill (don't cast yet)
+            if not stunned and keys[pygame.K_1] and not getattr(self, '_prev_key_1', False):
+                self.selected_skill = 'fireball'
+            elif not stunned and keys[pygame.K_2] and not getattr(self, '_prev_key_2', False):
+                self.selected_skill = 'coldfeet'
+            elif not stunned and keys[pygame.K_3] and not getattr(self, '_prev_key_3', False):
+                self.selected_skill = 'magic_missile'
+            
+            # ESC or right-click cancels skill selection
+            rmb = pygame.mouse.get_pressed()[2]
+            if (keys[pygame.K_ESCAPE] or rmb) and self.selected_skill:
+                self.selected_skill = None
+            
+            # Store previous key states for edge detection
+            self._prev_key_1 = keys[pygame.K_1]
+            self._prev_key_2 = keys[pygame.K_2]
+            self._prev_key_3 = keys[pygame.K_3]
+        else:
+            # Other classes use immediate cast
+            if not stunned and keys[pygame.K_1]:
+                self.activate_skill(1, level, camera)
+            elif not stunned and keys[pygame.K_2]:
+                self.activate_skill(2, level, camera)
+            elif not stunned and keys[pygame.K_3]:
+                self.activate_skill(3, level, camera)
 
-        # Attack / Ranger charge handling
+        # Attack / Ranger charge handling / Wizard skill casting
         lmb = pygame.mouse.get_pressed()[0]
         if not stunned and self.attack_cd == 0:
-            if self.cls == 'Ranger':
+            if self.cls == 'Wizard':
+                # If a skill is selected, cast it on left-click
+                if self.selected_skill and lmb and not self._prev_lmb:
+                    if self.selected_skill == 'fireball':
+                        self.cast_fireball(level, camera)
+                        self.selected_skill = None
+                    elif self.selected_skill == 'coldfeet':
+                        self.cast_coldfeet(level, camera)
+                        self.selected_skill = None
+                    elif self.selected_skill == 'magic_missile':
+                        self.cast_magic_missile(level, camera)
+                        self.selected_skill = None
+                # Otherwise, normal attack
+                elif not self.selected_skill and (keys[pygame.K_l] or lmb):
+                    self.start_attack(keys, camera)
+            elif self.cls == 'Ranger':
                 # start charging on press
                 if lmb and not self._prev_lmb:
                     self.charging = True
@@ -842,28 +879,59 @@ class Player:
                     self.charge_time += 1
                 # on release, fire arrow
                 if self.charging and not lmb and self._prev_lmb:
+                    # Calculate charge percentage (0.0 to 1.0)
+                    charge_pct = min(1.0, self.charge_time / self.charge_threshold)
                     charged = self.charge_time >= self.charge_threshold
-                    # Triple-shot: force 3 arrows each dealing 7 dmg (example: 3*7=21)
-                    if getattr(self, 'triple_timer', 0) > 0:
-                        base = 7
-                        dmg = base
-                        # allow sniper multiplier to apply if charged
-                        if charged and self.sniper_ready:
-                            dmg = int(base * self.sniper_mult)
-                            self.sniper_ready = False
-                        speed = 14
-                        self.fire_triple_arrows(dmg, speed, camera, pierce=charged)
+                    
+                    # Calculate mana cost based on charge level
+                    base_mana_cost = 3.0
+                    charged_mana_cost = 8.0
+                    mana_cost = base_mana_cost + (charged_mana_cost - base_mana_cost) * charge_pct
+                    
+                    # Check if player has enough mana
+                    if getattr(self, 'mana', 0) < mana_cost:
+                        # Not enough mana - show feedback and don't fire
+                        from .entity_common import floating, DamageNumber
+                        floating.append(DamageNumber(
+                            self.rect.centerx,
+                            self.rect.top - 12,
+                            "Not enough mana!",
+                            (200, 100, 100)
+                        ))
+                        self.charging = False
                     else:
-                        dmg = 7 if charged else 3
-                        # Sniper buff multiplies next charged shot
-                        if charged and self.sniper_ready:
-                            dmg = int(dmg * self.sniper_mult)
-                            self.sniper_ready = False
-                        speed = 14 if charged else 10
-                        self.fire_arrow(dmg, speed, camera, pierce=charged)
-                    attack_speed_mult = getattr(self, 'attack_speed_mult', 1.0)
-                    self.attack_cd = ATTACK_COOLDOWN / attack_speed_mult
-                    self.charging = False
+                        # Consume mana
+                        self.mana = max(0.0, self.mana - mana_cost)
+                        
+                        # Triple-shot: force 3 arrows each dealing 7 dmg (example: 3*7=21)
+                        if getattr(self, 'triple_timer', 0) > 0:
+                            base = 7
+                            dmg = base
+                            # allow sniper multiplier to apply if charged
+                            if charged and self.sniper_ready:
+                                dmg = int(base * self.sniper_mult)
+                                self.sniper_ready = False
+                            speed = 14
+                            # Triple shot consumes 1.5x mana (already deducted above with adjusted cost)
+                            triple_mana_cost = mana_cost * 1.5
+                            self.mana = max(0.0, self.mana - (triple_mana_cost - mana_cost))
+                            self.fire_triple_arrows(dmg, speed, camera, pierce=charged)
+                        else:
+                            # Scale damage based on charge time (2 to 7 damage)
+                            min_damage = 2
+                            max_damage = 7
+                            dmg = int(min_damage + (max_damage - min_damage) * charge_pct)
+                            # Sniper buff multiplies charged shot
+                            if charged and self.sniper_ready:
+                                dmg = int(dmg * self.sniper_mult)
+                                self.sniper_ready = False
+                            # Speed scales with charge
+                            speed = 10 + int(4 * charge_pct)  # 10 to 14
+                            self.fire_arrow(dmg, speed, camera, pierce=charged)
+                        
+                        attack_speed_mult = getattr(self, 'attack_speed_mult', 1.0)
+                        self.attack_cd = ATTACK_COOLDOWN / attack_speed_mult
+                        self.charging = False
             else:
                 if keys[pygame.K_l] or lmb:
                     self.start_attack(keys, camera)
@@ -951,6 +1019,22 @@ class Player:
     def start_attack(self, keys, camera):
         # Wizard: ranged normal attack toward mouse
         if self.cls == 'Wizard':
+            # Wizard basic attack costs mana
+            mana_cost = 2.0
+            if getattr(self, 'mana', 0) < mana_cost:
+                # Not enough mana - show feedback and don't fire
+                from .entity_common import floating, DamageNumber
+                floating.append(DamageNumber(
+                    self.rect.centerx,
+                    self.rect.top - 12,
+                    "Not enough mana!",
+                    (200, 100, 100)
+                ))
+                return
+            
+            # Consume mana
+            self.mana = max(0.0, self.mana - mana_cost)
+            
             attack_speed_mult = getattr(self, 'attack_speed_mult', 1.0)
             self.attack_cd = ATTACK_COOLDOWN / attack_speed_mult
             self.combo_t = COMBO_RESET
@@ -1119,6 +1203,11 @@ class Player:
         hb = pygame.Rect(0,0,int(radius*2), int(radius*2))
         hb.center = (int(world_x), int(world_y))
         hitboxes.append(Hitbox(hb, 4*FPS, 0, self, aoe_radius=radius, visual_only=True))
+        
+        # Track affected enemies
+        affected_count = 0
+        from .entity_common import floating, DamageNumber
+        
         for e in level.enemies:
             if getattr(e, 'alive', False):
                 dx = e.rect.centerx - world_x
@@ -1128,9 +1217,17 @@ class Player:
                     e.dot_remaining = 4 * FPS
                     e.dot_dps = 5  # damage per second (buffed)
                     e.dot_accum = 0.0
-                    # apply slow effect
-                    e.slow_mult = 0.85
+                    # apply slow effect - 50% slow (enemies move at half speed)
+                    e.slow_mult = 0.5
                     e.slow_remaining = 4 * FPS
+                    affected_count += 1
+                    # Show SLOWED text on each enemy
+                    floating.append(DamageNumber(
+                        e.rect.centerx,
+                        e.rect.top - 10,
+                        "SLOWED",
+                        (100, 200, 255)
+                    ))
 
     def cast_magic_missile(self, level, camera):
         cost = 30
@@ -1682,6 +1779,10 @@ class Player:
         if self.cls == 'Ranger' and self.alive:
             self._draw_ranger_crosshair(surf, camera)
         
+        # Draw Wizard skill selection indicator
+        if self.cls == 'Wizard' and self.alive and self.selected_skill:
+            self._draw_wizard_skill_indicator(surf, camera)
+        
         # Draw debug overlays
         self._draw_debug_wall_jump(surf)
 
@@ -1734,6 +1835,48 @@ class Player:
         
         # Draw a circle at the center
         pygame.draw.circle(surf, crosshair_color, (mx, my), 3, 1)
+    
+    def _draw_wizard_skill_indicator(self, surf, camera):
+        """Draw visual indicator when Wizard has a skill selected"""
+        mx, my = pygame.mouse.get_pos()
+        
+        # Skill-specific colors and text
+        skill_info = {
+            'fireball': {'color': (255, 100, 50), 'name': 'FIREBALL', 'radius': 48},
+            'coldfeet': {'color': (100, 200, 255), 'name': 'COLD FEET', 'radius': 48},
+            'magic_missile': {'color': (200, 100, 255), 'name': 'MAGIC MISSILE', 'radius': 0}
+        }
+        
+        if self.selected_skill not in skill_info:
+            return
+        
+        info = skill_info[self.selected_skill]
+        color = info['color']
+        
+        # Draw crosshair at mouse position
+        crosshair_size = 10
+        pygame.draw.line(surf, color, (mx - crosshair_size, my), (mx + crosshair_size, my), 3)
+        pygame.draw.line(surf, color, (mx, my - crosshair_size), (mx, my + crosshair_size), 3)
+        pygame.draw.circle(surf, color, (mx, my), 5, 2)
+        
+        # Draw AOE radius indicator for area skills
+        if info['radius'] > 0:
+            # Draw a translucent circle showing AOE range
+            pygame.draw.circle(surf, color, (mx, my), info['radius'], 2)
+            # Draw inner circle for visual effect
+            pygame.draw.circle(surf, (*color, 128), (mx, my), info['radius'] // 2, 1)
+        
+        # Draw skill name above mouse
+        try:
+            font = pygame.font.Font(None, 24)
+            text_surf = font.render(info['name'], True, color)
+            text_rect = text_surf.get_rect(center=(mx, my - 40))
+            # Draw text shadow
+            shadow_surf = font.render(info['name'], True, (0, 0, 0))
+            surf.blit(shadow_surf, (text_rect.x + 2, text_rect.y + 2))
+            surf.blit(text_surf, text_rect)
+        except:
+            pass  # Fail silently if font rendering fails
     
     def _draw_debug_wall_jump(self, surf):
         """DEBUG: Draw wall jump state indicators (remove in production)"""
