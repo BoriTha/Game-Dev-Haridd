@@ -306,6 +306,12 @@ class Inventory:
             return
         kind = hit['kind']
         sel = self.inventory_selection
+        
+        # Handle exit button click
+        if kind == 'exit_button':
+            self.inventory_open = False
+            self._clear_inventory_selection()
+            return
 
         scroll_amount = 50 # Pixels to scroll per click
         
@@ -1121,16 +1127,16 @@ class Inventory:
         self.game.screen.blit(overlay, (0, 0))
 
         # Calculate panel size to fit within screen with margins
-        margin = 40
+        margin = 30  # Reduced margin from 40 to 30
         max_panel_w = WIDTH - (margin * 2)
         max_panel_h = HEIGHT - (margin * 2)
         
-        # Use responsive sizing that fits within screen - made smaller and moved down
-        panel_w = min(800, max_panel_w)  # Reduced from 900
-        panel_h = min(600, max_panel_h)  # Reduced from 680
+        # Make panel taller to use more screen space
+        panel_w = min(800, max_panel_w)
+        panel_h = min(700, max_panel_h)  # Increased from 600 to 700
         panel_rect = pygame.Rect(
             (WIDTH - panel_w) // 2,
-            (HEIGHT - panel_h) // 2 + 20,  # Moved down by 20 pixels
+            (HEIGHT - panel_h) // 2,  # Centered vertically (removed +20 offset)
             panel_w,
             panel_h,
         )
@@ -1142,23 +1148,55 @@ class Inventory:
         self.inventory_regions = []
         selection = self.inventory_selection
 
-        # Draw "Inventory" title in its own header box
-        header_box_height = 50
-        header_box_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 15, panel_rect.width - 40, header_box_height)
+        # Draw "Inventory" title in its own header box - moved to very top
+        header_box_height = 45  # Slightly reduced from 50
+        header_box_rect = pygame.Rect(panel_rect.x + 15, panel_rect.y + 10, panel_rect.width - 30, header_box_height)
         pygame.draw.rect(self.game.screen, (40, 35, 55), header_box_rect, border_radius=8)
         pygame.draw.rect(self.game.screen, (210, 200, 170), header_box_rect, width=2, border_radius=8)
-        draw_text(self.game.screen, "Inventory", (header_box_rect.x + 15, header_box_rect.y + 10), (240,220,190), size=30, bold=True)
+        draw_text(self.game.screen, "Inventory", (header_box_rect.x + 15, header_box_rect.y + 8), (240,220,190), size=28, bold=True)
         
-        footer_font = get_font(18)
-        footer_surface = footer_font.render("Press I or Esc to close", True, (180,180,195))
-        footer_rect = footer_surface.get_rect(midbottom=(panel_rect.centerx, panel_rect.bottom - 8))
-        self.game.screen.blit(footer_surface, footer_rect)
+        # Draw footer area with red exit button
+        footer_box_height = 45  # Taller footer box
+        footer_box_y = panel_rect.bottom - footer_box_height - 10
+        footer_box_rect = pygame.Rect(panel_rect.x + 15, footer_box_y, panel_rect.width - 30, footer_box_height)
+        pygame.draw.rect(self.game.screen, (40, 35, 55), footer_box_rect, border_radius=8)
+        pygame.draw.rect(self.game.screen, (100, 100, 120), footer_box_rect, width=1, border_radius=8)
+        
+        # Red exit button centered in footer - matching shop exactly
+        button_width = 140  # Wider to fit "EXIT (ESC)"
+        button_height = 34
+        exit_button_rect = pygame.Rect(
+            footer_box_rect.centerx - button_width // 2,
+            footer_box_rect.centery - button_height // 2,
+            button_width,
+            button_height
+        )
+        
+        # Check if mouse is hovering over exit button
+        mouse_pos = pygame.mouse.get_pos()
+        is_hovering = exit_button_rect.collidepoint(mouse_pos)
+        
+        # Draw button with hover feedback - exact shop colors
+        exit_button_color = (180, 60, 60) if is_hovering else (120, 50, 50)
+        pygame.draw.rect(self.game.screen, exit_button_color, exit_button_rect, border_radius=6)
+        pygame.draw.rect(self.game.screen, (200, 150, 150), exit_button_rect, width=2, border_radius=6)
+        
+        # Draw "EXIT (ESC)" text on button - matching shop format
+        exit_font = get_font(14, bold=True)
+        exit_text = exit_font.render("EXIT (ESC)", True, (255, 255, 255))
+        exit_text_rect = exit_text.get_rect(center=exit_button_rect.center)
+        self.game.screen.blit(exit_text, exit_text_rect)
+        
+        # Register exit button as clickable region
+        self._register_inventory_region(exit_button_rect, 'exit_button')
 
-        # Define main panes - adjust Y to start below header
+        # Define main panes - start right below header with minimal gap
         left_pane_width = 280
-        right_pane_width = panel_w - left_pane_width - 60 # 60 for spacing
-        left_pane_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 75, left_pane_width, panel_h - 105)
-        right_pane_rect = pygame.Rect(left_pane_rect.right + 20, panel_rect.y + 75, right_pane_width, panel_h - 105)
+        right_pane_width = panel_w - left_pane_width - 50  # Reduced spacing from 60 to 50
+        panes_y = header_box_rect.bottom + 8  # Start 8px below header
+        panes_height = footer_box_y - panes_y - 8  # End 8px above footer box
+        left_pane_rect = pygame.Rect(panel_rect.x + 15, panes_y, left_pane_width, panes_height)
+        right_pane_rect = pygame.Rect(left_pane_rect.right + 20, panes_y, right_pane_width, panes_height)
 
         # --- Left Pane: Player Info ---
         pygame.draw.rect(self.game.screen, (25, 25, 35), left_pane_rect, border_radius=10) # Outline for left pane
@@ -1376,13 +1414,13 @@ class Inventory:
 
 
 
-        # Stock Panels (Scrollable)
-        stock_panel_y = equipped_slots_y + slot_h + 30
-        stock_panel_height = right_pane_rect.bottom - stock_panel_y - 20
+        # Stock Panels (Scrollable) - increased height by reducing top spacing
+        stock_panel_y = equipped_slots_y + slot_h + 20  # Reduced from 30 to 20
+        stock_panel_height = right_pane_rect.bottom - stock_panel_y - 10  # Reduced bottom margin from 20 to 10
         stock_panel_rect = pygame.Rect(right_pane_rect.x + 20, stock_panel_y, right_pane_width - 40, stock_panel_height)
         
         # Split stock area into fixed header and scrollable body
-        header_height = 40
+        header_height = 35  # Reduced from 40 to 35
         header_rect = pygame.Rect(stock_panel_rect.x, stock_panel_rect.y, stock_panel_rect.width, header_height)
         body_rect = pygame.Rect(stock_panel_rect.x, stock_panel_rect.y + header_height, stock_panel_rect.width, stock_panel_rect.height - header_height)
 
@@ -1470,9 +1508,13 @@ class Inventory:
             
             # Only draw if visible within the stock_surface
             if cell.bottom > grid_start_y_in_surface and cell.top < stock_panel_rect.height:
+                # Map from body surface to screen coords
+                screen_cell = cell.move(body_rect.topleft)
+                
                 if self.inventory_stock_mode == 'gear':
-                    # Map from body surface to screen coords for hit regions
-                    self._register_inventory_region(cell.move(body_rect.topleft), 'gear_pool', key=key)
+                    # Only register hit region if not overlapping with footer (to prevent tooltip issues)
+                    if screen_cell.bottom < footer_box_y:
+                        self._register_inventory_region(screen_cell, 'gear_pool', key=key)
                     if key == self.UNEQUIP_GEAR_KEY:
                         highlighted = bool(selection and selection.get('kind') == 'gear_pool' and selection.get('key') == key)
                         self._draw_unequip_stock_cell(stock_surface, cell, 'gear', icon_font, highlighted)
@@ -1520,8 +1562,9 @@ class Inventory:
                     if is_selected:
                         pygame.draw.rect(stock_surface, (255, 255, 255), cell.inflate(-4, -4), width=2, border_radius=6)
                 elif self.inventory_stock_mode == 'consumable':
-                    # Map from body surface to screen coords for hit regions
-                    self._register_inventory_region(cell.move(body_rect.topleft), 'consumable_pool', key=key)
+                    # Only register hit region if not overlapping with footer (to prevent tooltip issues)
+                    if screen_cell.bottom < footer_box_y:
+                        self._register_inventory_region(screen_cell, 'consumable_pool', key=key)
                     if key == self.UNEQUIP_CONSUMABLE_KEY:
                         highlighted = bool(selection and selection.get('kind') == 'consumable_pool' and selection.get('key') == key)
                         self._draw_unequip_stock_cell(stock_surface, cell, 'consumable', icon_font, highlighted)
@@ -1635,9 +1678,10 @@ class Inventory:
                 pygame.draw.rect(self.game.screen, (150, 150, 170), thumb_rect, border_radius=3)
 
 
-        # Tooltip
+        # Tooltip - don't show for exit button or scroll buttons
         hover_info = self._inventory_hit_test(pygame.mouse.get_pos())
-        self._draw_inventory_tooltip(hover_info)
+        if hover_info and hover_info.get('kind') not in ('exit_button', 'scroll_up', 'scroll_down'):
+            self._draw_inventory_tooltip(hover_info)
 
     def draw_consumable_hotbar(self):
         """Draw the consumable hotbar in the HUD."""
