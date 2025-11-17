@@ -201,7 +201,7 @@ class Player:
     
     def _setup_animations(self, cls):
         """Setup animation system for any player class using universal AnimationManager"""
-        if cls not in ('Knight', 'Ranger'):
+        if cls not in ('Knight', 'Ranger', 'Wizard'):
             return  # No animations for other classes yet
         
         try:
@@ -216,6 +216,11 @@ class Player:
             elif cls == 'Ranger':
                 self._load_ranger_animations()
                 self.anim_manager.set_sprite_offset(0, 0)
+            elif cls == 'Wizard':
+                self._load_wizard_animations()
+                self.anim_manager.set_sprite_offset(0, 0)
+                # Wizard wall slide sprite faces wrong direction, reverse it
+                self.anim_manager.reverse_facing_states.add(AnimationState.WALL_SLIDE)
             logger.info(f"[Player] {cls} animations loaded successfully")
         except Exception as e:
             logger.exception(f"[Player] Failed to load {cls} animations: {e}")
@@ -431,6 +436,132 @@ class Player:
             next_state=AnimationState.IDLE  # Return to idle after shooting
         )
 
+    def _load_wizard_animations(self):
+        """
+        Load Wizard animation frames into AnimationManager.
+        
+        Wizard sprites have inconsistent canvas sizes with varying transparent padding:
+        - Small sprites (80×95, 74×105): IDLE, JUMP, FALL - less padding
+        - Large sprites (222×144, 231×142): RUN, ATTACK, SKILLS - lots of padding
+        
+        Solution: Scale large sprites 2.3× bigger to compensate for extra padding,
+        ensuring the actual wizard character appears the same visual size across all animations.
+        """
+        # Small sprites with minimal padding (IDLE, JUMP, FALL)
+        sprite_size_small = (128, 152)  # 1.6× scale for 80×95 base
+        
+        # Large sprites with heavy padding (RUN, ATTACK, SKILLS)
+        # Native 231×142, but character is tiny inside - scale 2.3× bigger
+        sprite_size_large = (294, 355)  # Compensates for padding to match visual size
+        
+        # IDLE - Lowest priority, always available (6 frames)
+        # Native: 80×95 (minimal padding)
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            [f"assets/Player/wizard/idle-wizard/idle{i}.png" for i in range(1, 7)],
+            sprite_size=(80,95),
+            frame_duration=8,
+            loop=True,
+            priority=0
+        )
+        
+        # RUN - Basic movement (8 frames)
+        # Native: 222×144 (HEAVY padding - character is small inside canvas)
+        self.anim_manager.load_animation(
+            AnimationState.RUN,
+            [f"assets/Player/wizard/run-wizard/run{i}.png" for i in range(1, 9)],
+            sprite_size=(200, 152),  # Larger to compensate for padding
+            frame_duration=5,
+            loop=True,
+            priority=1
+        )
+        
+        # JUMP - Moving upward (2 frames)
+        # Native: 74×105 (minimal padding)
+        self.anim_manager.load_animation(
+            AnimationState.JUMP,
+            [f"assets/Player/wizard/jump-wizard/Jump-{i}.png" for i in range(1, 3)],
+            sprite_size=(80,95),
+            frame_duration=6,
+            loop=False,
+            priority=2
+        )
+        
+        # FALL - Moving downward (2 frames from wizard-fall folder)
+        # Native: 80×108 (minimal padding)
+        self.anim_manager.load_animation(
+            AnimationState.FALL,
+            [f"assets/Player/wizard/wizard-fall/jump{i}.png" for i in range(1, 3)],
+            sprite_size=(80, 120),
+            frame_duration=6,
+            loop=False,
+            priority=2
+        )
+        
+        # WALL_SLIDE - Proper climb sprite
+        # Use small size (assume similar to idle/jump)
+        self.anim_manager.load_animation(
+            AnimationState.WALL_SLIDE,
+            ["assets/Player/wizard/climb-wizard.png"],
+            sprite_size=(80,95),
+            sprite_offset=(30, 0),  # Move sprite up by 5 pixels
+            frame_duration=1,
+            loop=True,
+            priority=3
+        )
+        
+        # ATTACK - Basic attack animation (4 frames from wizard-atk)
+        # Native: 231×142 (HEAVY padding)
+        # Frame duration: 2 frames per sprite = 8 total frames, fits in ATTACK_COOLDOWN (10 frames)
+        self.anim_manager.load_animation(
+            AnimationState.ATTACK,
+            [f"assets/Player/wizard/wizard-atk/attk{i:03d}.png" for i in range(1, 5)],
+            sprite_size=(200, 140),  # Larger to compensate for padding
+            frame_duration=2,  # Synced to ATTACK_COOLDOWN
+            loop=False,
+            priority=4,
+            next_state=AnimationState.IDLE
+        )
+        
+        # SKILL_1 - Fireball skill (uses basic wizard-atk since it's a fire projectile)
+        # Native: 231×142 (HEAVY padding)
+        # Frame duration: 2 frames per sprite = 8 total frames (~0.13s fast cast)
+        self.anim_manager.load_animation(
+            AnimationState.SKILL_1,
+            [f"assets/Player/wizard/wizard-atk/attk{i:03d}.png" for i in range(1, 5)],
+            sprite_size=(200, 140),  # Larger to compensate for padding
+            frame_duration=2,  # Quick fireball cast
+            loop=False,
+            priority=5,
+            next_state=AnimationState.IDLE
+        )
+        
+        # SKILL_2 - Cold Feet skill (8 frames from wizard-skill folder)
+        # Native: 231×142 (HEAVY padding)
+        # Frame duration: 4 frames per sprite = 32 total frames (~0.5s cast time)
+        self.anim_manager.load_animation(
+            AnimationState.SKILL_2,
+            [f"assets/Player/wizard/wizard-skill/skill{i}.png" for i in range(1, 9)],
+            sprite_size=(200, 140),  # Larger to compensate for padding
+            frame_duration=4,  # Slower AOE spell cast
+            loop=False,
+            priority=5,
+            next_state=AnimationState.IDLE
+        )
+        
+        # SKILL_3 - Magic Missile (5 frames from wizard-lazer-skill-atk)
+        # Native: 231×142 (HEAVY padding)
+        # Frame duration: 5 frames per sprite = 25 total frames (~0.4s fast cast)
+        self.anim_manager.load_animation(
+            AnimationState.SKILL_3,
+            [f"assets/Player/wizard/wizard-lazer-skill-atk/attk{i:03d}.png" for i in range(1, 6)],
+            sprite_size=(200, 140),  # Larger to compensate for padding
+            frame_duration=5,  # Fast aggressive laser cast
+            loop=False,
+            priority=5,
+            next_state=AnimationState.IDLE
+        )
+
     def _update_knight_animations(self):
         """Update Knight animation state - clean state machine with smoothing"""
         if not self.anim_manager:
@@ -594,6 +725,89 @@ class Player:
             return
         
         # Priority 8: Final fallback to IDLE
+        if current != AnimationState.IDLE:
+            self.anim_manager.play(AnimationState.IDLE, force=True)
+
+    def _update_wizard_animations(self):
+        """
+        Update Wizard animation state - clean state machine with skill casting animations.
+        
+        Animation Priority (highest to lowest):
+        1. SKILL_1/SKILL_2/SKILL_3 - Skill casting animations (must complete, no interrupt)
+        2. ATTACK - Basic attack animation (must complete, no interrupt)
+        3. RUN - Ground movement
+        4. IDLE - Grounded, stationary
+        5. WALL_SLIDE - Airborne wall contact with downward velocity
+        6. JUMP/FALL - Airborne states based on vertical velocity
+        """
+        if not self.anim_manager:
+            return
+        
+        # Smooth ground detection to prevent flicker (use coyote time concept)
+        if self.on_ground or self.coyote > 0:
+            self._anim_grounded_buffer = 5  # Stay "grounded" for animation for 5 frames
+        elif self._anim_grounded_buffer > 0:
+            self._anim_grounded_buffer -= 1
+        
+        anim_grounded = self._anim_grounded_buffer > 0
+        current = self.anim_manager.current_state
+        
+        # Priority 1: SKILL_1 (Fireball) - don't interrupt while playing
+        if current == AnimationState.SKILL_1 and self.anim_manager.is_playing:
+            return
+        
+        # Priority 2: SKILL_2 (Cold Feet/Lazer) - don't interrupt while playing
+        if current == AnimationState.SKILL_2 and self.anim_manager.is_playing:
+            return
+        
+        # Priority 3: SKILL_3 (Magic Missile) - don't interrupt while playing
+        if current == AnimationState.SKILL_3 and self.anim_manager.is_playing:
+            return
+        
+        # Priority 4: ATTACK (don't interrupt while playing)
+        if self.attack_cd > 0 and current == AnimationState.ATTACK and self.anim_manager.is_playing:
+            return
+        
+        # Priority 5: Start attack animation when attack begins
+        if self.attack_cd > 0 and self.attack_cd > (ATTACK_COOLDOWN - ATTACK_LIFETIME):
+            if current != AnimationState.ATTACK:
+                self.anim_manager.play(AnimationState.ATTACK, force=True)
+            return
+        
+        # Priority 6: RUN (on ground + moving) - CHECK BEFORE WALL_SLIDE
+        # Use lower threshold (0.1) to catch any movement and prevent flicker
+        if anim_grounded and abs(self.vx) > 0.1:
+            if current != AnimationState.RUN:
+                self.anim_manager.play(AnimationState.RUN, force=True)
+            return
+        
+        # Priority 7: IDLE when grounded and not moving - CHECK BEFORE WALL_SLIDE
+        if anim_grounded:
+            if current != AnimationState.IDLE:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+            return
+        
+        # Priority 8: WALL_SLIDE (only when airborne)
+        is_truly_airborne = not self.on_ground and self.coyote == 0 and self._anim_grounded_buffer == 0
+        is_on_wall = self.on_left_wall or self.on_right_wall
+        is_falling_on_wall = self.vy > 0  # Moving downward
+        
+        if is_truly_airborne and is_on_wall and is_falling_on_wall:
+            if current != AnimationState.WALL_SLIDE:
+                self.anim_manager.play(AnimationState.WALL_SLIDE, force=True)
+            return
+        
+        # Priority 9: AIR STATES (jump/fall) - only if clearly in air
+        if self.vy < -1.0:  # Rising with clear upward velocity
+            if current != AnimationState.JUMP:
+                self.anim_manager.play(AnimationState.JUMP, force=True)
+            return
+        elif self.vy > 1.0:  # Falling with clear downward velocity
+            if current != AnimationState.FALL:
+                self.anim_manager.play(AnimationState.FALL, force=True)
+            return
+        
+        # Priority 10: Final fallback to IDLE
         if current != AnimationState.IDLE:
             self.anim_manager.play(AnimationState.IDLE, force=True)
 
@@ -826,13 +1040,19 @@ class Player:
 
         # Skill keys per class (1/2/3) - Wizard uses select-then-cast system
         if self.cls == 'Wizard':
-            # Press 1/2/3 to select skill (don't cast yet)
+            # Press 1/2/3 to select skill (don't cast yet) - check if skill is available
             if not stunned and keys[pygame.K_1] and not getattr(self, '_prev_key_1', False):
-                self.selected_skill = 'fireball'
+                # Only select fireball if it's available (has mana and not on cooldown)
+                if getattr(self, 'mana', 0) >= 15 and self.skill_cd1 == 0:
+                    self.selected_skill = 'fireball'
             elif not stunned and keys[pygame.K_2] and not getattr(self, '_prev_key_2', False):
-                self.selected_skill = 'coldfeet'
+                # Only select cold feet if it's available
+                if getattr(self, 'mana', 0) >= 25 and self.skill_cd2 == 0:
+                    self.selected_skill = 'coldfeet'
             elif not stunned and keys[pygame.K_3] and not getattr(self, '_prev_key_3', False):
-                self.selected_skill = 'magic_missile'
+                # Only select magic missile if it's available
+                if getattr(self, 'mana', 0) >= 30 and self.skill_cd3 == 0:
+                    self.selected_skill = 'magic_missile'
             
             # ESC or right-click cancels skill selection
             rmb = pygame.mouse.get_pressed()[2]
@@ -1070,7 +1290,25 @@ class Player:
             damage = int(1 * getattr(self, 'skill_damage_mult', 1.0))
             hb = pygame.Rect(0, 0, 8, 8)
             hb.center = self.rect.center
-            hitboxes.append(Hitbox(hb, 90, damage, self, dir_vec=(nx,ny), vx=nx*speed, vy=ny*speed, tag='spell'))
+            
+            # Load animated normal attack projectile (4 frames)
+            from .animation_system import load_projectile_animation
+            normal_attack_frames = load_projectile_animation(
+                [f"assets/Player/wizard/nm-attk-ball-projectile/nm-attk-ball{i}.png" for i in range(1, 5)],
+                sprite_size=(16, 16)
+            )
+            
+            # Create hitbox with animated projectile - smaller hitbox for better balance
+            hb = pygame.Rect(0, 0, 14, 14)  # Reduced from 16×16 to 12×12 for tighter collision
+            hb.center = self.rect.center
+            hitbox = Hitbox(hb, 90, damage, self, dir_vec=(nx,ny), vx=nx*speed, vy=ny*speed, tag='spell')
+            hitbox.anim_frames = normal_attack_frames
+            hitbox.anim_index = 0
+            hitbox.anim_speed = 2  # Change frame every 2 ticks
+            hitbox.anim_timer = 0
+            hitbox.sprite_display_size = (80, 80)  # Render 525% larger to compensate for padding
+            hitbox.sprite_offset = (-5, -5)  # Adjust X and Y offset here: (x_offset, y_offset)
+            hitboxes.append(hitbox)
             return
 
         # Knight: Use frame event system for attack
@@ -1179,12 +1417,19 @@ class Player:
 
     # --- Wizard skill casts ---
     def cast_fireball(self, level, camera):
+        from .animation_system import load_projectile_animation
+        
         cost = 15
         if getattr(self, 'mana', 0) < cost or self.skill_cd1 > 0:
             return
         self.mana = max(0.0, self.mana - cost)
         skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
-        self.skill_cd1 = self.skill_cd1_max = int(1 * FPS * skill_cdr)  # 1s CD
+        self.skill_cd1 = self.skill_cd1_max = int(5 * FPS * skill_cdr)  # 5s CD (increased from 1s)
+        
+        # Trigger fireball animation
+        if self.anim_manager:
+            self.anim_manager.play(AnimationState.SKILL_1, force=True)
+        
         mx, my = pygame.mouse.get_pos()
         # Convert mouse screen position to world position accounting for camera and zoom
         world_x = (mx / camera.zoom) + camera.x
@@ -1200,8 +1445,24 @@ class Player:
         damage = int(6 * getattr(self, 'skill_damage_mult', 1.0))
         hb = pygame.Rect(0, 0, 12, 12)
         hb.center = self.rect.center
-        # small moving projectile that explodes on hit (AOE)
-        hitboxes.append(Hitbox(hb, 180, damage, self, dir_vec=(nx, ny), vx=nx*speed, vy=ny*speed, aoe_radius=48, tag='spell'))
+        
+        # Load animated fireball projectile (10 frames)
+        fireball_frames = load_projectile_animation(
+            [f"assets/Player/wizard/fire-ball-projectile/ball{i}.png" for i in range(1, 11)],
+            sprite_size=(24, 24)  # Slightly larger than hitbox for visual effect
+        )
+        
+        # Create hitbox with animated projectile - normalize hitbox to sprite size
+        hb = pygame.Rect(0, 0, 24, 24)  # Match sprite size
+        hb.center = self.rect.center
+        hitbox = Hitbox(hb, 180, damage, self, dir_vec=(nx, ny), vx=nx*speed, vy=ny*speed, aoe_radius=48, tag='spell')
+        hitbox.anim_frames = fireball_frames
+        hitbox.anim_index = 0
+        hitbox.anim_speed = 2  # Change frame every 2 ticks
+        hitbox.anim_timer = 0
+        hitbox.sprite_display_size = (80, 80)  # Render 400% larger to compensate for padding
+        hitbox.sprite_offset = (0, 0)  # Adjust X and Y offset here: (x_offset, y_offset)
+        hitboxes.append(hitbox)
 
     def cast_coldfeet(self, level, camera):
         cost = 25
@@ -1210,6 +1471,11 @@ class Player:
         self.mana = max(0.0, self.mana - cost)
         skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
         self.skill_cd2 = self.skill_cd2_max = int(8 * FPS * skill_cdr)  # 8s CD
+        
+        # Trigger lazer skill animation
+        if self.anim_manager:
+            self.anim_manager.play(AnimationState.SKILL_2, force=True)
+        
         mx, my = pygame.mouse.get_pos()
         # Convert mouse screen position to world position accounting for camera and zoom
         world_x = (mx / camera.zoom) + camera.x
@@ -1246,12 +1512,19 @@ class Player:
                     ))
 
     def cast_magic_missile(self, level, camera):
+        from .animation_system import load_projectile_animation
+        
         cost = 30
         if getattr(self, 'mana', 0) < cost or self.skill_cd3 > 0:
             return
         self.mana = max(0.0, self.mana - cost)
         skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
-        self.skill_cd3 = self.skill_cd3_max = int(2 * FPS * skill_cdr)  # 2s CD
+        self.skill_cd3 = self.skill_cd3_max = int(6 * FPS * skill_cdr)  # 6s CD (increased from 2s)
+        
+        # Trigger magic missile animation
+        if self.anim_manager:
+            self.anim_manager.play(AnimationState.SKILL_3, force=True)
+        
         mx, my = pygame.mouse.get_pos()
         # Convert mouse screen position to world position accounting for camera and zoom
         world_x = (mx / camera.zoom) + camera.x
@@ -1265,12 +1538,28 @@ class Player:
             nx, ny = dx / dist, dy / dist
         speed = 20.0
         damage = int(12 * getattr(self, 'skill_damage_mult', 1.0))
-        # a narrow fast projectile representing the magic missile
-        hb = pygame.Rect(0, 0, 18, 6)
+        
+        # Load animated laser projectile (3 frames)
+        laser_frames = load_projectile_animation(
+            [f"assets/Player/wizard/lazer-skill-projectile/lazer-skill{i}.png" for i in range(1, 4)],
+            sprite_size=(32, 12)  # Wider laser beam sprite
+        )
+        
+        # Create hitbox with animated laser - normalize hitbox to sprite size
+        hb = pygame.Rect(0, 0, 26, 9)  # Match sprite size
         hb.center = self.rect.center
         vx = nx * speed
         vy = ny * speed
-        hitboxes.append(Hitbox(hb, 36, damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, tag='spell'))
+        
+        # Create hitbox with animated laser
+        hitbox = Hitbox(hb, 36, damage, self, dir_vec=(nx,ny), vx=vx, vy=vy, tag='spell')
+        hitbox.anim_frames = laser_frames
+        hitbox.anim_index = 0
+        hitbox.anim_speed = 3  # Change frame every 3 ticks (slower for laser effect)
+        hitbox.anim_timer = 0
+        hitbox.sprite_display_size = (84, 30)  # Render 200% larger to compensate for padding
+        hitbox.sprite_offset = (0, 0)  # Adjust X and Y offset here: (x_offset, y_offset)
+        hitboxes.append(hitbox)
 
 
 
@@ -1714,6 +2003,8 @@ class Player:
                 self._update_ranger_animations()
             elif self.cls == 'Knight':
                 self._update_knight_animations()
+            elif self.cls == 'Wizard':
+                self._update_wizard_animations()
             self.anim_manager.update()
 
     def move_and_collide(self, level):
@@ -1838,8 +2129,8 @@ class Player:
 
 
     def draw(self, surf, camera, debug_hitboxes=False):
-        # For Ranger/Knight with animation system, use sprite rendering
-        if self.anim_manager and self.cls in ('Ranger', 'Knight'):
+        # For Ranger/Knight/Wizard with animation system, use sprite rendering
+        if self.anim_manager and self.cls in ('Ranger', 'Knight', 'Wizard'):
             # Draw the animated sprite
             sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
             

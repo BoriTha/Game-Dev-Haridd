@@ -22,7 +22,7 @@ from typing import Tuple
 PLAYER_MODEL_SCALES = {
     'Knight': 1.8,      # Knight sprites: 93x64
     'Ranger': 1.6,      # Ranger sprites: 48x64
-    'Wizard': 2.0,      # Default for future classes
+    'Wizard': 1.2,      # Default for future classe
     'Assassin': 2.0,    # Default for future classes
 }
 
@@ -31,7 +31,7 @@ PLAYER_MODEL_SCALES = {
 PLAYER_MODEL_OFFSETS = {
     'Knight': (-20, -15),      # Centered
     'Ranger': (-10, -10),      # Centered
-    'Wizard': (0, 0),      # Centered (placeholder)
+    'Wizard': (0, -5),      # Centered (placeholder)
     'Assassin': (0, 0),    # Centered (placeholder)
 }
 

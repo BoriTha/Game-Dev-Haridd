@@ -48,6 +48,7 @@ class AnimationConfig:
     on_complete_callback: Optional[Callable] = None  # Called when animation completes
     next_state: Optional[AnimationState] = None  # Auto-transition after completion
     frame_events: Dict[int, List[Callable]] = field(default_factory=dict)  # Callbacks per frame
+    sprite_offset: Tuple[int, int] = (0, 0)  # Per-animation sprite offset (x, y)
     
     def __post_init__(self):
         """Validate configuration"""
@@ -100,6 +101,7 @@ class AnimationManager:
         self.sprite_offset = (0, 0)  # (x, y) offset from entity rect
         self.sprite_offset_y = 0  # Backward compatibility
         self.reverse_facing = False  # Set to True if sprites are drawn facing opposite direction
+        self.reverse_facing_states = set()  # Set of AnimationStates that should have reversed facing
     
     def load_animation(
         self,
@@ -110,7 +112,8 @@ class AnimationManager:
         loop: bool = True,
         priority: int = 0,
         on_complete_callback: Optional[Callable] = None,
-        next_state: Optional[AnimationState] = None
+        next_state: Optional[AnimationState] = None,
+        sprite_offset: Tuple[int, int] = (0, 0)
     ):
         """
         Load an animation from a list of file paths.
@@ -124,6 +127,7 @@ class AnimationManager:
             priority: Priority level (higher = more important)
             on_complete_callback: Function to call when animation completes
             next_state: Auto-transition to this state after completion
+            sprite_offset: (x, y) offset for this specific animation
         """
         frames = []
         for path in frame_paths:
@@ -168,7 +172,8 @@ class AnimationManager:
                 loop=loop,
                 priority=priority,
                 on_complete_callback=on_complete_callback,
-                next_state=next_state
+                next_state=next_state,
+                sprite_offset=sprite_offset
             )
             self.animations[state] = config
             print(f"[AnimationSystem] Loaded {state.value} animation: {len(frames)} frames")
@@ -323,6 +328,10 @@ class AnimationManager:
         # Calculate sprite position based on entity rect and offset
         sprite_rect = frame.get_rect()
         
+        # Get per-animation offset if available
+        current_config = self.animations.get(self.current_state)
+        anim_offset = current_config.sprite_offset if current_config else (0, 0)
+        
         # Apply special wall slide offset for Knight to close gap with wall
         wall_slide_offset_x = 0
         if (self.current_state == AnimationState.WALL_SLIDE and 
@@ -334,8 +343,8 @@ class AnimationManager:
                 wall_slide_offset_x = 12  # Shift right when on right wall
         
         sprite_rect.midbottom = (
-            self.entity.rect.midbottom[0] + self.sprite_offset[0] + wall_slide_offset_x,
-            self.entity.rect.midbottom[1] + self.sprite_offset[1] + self.sprite_offset_y
+            self.entity.rect.midbottom[0] + self.sprite_offset[0] + anim_offset[0] + wall_slide_offset_x,
+            self.entity.rect.midbottom[1] + self.sprite_offset[1] + anim_offset[1] + self.sprite_offset_y
         )
         
         # Calculate screen position
@@ -343,8 +352,32 @@ class AnimationManager:
         
         # Flip sprite based on entity facing direction
         facing = getattr(self.entity, 'facing', 1)
-        # If reverse_facing is True, flip the logic (for sprites drawn facing opposite direction)
-        should_flip = (facing == -1) if not self.reverse_facing else (facing == 1)
+        
+        # Check if current state should have reversed facing
+        state_reverse = self.current_state in self.reverse_facing_states
+        # Combine with global reverse_facing flag
+        use_reverse = self.reverse_facing or state_reverse
+        
+        # Special flipping logic for WALL_SLIDE - face toward the wall
+        if self.current_state == AnimationState.WALL_SLIDE:
+            # If on left wall, face left (flip sprite)
+            # If on right wall, face right (don't flip sprite)
+            if hasattr(self.entity, 'on_left_wall') and self.entity.on_left_wall:
+                should_flip = True  # Face left toward wall
+            elif hasattr(self.entity, 'on_right_wall') and self.entity.on_right_wall:
+                should_flip = False  # Face right toward wall
+            else:
+                # Fallback to normal facing if wall state unclear
+                should_flip = (facing == -1) if not use_reverse else (facing == 1)
+            
+            # Apply reverse_facing_states logic if this state is in the set
+            if state_reverse:
+                should_flip = not should_flip
+        else:
+            # Normal facing logic for other animations
+            # If reverse_facing is True, flip the logic (for sprites drawn facing opposite direction)
+            should_flip = (facing == -1) if not use_reverse else (facing == 1)
+        
         draw_sprite = pygame.transform.flip(frame, should_flip, False)
         
         # Scale sprite to match camera zoom (use scale_by for pixel-perfect zoom)
@@ -629,6 +662,15 @@ def draw_animated_projectiles(projectile_hitboxes: List, surf: pygame.Surface, c
             scaled_sprite = pygame.transform.scale(current_frame, (scaled_w, scaled_h))
             
             # Center sprite on hitbox
-            px = hb.rect.x - (scaled_w // camera.zoom - hb.rect.width) // 2
-            py = hb.rect.y - (scaled_h // camera.zoom - hb.rect.height) // 2
+            # Calculate the offset needed to center the larger sprite on the hitbox
+            sprite_w_world = scaled_w // camera.zoom  # Convert back to world coordinates
+            sprite_h_world = scaled_h // camera.zoom
+            px = hb.rect.x - (sprite_w_world - hb.rect.width) // 2
+            py = hb.rect.y - (sprite_h_world - hb.rect.height) // 2
+            
+            # Apply custom sprite offset if specified (in world coordinates)
+            sprite_offset = getattr(hb, 'sprite_offset', (0, 0))
+            px += sprite_offset[0]
+            py += sprite_offset[1]
+            
             surf.blit(scaled_sprite, camera.to_screen((px, py)))

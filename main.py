@@ -991,6 +991,12 @@ class Game:
                 if getattr(hb, 'arrow_sprite', False) and hb.alive:
                     self._draw_arrow_sprite(hb)
         
+        # Draw animated wizard projectiles
+        from src.entities.animation_system import draw_animated_projectiles
+        wizard_projectiles = [hb for hb in hitboxes if getattr(hb, 'anim_frames', None) is not None]
+        if wizard_projectiles:
+            draw_animated_projectiles(wizard_projectiles, self.screen, self.camera)
+        
         # Draw hitboxes: force draw all hitboxes if debug mode is on
         for hb in hitboxes:
             hb.draw(self.screen, self.camera, force_draw=self.debug_show_hitboxes)

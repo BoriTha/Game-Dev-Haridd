@@ -167,6 +167,8 @@ class Hitbox:
         self.anim_speed = 5      # Ticks per frame
         # Optional custom sprite display size (overrides hitbox dimensions for rendering)
         self.sprite_display_size: Optional[Tuple[int, int]] = None  # Tuple (width, height) or None to use hitbox size
+        # Optional sprite rendering offset (x, y) in world coordinates relative to centered position
+        self.sprite_offset: Tuple[int, int] = (0, 0)  # Default: no offset
 
     def tick(self):
         # move if velocity set (keep as float for precision, convert only when applying)
