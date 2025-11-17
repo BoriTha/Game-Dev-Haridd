@@ -128,7 +128,34 @@ class AnimationManager:
         for path in frame_paths:
             try:
                 frame = pygame.image.load(path).convert_alpha()
-                scaled_frame = pygame.transform.scale(frame, sprite_size)
+                original_size = frame.get_size()
+                
+                # Calculate integer scale factor for crisp pixel art
+                scale_x = sprite_size[0] / original_size[0]
+                scale_y = sprite_size[1] / original_size[1]
+                
+                # Use nearest integer scale if close to an integer (within 5%)
+                if abs(scale_x - round(scale_x)) < 0.05 and abs(scale_y - round(scale_y)) < 0.05:
+                    # Integer scaling - use scale_by for pixel-perfect results
+                    scale_factor = round((scale_x + scale_y) / 2)
+                    if hasattr(pygame.transform, 'scale_by') and scale_factor > 0:
+                        scaled_frame = pygame.transform.scale_by(frame, scale_factor)
+                    else:
+                        new_size = (original_size[0] * scale_factor, original_size[1] * scale_factor)
+                        scaled_frame = pygame.transform.scale(frame, new_size)
+                else:
+                    # Non-integer scaling - just use regular scale
+                    scaled_frame = pygame.transform.scale(frame, sprite_size)
+                
+                # Ensure final size matches requested size
+                if scaled_frame.get_size() != sprite_size:
+                    final_frame = pygame.Surface(sprite_size, pygame.SRCALPHA)
+                    # Center the scaled frame
+                    x_offset = (sprite_size[0] - scaled_frame.get_width()) // 2
+                    y_offset = (sprite_size[1] - scaled_frame.get_height()) // 2
+                    final_frame.blit(scaled_frame, (x_offset, y_offset))
+                    scaled_frame = final_frame
+                
                 frames.append(scaled_frame)
             except Exception as e:
                 print(f"[AnimationSystem] Failed to load frame {path}: {e}")
@@ -294,8 +321,19 @@ class AnimationManager:
         
         # Calculate sprite position based on entity rect and offset
         sprite_rect = frame.get_rect()
+        
+        # Apply special wall slide offset for Knight to close gap with wall
+        wall_slide_offset_x = 0
+        if (self.current_state == AnimationState.WALL_SLIDE and 
+            hasattr(self.entity, 'cls') and self.entity.cls == 'Knight'):
+            # Shift sprite horizontally based on which wall we're on
+            if hasattr(self.entity, 'on_left_wall') and self.entity.on_left_wall:
+                wall_slide_offset_x = -12  # Shift left when on left wall
+            elif hasattr(self.entity, 'on_right_wall') and self.entity.on_right_wall:
+                wall_slide_offset_x = 12  # Shift right when on right wall
+        
         sprite_rect.midbottom = (
-            self.entity.rect.midbottom[0] + self.sprite_offset[0],
+            self.entity.rect.midbottom[0] + self.sprite_offset[0] + wall_slide_offset_x,
             self.entity.rect.midbottom[1] + self.sprite_offset[1] + self.sprite_offset_y
         )
         
@@ -306,10 +344,13 @@ class AnimationManager:
         facing = getattr(self.entity, 'facing', 1)
         draw_sprite = pygame.transform.flip(frame, facing == -1, False)
         
-        # Scale sprite to match camera zoom
-        scaled_width = int(draw_sprite.get_width() * camera.zoom)
-        scaled_height = int(draw_sprite.get_height() * camera.zoom)
-        draw_sprite = pygame.transform.scale(draw_sprite, (scaled_width, scaled_height))
+        # Scale sprite to match camera zoom (use scale_by for pixel-perfect zoom)
+        if hasattr(pygame.transform, 'scale_by') and camera.zoom > 0:
+            draw_sprite = pygame.transform.scale_by(draw_sprite, camera.zoom)
+        else:
+            scaled_width = int(draw_sprite.get_width() * camera.zoom)
+            scaled_height = int(draw_sprite.get_height() * camera.zoom)
+            draw_sprite = pygame.transform.scale(draw_sprite, (scaled_width, scaled_height))
         
         # Create a rect for the scaled sprite and position it correctly
         scaled_sprite_rect = draw_sprite.get_rect()

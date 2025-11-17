@@ -77,6 +77,10 @@ class Hitbox:
         if getattr(self, 'has_sprite', False) and not force_draw:
             return
         
+        # Only draw hitbox debug visualization when force_draw is enabled (F3 debug mode)
+        if not force_draw:
+            return
+        
         # if this hitbox represents an AOE, draw a circle
         if getattr(self, 'aoe_radius', 0) > 0:
             cx, cy = camera.to_screen(self.rect.center)

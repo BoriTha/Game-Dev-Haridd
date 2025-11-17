@@ -340,6 +340,7 @@ class RangedTacticalStrategy(MovementStrategy):
 
         distance = context.get('distance_to_player', 0.0)
         has_los = context.get('has_los', False)
+        alert_level = getattr(enemy, 'alert_level', 0)
 
         # Base speeds — keep moderate so behavior is readable
         approach_speed = 1.0
@@ -364,11 +365,47 @@ class RangedTacticalStrategy(MovementStrategy):
                 # In a good band -> mild random strafe
                 side = random.choice([-1, 1])
                 desired_vx = side * strafe_speed
-        else:
-            # No LOS: small nudge toward player horizontally so they don't drift offscreen forever
-            dx = ppos[0] - epos[0]
-            if abs(dx) > 16:
-                desired_vx = (1 if dx > 0 else -1) * 0.6
+        elif alert_level == 1:
+            # Investigating - move toward investigation point if set
+            inv_point = getattr(enemy, 'investigation_point', None)
+            if inv_point:
+                dx = inv_point[0] - epos[0]
+                if abs(dx) > 20:
+                    desired_vx = (1 if dx > 0 else -1) * 0.8
+        elif alert_level == 0:
+            # Idle patrol behavior
+            # Initialize patrol state if needed
+            if not hasattr(enemy, 'patrol_direction') or not hasattr(enemy, 'patrol_timer'):
+                enemy.patrol_direction = random.choice([-1, 0, 1])
+                enemy.patrol_timer = random.randint(30, 90)
+                enemy.patrol_blocked = False
+            
+            # Check if we were blocked last frame (ledge detection)
+            if getattr(enemy, 'patrol_blocked', False):
+                # We hit a ledge, wait a bit then reverse or pick new direction
+                if not hasattr(enemy, 'blocked_cooldown'):
+                    enemy.blocked_cooldown = 20  # Wait 20 frames (~0.3s)
+                    enemy.patrol_direction *= -1  # Reverse direction
+                    # Update facing immediately when reversing
+                    enemy.facing = enemy.patrol_direction
+                    import math
+                    enemy.facing_angle = 0 if enemy.facing > 0 else math.pi
+                enemy.blocked_cooldown -= 1
+                if enemy.blocked_cooldown <= 0:
+                    enemy.patrol_blocked = False
+                    del enemy.blocked_cooldown
+                desired_vx = 0  # Stay still while blocked
+            else:
+                # Normal patrol
+                enemy.patrol_timer -= 1
+                if enemy.patrol_timer <= 0:
+                    enemy.patrol_direction = random.choice([-1, 0, 1])
+                    enemy.patrol_timer = random.randint(30, 90)
+                
+                if enemy.patrol_direction != 0:
+                    desired_vx = enemy.patrol_direction * 1.2  # Must be >= 1.0 for int() to work
+                else:
+                    desired_vx = 0
 
         # Apply ledge-aware horizontal intent ONLY; physics handles the rest
         self._set_safe_horizontal_velocity(enemy, level, desired_vx)
@@ -485,9 +522,13 @@ class RangedTacticalStrategy(MovementStrategy):
 
         # Soft friction when grounded
         if enemy.on_ground:
-            enemy.vx *= 0.8
-            if abs(enemy.vx) < 0.05:
+            # If we didn't actually move (vx too small), zero it out to prevent animation jitter
+            if enemy.rect.x == old_pos[0] and abs(enemy.vx) > 0:
                 enemy.vx = 0
+            else:
+                enemy.vx *= 0.8
+                if abs(enemy.vx) < 0.05:
+                    enemy.vx = 0
 
         # Keep inside level horizontal bounds (prevents disappearing off map)
         level_width_px = getattr(level, "w", 0) * TILE if hasattr(level, "w") else 0
@@ -562,8 +603,10 @@ class RangedTacticalStrategy(MovementStrategy):
             # Stop at edge instead of flipping; this gives proper "anchor" behavior.
             # Edge detected, blocking move
             enemy.vx = 0
+            enemy.patrol_blocked = True  # Signal to patrol logic that we're blocked
         else:
             enemy.vx = desired_vx
+            enemy.patrol_blocked = False  # Clear blocked flag when we can move
 
 
 class FloatingStrategy(MovementStrategy):

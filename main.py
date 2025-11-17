@@ -978,7 +978,7 @@ class Game:
             self.screen.fill(BG)
         self.level.draw(self.screen, self.camera)
         for e in self.enemies:
-            e.draw(self.screen, self.camera, show_los=self.debug_enemy_rays, show_nametags=self.debug_enemy_nametags)
+            e.draw(self.screen, self.camera, show_los=self.debug_enemy_rays, show_nametags=self.debug_enemy_nametags, debug_hitboxes=self.debug_show_hitboxes)
         
         # Draw arrow sprites for Ranger projectiles
         if self.arrow_sprite:
@@ -989,7 +989,7 @@ class Game:
         # Draw hitboxes: force draw all hitboxes if debug mode is on
         for hb in hitboxes:
             hb.draw(self.screen, self.camera, force_draw=self.debug_show_hitboxes)
-        self.player.draw(self.screen, self.camera)
+        self.player.draw(self.screen, self.camera, debug_hitboxes=self.debug_show_hitboxes)
         for dn in floating:
             dn.draw(self.screen, self.camera, self.font_small)
 

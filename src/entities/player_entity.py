@@ -207,10 +207,13 @@ class Player:
             
             if cls == 'Knight':
                 self._load_knight_animations()
+                # Knight sprite offset: shift right 8px to center the visible character on collision box
+                # (93px sprite width vs 18px collision box = ~37px overhang per side,
+                #  but sprite has left padding, so shift right to align better)
+                self.anim_manager.set_sprite_offset(0, 0)
             elif cls == 'Ranger':
                 self._load_ranger_animations()
-                
-            self.anim_manager.set_sprite_offset(0, 0)
+                self.anim_manager.set_sprite_offset(0, 0)
             logger.info(f"[Player] {cls} animations loaded successfully")
         except Exception as e:
             logger.exception(f"[Player] Failed to load {cls} animations: {e}")
@@ -218,7 +221,8 @@ class Player:
     
     def _load_knight_animations(self):
         """Load Knight animation frames into AnimationManager"""
-        sprite_size = (64, 64)
+        # Knight sprite size: 93x64 (preserves 64x44 original aspect ratio, matches Ranger height)
+        sprite_size = (93, 64)
         
         # IDLE - Lowest priority, always available
         self.anim_manager.load_animation(
@@ -310,7 +314,17 @@ class Player:
         self.anim_manager.set_attack_frame(AnimationState.SKILL_1, 3, self._spawn_knight_dash_attack_hitbox)
 
     def _load_ranger_animations(self):
-        """Load Ranger animation frames into AnimationManager"""
+        """
+        Load Ranger animation frames into AnimationManager.
+        
+        Ranger Attack System (3-State Bow Animation):
+        1. CHARGE: Progressive draw animation (4 frames) - plays while holding attack
+        2. CHARGED: Hold at full draw (1 looping frame) - plays when charge_time >= threshold
+        3. SHOOT: Release animation (2 frames) - plays on attack release, auto-transitions to IDLE
+        
+        The attack system uses self.charging flag and self.charge_time counter to track state.
+        Animation priority ensures attack animations override movement during combat.
+        """
         sprite_size = (48, 64)
         
         # IDLE - Lowest priority, always available
@@ -374,37 +388,45 @@ class Player:
             next_state=AnimationState.IDLE
         )
         
-        # CHARGE - Drawing bow (progressive)
+        # === REUSABLE 3-STATE RANGER BOW ATTACK SYSTEM ===
+        
+        # CHARGE - Drawing bow (progressive 4-frame animation)
+        # This animation plays while holding attack button, showing bow being drawn back
+        # Auto-transitions to CHARGED when animation completes
         self.anim_manager.load_animation(
             AnimationState.CHARGE,
             [f"assets/Player/Ranger/attk-adjust/charge/na-{i}.png" for i in range(1, 5)],
             sprite_size=sprite_size,
-            frame_duration=5,
-            loop=False,
-            priority=4,
-            next_state=AnimationState.CHARGED
+            frame_duration=5,  # 5 frames per sprite = 20 frames total for full charge
+            loop=False,  # Don't loop - transition to CHARGED
+            priority=4,  # High priority to override movement
+            next_state=AnimationState.CHARGED  # Auto-transition when complete
         )
         
-        # CHARGED - Holding at full draw
+        # CHARGED - Holding at full draw (looping hold pose)
+        # This single frame loops while player holds attack at full charge
+        # Stays active until player releases attack button
         self.anim_manager.load_animation(
             AnimationState.CHARGED,
             ["assets/Player/Ranger/attk-adjust/charged/na-5.png"],
             sprite_size=sprite_size,
             frame_duration=1,
-            loop=True,
-            priority=4
+            loop=True,  # Loop to hold this pose indefinitely
+            priority=4  # Same priority as CHARGE
         )
         
-        # SHOOT - Releasing arrow
+        # SHOOT - Releasing arrow (2-frame release animation)
+        # Plays when attack button is released, fires arrow projectile
+        # Auto-transitions back to IDLE when complete
         self.anim_manager.load_animation(
             AnimationState.SHOOT,
             ["assets/Player/Ranger/attk-adjust/shoot/na-5.png", 
              "assets/Player/Ranger/attk-adjust/shoot/na-6.png"],
             sprite_size=sprite_size,
-            frame_duration=4,
-            loop=False,
-            priority=4,
-            next_state=AnimationState.IDLE
+            frame_duration=4,  # 4 frames per sprite = 8 frames total
+            loop=False,  # Don't loop - transition to IDLE
+            priority=4,  # Same priority as charge states
+            next_state=AnimationState.IDLE  # Return to idle after shooting
         )
 
     def _update_knight_animations(self):
@@ -481,7 +503,23 @@ class Player:
             self.anim_manager.play(AnimationState.IDLE, force=True)
 
     def _update_ranger_animations(self):
-        """Update Ranger animation state - clean state machine with smoothing"""
+        """
+        Update Ranger animation state - clean state machine with 3-state bow attack system.
+        
+        Animation Priority (highest to lowest):
+        1. DASH - Active dash movement (overrides everything)
+        2. SHOOT - Arrow release animation (must complete, no interrupt)
+        3. CHARGE/CHARGED - Bow drawing states (based on charge_time)
+        4. RUN - Ground movement
+        5. IDLE - Grounded, stationary
+        6. WALL_SLIDE - Airborne wall contact with downward velocity
+        7. JUMP/FALL - Airborne states based on vertical velocity
+        
+        The 3-state bow attack system:
+        - self.charging = True: Start CHARGE animation
+        - charge_time >= threshold: Transition to CHARGED (looping hold)
+        - Release attack: Play SHOOT animation → auto-transition to IDLE
+        """
         if not self.anim_manager:
             return
         
@@ -492,7 +530,6 @@ class Player:
             self._anim_grounded_buffer -= 1
         
         anim_grounded = self._anim_grounded_buffer > 0
-        
         current = self.anim_manager.current_state
         
         # Priority 1: DASH (only while actively dashing)
@@ -502,15 +539,20 @@ class Player:
             return
         
         # Priority 2: SHOOT (don't interrupt while playing)
+        # This ensures the arrow release animation completes before returning to idle
         if current == AnimationState.SHOOT and self.anim_manager.is_playing:
             return
         
-        # Priority 3: CHARGE/CHARGED
+        # Priority 3: CHARGE/CHARGED (3-state bow attack system)
+        # This handles the progressive bow draw → hold → release sequence
         if self.charging:
+            # Check if we've reached full charge
             if self.charge_time >= self.charge_threshold:
+                # Transition to CHARGED (holding at full draw)
                 if current != AnimationState.CHARGED:
                     self.anim_manager.play(AnimationState.CHARGED, force=True)
             else:
+                # Still drawing the bow
                 if current != AnimationState.CHARGE:
                     self.anim_manager.play(AnimationState.CHARGE, force=True)
             return
@@ -1616,7 +1658,7 @@ class Player:
 
 
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, debug_hitboxes=False):
         # For Ranger/Knight with animation system, use sprite rendering
         if self.anim_manager and self.cls in ('Ranger', 'Knight'):
             # Draw the animated sprite
@@ -1628,6 +1670,10 @@ class Player:
         else:
             # For other classes, use the rectangle rendering
             self._draw_fallback_rect(surf, camera)
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
         
         # Draw Ranger crosshair/aim line
         if self.cls == 'Ranger' and self.alive:

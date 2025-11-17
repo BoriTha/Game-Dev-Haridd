@@ -817,7 +817,7 @@ class Enemy:
     # END OF SPRITE ANIMATION SYSTEM
     # ========================================================================
 
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
         if not getattr(self, 'combat', None) or not getattr(self.combat, 'alive', True):
             return
         # Optional debug: vision cone/LOS
@@ -826,6 +826,9 @@ class Enemy:
         base_color = self.get_base_color()
         status_color = self.get_status_effect_color(base_color)
         pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=getattr(self, 'draw_border_radius', 4))
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
         # Draw status effect indicators and telegraph if any
         self.draw_status_effects(surf, camera)
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text', ''):
@@ -985,6 +988,83 @@ class Frog(Enemy):
         self.dash_t = 0
         self.base_speed = 1.5
         self.can_jump = True
+        
+        # ----------------------------
+        # Load Frog Sprite Animations
+        # ----------------------------
+        from src.entities.animation_system import AnimationManager, AnimationState
+        
+        # Initialize animation manager
+        self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
+        self.anim_manager.set_sprite_offset_y(-1)  # Adjust sprite positioning
+        
+        # Original frog sprite is roughly 32x32, scale to 40x40 to match hitbox better
+        sprite_size = (32, 32)
+        
+        # Load idle animation (4 frames)
+        idle_frames = [
+            "assets/enemy/frog/frog-idle/Idle-1.png",
+            "assets/enemy/frog/frog-idle/Idle-2.png",
+            "assets/enemy/frog/frog-idle/Idle-3.png",
+            "assets/enemy/frog/frog-idle/Idle-4.png"
+        ]
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            idle_frames,
+            sprite_size=sprite_size,
+            frame_duration=10,  # Slower idle animation
+            loop=True,
+            priority=0
+        )
+        
+        # Load bounce/telegraph animation (2 frames) - plays when charging dash
+        bounce_frames = [
+            "assets/enemy/frog/frog-bounce/bounce-1.png",
+            "assets/enemy/frog/frog-bounce/bounce-L.png"
+        ]
+        self.anim_manager.load_animation(
+            AnimationState.TELEGRAPH,
+            bounce_frames,
+            sprite_size=sprite_size,
+            frame_duration=6,
+            loop=True,
+            priority=5
+        )
+        
+        # Load jump animation (single frame) - plays when launching dash
+        self.anim_manager.load_animation(
+            AnimationState.JUMP,
+            ["assets/enemy/frog/frog-Jump.png"],
+            sprite_size=sprite_size,
+            frame_duration=1,
+            loop=True,
+            priority=10
+        )
+        
+        # Load fall animation (single frame) - plays during dash/in air
+        self.anim_manager.load_animation(
+            AnimationState.DASH,
+            ["assets/enemy/frog/frog-Fall.png"],
+            sprite_size=sprite_size,
+            frame_duration=1,
+            loop=True,
+            priority=10
+        )
+        
+        # Load land animation (2 frames) - plays after dash completes
+        land_frames = [
+            "assets/enemy/frog/frog-land/frog-land-1.png",
+            "assets/enemy/frog/frog-land/frog-land-2.png"
+        ]
+        self.anim_manager.load_animation(
+            AnimationState.FALL,
+            land_frames,
+            sprite_size=sprite_size,
+            frame_duration=4,
+            loop=False,
+            priority=8,
+            next_state=AnimationState.IDLE  # Return to idle after landing
+        )
     
     def _get_terrain_traits(self):
         """Frog can move through water and jump over obstacles"""
@@ -1009,10 +1089,15 @@ class Frog(Enemy):
         dx = ppos[0] - epos[0]
         dy = ppos[1] - epos[1]
         
+        # Update animation state machine
+        from src.entities.animation_system import AnimationState
+        
         if self.cool>0:
             self.cool -= 1
         if self.tele_t>0:
             self.tele_t -= 1
+            # Play bounce/telegraph animation
+            self.anim_manager.play(AnimationState.TELEGRAPH)
             if self.tele_t==0:
                 spd = 8.0
                 distv = max(1.0, (dx*dx + dy*dy) ** 0.5)
@@ -1022,15 +1107,30 @@ class Frog(Enemy):
                 self.dash_t = 26
                 self.state = 'dash'
                 self.cool = 56
+                # Play jump animation when launching
+                self.anim_manager.play(AnimationState.JUMP, force=True)
         elif self.state=='dash':
+            # Play dash/fall animation during dash
+            if self.dash_t > 12:  # First half of dash
+                self.anim_manager.play(AnimationState.JUMP)
+            else:  # Second half - falling
+                self.anim_manager.play(AnimationState.DASH)
+            
             if self.dash_t > 0:
                 self.dash_t -= 1
             else:
                 self.vx *= 0.9
                 if abs(self.vx) < 1.0:
                     self.state='idle'
+                    # Play landing animation
+                    if self.on_ground:
+                        self.anim_manager.play(AnimationState.FALL, force=True)
         else:
             self.vx = 0
+            # Play idle animation when not attacking
+            if not self.anim_manager.is_playing or self.anim_manager.current_state not in [AnimationState.TELEGRAPH, AnimationState.JUMP, AnimationState.DASH, AnimationState.FALL]:
+                self.anim_manager.play(AnimationState.IDLE)
+            
             if has_los and dist_to_player < self.vision_range and self.cool==0:
                 self.tele_t = 24
                 self.tele_text = '!'
@@ -1040,6 +1140,7 @@ class Frog(Enemy):
         self.vy = getattr(self, 'vy', 0) + min(GRAVITY, 10)
         self.rect.y += int(min(10, self.vy))
         
+        was_on_ground = self.on_ground
         self.on_ground = False
         for s in level.solids:
             if self.rect.colliderect(s):
@@ -1047,11 +1148,53 @@ class Frog(Enemy):
                     self.rect.bottom = s.top
                     self.vy = 0
                     self.on_ground = True
+                    # Play landing animation when hitting ground during/after dash
+                    if not was_on_ground and self.state == 'dash' and self.dash_t <= 0:
+                        self.anim_manager.play(AnimationState.FALL, force=True)
+        
+        # Update animation system
+        self.anim_manager.update()
         
         self.combat.handle_collision_with_player(player)
 
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
+    
+    def get_base_color(self):
+        """Get the base color for Frog enemy."""
+        return (80, 200, 80) if not self.combat.is_invincible() else (60, 120, 60)
+    
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
+        """Custom draw with sprite animations"""
+        if not self.combat.alive:
+            return
+        
+        # Draw debug vision cone
+        self.draw_debug_vision(surf, camera, show_los)
+        
+        # Draw sprite with animation
+        sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
+        
+        # Fallback to colored rect if sprite failed
+        if not sprite_drawn:
+            base_color = self.get_base_color()
+            status_color = self.get_status_effect_color(base_color)
+            pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
+        
+        # Draw status effect indicators
+        self.draw_status_effects(surf, camera)
+        
+        # Draw telegraph
+        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text', ''):
+            from src.core.utils import draw_text
+            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        
+        # Draw nametag
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 
@@ -1063,7 +1206,8 @@ class Archer(Enemy):
             'max_hp': 16,
             'money_drop': (10, 25)
         }
-        super().__init__(x, ground_y, width=28, height=22, combat_config=combat_config,
+        # Larger hitbox: human/elf sized (similar to player at 18×30)
+        super().__init__(x, ground_y, width=32, height=34, combat_config=combat_config,
                         vision_range=350, cone_half_angle=math.pi/4, turn_rate=0.05)
         # Archer-specific properties
         self.cool = 0
@@ -1073,6 +1217,77 @@ class Archer(Enemy):
         self.tele_text = ''
         self.base_speed = 1.2
         self.can_jump = False
+        
+        # ----------------------------
+        # Load Archer Sprite Animations
+        # ----------------------------
+        from src.entities.animation_system import AnimationManager, AnimationState
+        
+        # Initialize animation manager
+        self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
+        self.anim_manager.set_sprite_offset_y(0)  # Move sprite up to prevent clipping through floor
+        
+        # Load idle animation (4 frames)
+        # Scale sprite up to match larger 32×34 hitbox (1.5x scale: 43×32 → 64×48)
+        idle_frames = [
+            "assets/enemy/Archer-enemy/idle-archer-monster/idle-1.png",
+            "assets/enemy/Archer-enemy/idle-archer-monster/idle-2.png",
+            "assets/enemy/Archer-enemy/idle-archer-monster/idle-3.png",
+            "assets/enemy/Archer-enemy/idle-archer-monster/idle-4.png"
+        ]
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            idle_frames,
+            sprite_size=(64, 48),  # 1.5x scale to match larger hitbox
+            frame_duration=8,
+            loop=True,
+            priority=0
+        )
+        
+        # Load run animation (5 frames)
+        run_frames = [
+            "assets/enemy/Archer-enemy/run-archer-monster/run-1.png",
+            "assets/enemy/Archer-enemy/run-archer-monster/run-2.png",
+            "assets/enemy/Archer-enemy/run-archer-monster/run-3.png",
+            "assets/enemy/Archer-enemy/run-archer-monster/run-4.png",
+            "assets/enemy/Archer-enemy/run-archer-monster/run-5.png"
+        ]
+        self.anim_manager.load_animation(
+            AnimationState.RUN,
+            run_frames,
+            sprite_size=(64, 48),  # 1.5x scale to match larger hitbox
+            frame_duration=6,
+            loop=True,
+            priority=5
+        )
+        
+        # Load attack animation (7 frames)
+        attack_frames = [
+            "assets/enemy/Archer-enemy/attk-archer-monster/attk-1.png",
+            "assets/enemy/Archer-enemy/attk-archer-monster/attk-2.png",
+            "assets/enemy/Archer-enemy/attk-archer-monster/attk-3.png",
+            "assets/enemy/Archer-enemy/attk-archer-monster/attk-4.png",
+            "assets/enemy/Archer-enemy/attk-archer-monster/attk-5.png",
+            "assets/enemy/Archer-enemy/attk-archer-monster/attk-6.png",
+            "assets/enemy/Archer-enemy/attk-archer-monster/attk-7.png"
+        ]
+        self.anim_manager.load_animation(
+            AnimationState.ATTACK,
+            attack_frames,
+            sprite_size=(64, 48),  # 1.5x scale to match larger hitbox
+            frame_duration=4,
+            loop=False,
+            priority=10
+        )
+        
+        # Load projectile sprite
+        self.load_projectile_sprite(
+            "assets/enemy/Archer-enemy/projectile.png",
+            sprite_size=(16, 16)
+        )
+        
+        # Track movement state for animation
+        self.is_moving = False
     
     def _get_terrain_traits(self):
         """Archer prefers high ground and tactical positions"""
@@ -1097,28 +1312,79 @@ class Archer(Enemy):
         
         epos = (self.rect.centerx, self.rect.centery)
         
-        epos = (self.rect.centerx, self.rect.centery)
+        # Attack state machine with animation
+        from src.entities.animation_system import AnimationState
         
         if self.tele_t>0:
             self.tele_t -= 1
+            # Play attack animation when telegraph starts
+            if self.tele_t == 17:  # First frame of telegraph
+                self.anim_manager.play(AnimationState.ATTACK, force=True)
+            
             if self.tele_t==0 and has_los and dist_to_player < self.vision_range:
+                # Spawn arrow projectile (happens at frame 5 of attack animation)
                 dx = ppos[0] - epos[0]
                 dy = ppos[1] - epos[1]
                 dist = max(1.0, (dx*dx+dy*dy)**0.5)
                 nx, ny = dx/dist, dy/dist
                 hb = pygame.Rect(0,0,10,6); hb.center = self.rect.center
-                hitboxes.append(Hitbox(hb, 120, 1, self, dir_vec=(nx,ny), vx=nx*10.0, vy=ny*10.0))
+                new_hb = Hitbox(
+                    hb, 120, 1, self, 
+                    dir_vec=(nx,ny), 
+                    vx=nx*10.0, 
+                    vy=ny*10.0,
+                    has_sprite=True  # Use projectile sprite
+                )
+                hitboxes.append(new_hb)
+                self.projectile_hitboxes.append(new_hb)
                 self.cool = 60
         elif has_los and self.cool==0 and dist_to_player < self.vision_range:
             self.tele_t = 18
             self.tele_text = '!!'
 
+        # Movement logic - strategy will handle patrol/tactical movement
         self.vx = 0
+        
+        # Override for close-range retreat (high priority)
         if has_los and abs(ppos[0]-epos[0])<64:
+            # Back away when player is too close
             self.vx = -1.2 if ppos[0]>epos[0] else 1.2
         
+        # Let movement strategy handle the rest (patrol, approach, etc.)
         self.handle_movement(level, player)
         self.handle_gravity(level)
+        
+        # Update facing direction for idle patrol only
+        # (Combat/investigation facing is handled by update_vision_cone_and_memory)
+        alert_level = getattr(self, 'alert_level', 0)
+        
+        if alert_level == 0 and abs(self.vx) > 0.1:
+            # Idle patrol - face movement direction
+            self.facing = 1 if self.vx > 0 else -1
+            self.facing_angle = 0 if self.facing > 0 else math.pi
+        
+        # Update animation based on ACTUAL movement (after strategy runs)
+        # Always update animation based on current state - don't block during attack
+        desired_state = AnimationState.RUN if abs(self.vx) > 0.1 else AnimationState.IDLE
+        
+        # During telegraph/attack, force attack animation
+        if self.tele_t > 0:
+            # Currently telegraphing attack - ensure we're in attack state
+            if self.anim_manager.current_state != AnimationState.ATTACK:
+                self.anim_manager.play(AnimationState.ATTACK, force=True)
+        elif self.anim_manager.current_state == AnimationState.ATTACK and self.anim_manager.is_playing:
+            # Attack animation is still playing, let it finish
+            pass
+        else:
+            # Not attacking or attack finished - update based on movement
+            if self.anim_manager.current_state != desired_state:
+                self.anim_manager.play(desired_state)
+        
+        # Update animation system
+        self.anim_manager.update()
+        
+        # Clean up old projectile hitboxes
+        self.clean_projectile_hitboxes()
 
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
@@ -1127,15 +1393,26 @@ class Archer(Enemy):
         """Get the base color for Archer enemy."""
         return (200, 200, 80) if not self.combat.is_invincible() else (120, 120, 60)
     
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
         if not self.combat.alive: return
         
         self.draw_debug_vision(surf, camera, show_los)
         
-        # Draw archer with status effect coloring
-        base_color = self.get_base_color()
-        status_color = self.get_status_effect_color(base_color)
-        pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        # Draw sprite with animation
+        sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
+        
+        # Fallback to colored rect if sprite failed
+        if not sprite_drawn:
+            base_color = self.get_base_color()
+            status_color = self.get_status_effect_color(base_color)
+            pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
+        
+        # Draw projectile sprites (arrows)
+        self.draw_projectile_sprites(surf, camera)
         
         # Draw status effect indicators
         self.draw_status_effects(surf, camera)
@@ -1738,7 +2015,7 @@ class Golem(Enemy):
         """Get the base color for Golem enemy."""
         return (240, 180, 60) if not self.combat.is_invincible() else (140, 120, 50)
     
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
         """Custom draw with sprite animations (Friend's code - using universal helpers)"""
         if not self.combat.alive:
             return
@@ -1754,6 +2031,10 @@ class Golem(Enemy):
             base_color = self.get_base_color()
             status_color = self.get_status_effect_color(base_color)
             pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=getattr(self, 'draw_border_radius', 4))
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
         
         # Draw aura projectiles (Friend's code - using universal helper)
         self.draw_projectile_sprites(surf, camera)
@@ -2081,7 +2362,7 @@ class KnightMonster(Enemy):
         """Get the base color for KnightMonster"""
         return (60, 120, 255) if not self.combat.is_invincible() else (35, 80, 200)
     
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
         """Draw the KnightMonster with custom telegraph"""
         if not self.combat.alive:
             return
@@ -2093,6 +2374,10 @@ class KnightMonster(Enemy):
         base_color = self.get_base_color()
         status_color = self.get_status_effect_color(base_color)
         pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
         
         # Draw status effect indicators
         self.draw_status_effects(surf, camera)
