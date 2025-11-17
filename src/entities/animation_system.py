@@ -268,7 +268,7 @@ class AnimationManager:
                     
                     # Auto-transition to next state
                     if current_config.next_state:
-                        self.play(current_config.next_state)
+                        self.play(current_config.next_state, force=True)  # Force transition to next state
                     elif self.requested_state:
                         # Play requested animation if one was queued
                         self.play(self.requested_state)

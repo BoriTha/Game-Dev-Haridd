@@ -831,9 +831,10 @@ class Enemy:
             pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
         # Draw status effect indicators and telegraph if any
         self.draw_status_effects(surf, camera)
-        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text', ''):
+        tele_text = getattr(self, 'tele_text', '')
+        if getattr(self, 'tele_t', 0) > 0 and tele_text:
             from src.core.utils import draw_text
-            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+            draw_text(surf, tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
         # Name and HP
         self.draw_nametag(surf, camera, show_nametags)
 
@@ -1200,231 +1201,238 @@ class Frog(Enemy):
 
 
 class Archer(Enemy):
-    """Ranged enemy that shoots arrows with '!!' telegraph."""
+    """Ranged enemy that shoots arrows with '!!' telegraph. Clean rewrite with proper animation."""
     def __init__(self, x, ground_y):
         combat_config = {
             'max_hp': 16,
             'money_drop': (10, 25)
         }
-        # Larger hitbox: human/elf sized (similar to player at 18×30)
         super().__init__(x, ground_y, width=32, height=34, combat_config=combat_config,
                         vision_range=350, cone_half_angle=math.pi/4, turn_rate=0.05)
-        # Archer-specific properties
+        
+        # Combat state
         self.cool = 0
-        # Expose attributes expected by validation/tests.
         self.type = "Archer"
         self.tele_t = 0
         self.tele_text = ''
         self.base_speed = 1.2
         self.can_jump = False
         
-        # ----------------------------
-        # Load Archer Sprite Animations
-        # ----------------------------
+        # Animation state
+        self.attacking = False
+        self.arrow_spawned = False
+        
+        # Initialize animation system
         from src.entities.animation_system import AnimationManager, AnimationState
-        
-        # Initialize animation manager
         self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
-        self.anim_manager.set_sprite_offset_y(0)  # Move sprite up to prevent clipping through floor
+        self.anim_manager.set_sprite_offset_y(0)
         
-        # Load idle animation (4 frames)
-        # Scale sprite up to match larger 32×34 hitbox (1.5x scale: 43×32 → 64×48)
-        idle_frames = [
-            "assets/enemy/Archer-enemy/idle-archer-monster/idle-1.png",
-            "assets/enemy/Archer-enemy/idle-archer-monster/idle-2.png",
-            "assets/enemy/Archer-enemy/idle-archer-monster/idle-3.png",
-            "assets/enemy/Archer-enemy/idle-archer-monster/idle-4.png"
-        ]
+        # Sprite size scaled to match hitbox (32×34 hitbox → 64×48 sprite)
+        sprite_size = (64, 48)
+        
+        # Load idle animation (4 frames, slow breathing)
         self.anim_manager.load_animation(
             AnimationState.IDLE,
-            idle_frames,
-            sprite_size=(64, 48),  # 1.5x scale to match larger hitbox
+            [
+                "assets/enemy/Archer-enemy/idle-archer-monster/idle-1.png",
+                "assets/enemy/Archer-enemy/idle-archer-monster/idle-2.png",
+                "assets/enemy/Archer-enemy/idle-archer-monster/idle-3.png",
+                "assets/enemy/Archer-enemy/idle-archer-monster/idle-4.png"
+            ],
+            sprite_size=sprite_size,
             frame_duration=8,
             loop=True,
             priority=0
         )
         
-        # Load run animation (5 frames)
-        run_frames = [
-            "assets/enemy/Archer-enemy/run-archer-monster/run-1.png",
-            "assets/enemy/Archer-enemy/run-archer-monster/run-2.png",
-            "assets/enemy/Archer-enemy/run-archer-monster/run-3.png",
-            "assets/enemy/Archer-enemy/run-archer-monster/run-4.png",
-            "assets/enemy/Archer-enemy/run-archer-monster/run-5.png"
-        ]
+        # Load run animation (5 frames, faster pace)
         self.anim_manager.load_animation(
             AnimationState.RUN,
-            run_frames,
-            sprite_size=(64, 48),  # 1.5x scale to match larger hitbox
-            frame_duration=6,
+            [
+                "assets/enemy/Archer-enemy/run-archer-monster/run-1.png",
+                "assets/enemy/Archer-enemy/run-archer-monster/run-2.png",
+                "assets/enemy/Archer-enemy/run-archer-monster/run-3.png",
+                "assets/enemy/Archer-enemy/run-archer-monster/run-4.png",
+                "assets/enemy/Archer-enemy/run-archer-monster/run-5.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=5,
             loop=True,
             priority=5
         )
         
-        # Load attack animation (7 frames)
-        attack_frames = [
-            "assets/enemy/Archer-enemy/attk-archer-monster/attk-1.png",
-            "assets/enemy/Archer-enemy/attk-archer-monster/attk-2.png",
-            "assets/enemy/Archer-enemy/attk-archer-monster/attk-3.png",
-            "assets/enemy/Archer-enemy/attk-archer-monster/attk-4.png",
-            "assets/enemy/Archer-enemy/attk-archer-monster/attk-5.png",
-            "assets/enemy/Archer-enemy/attk-archer-monster/attk-6.png",
-            "assets/enemy/Archer-enemy/attk-archer-monster/attk-7.png"
-        ]
+        # Load attack animation (7 frames, returns to idle)
+        def on_attack_complete():
+            """Called when attack animation finishes"""
+            self.attacking = False
+        
         self.anim_manager.load_animation(
             AnimationState.ATTACK,
-            attack_frames,
-            sprite_size=(64, 48),  # 1.5x scale to match larger hitbox
+            [
+                "assets/enemy/Archer-enemy/attk-archer-monster/attk-1.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/attk-2.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/attk-3.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/attk-4.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/attk-5.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/attk-6.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/attk-7.png"
+            ],
+            sprite_size=sprite_size,
             frame_duration=4,
             loop=False,
-            priority=10
+            priority=10,
+            next_state=AnimationState.IDLE,
+            on_complete_callback=on_attack_complete
         )
         
-        # Load projectile sprite
+        # Load projectile sprite (arrow)
         self.load_projectile_sprite(
             "assets/enemy/Archer-enemy/projectile.png",
             sprite_size=(16, 16)
         )
-        
-        # Track movement state for animation
-        self.is_moving = False
     
     def _get_terrain_traits(self):
-        """Archer prefers high ground and tactical positions"""
         return ['ground']
     
     def _set_movement_strategy(self):
-        """Set movement strategy for Archer"""
         self.movement_strategy = MovementStrategyFactory.create_strategy('ranged_tactical')
-
+    
     def tick(self, level, player):
-        if not self.combat.alive: return
+        if not self.combat.alive:
+            return
         
+        # Update combat and effects
         self.combat.update()
         self.handle_status_effects()
         
-        if self.cool>0: self.cool-=1
+        if self.cool > 0:
+            self.cool -= 1
         
+        # Get player position and vision info
         ppos = (player.rect.centerx, player.rect.centery)
-        # Check vision first
+        epos = (self.rect.centerx, self.rect.centery)
         has_los, in_cone = self.check_vision_cone(level, ppos)
         dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
-        epos = (self.rect.centerx, self.rect.centery)
-        
-        # Attack state machine with animation
+        # Attack state machine
         from src.entities.animation_system import AnimationState
         
-        if self.tele_t>0:
+        if self.tele_t > 0:
+            # Telegraphing attack
             self.tele_t -= 1
-            # Play attack animation when telegraph starts
-            if self.tele_t == 17:  # First frame of telegraph
+            
+            # Start attack animation at beginning of telegraph
+            if self.tele_t == 17 and not self.attacking:
+                self.attacking = True
+                self.arrow_spawned = False
                 self.anim_manager.play(AnimationState.ATTACK, force=True)
             
-            if self.tele_t==0 and has_los and dist_to_player < self.vision_range:
-                # Spawn arrow projectile (happens at frame 5 of attack animation)
-                dx = ppos[0] - epos[0]
-                dy = ppos[1] - epos[1]
-                dist = max(1.0, (dx*dx+dy*dy)**0.5)
-                nx, ny = dx/dist, dy/dist
-                hb = pygame.Rect(0,0,10,6); hb.center = self.rect.center
-                new_hb = Hitbox(
-                    hb, 120, 1, self, 
-                    dir_vec=(nx,ny), 
-                    vx=nx*10.0, 
-                    vy=ny*10.0,
-                    has_sprite=True  # Use projectile sprite
-                )
-                hitboxes.append(new_hb)
-                self.projectile_hitboxes.append(new_hb)
+            # Spawn arrow at end of telegraph (frame 5 of attack animation)
+            if self.tele_t == 0 and not self.arrow_spawned:
+                self.arrow_spawned = True
+                if has_los and dist_to_player < self.vision_range:
+                    # Calculate arrow direction
+                    dx = ppos[0] - epos[0]
+                    dy = ppos[1] - epos[1]
+                    dist = max(1.0, (dx*dx + dy*dy) ** 0.5)
+                    nx, ny = dx/dist, dy/dist
+                    
+                    # Create arrow hitbox
+                    hb = pygame.Rect(0, 0, 10, 6)
+                    hb.center = self.rect.center
+                    arrow = Hitbox(
+                        hb, 120, 1, self,
+                        dir_vec=(nx, ny),
+                        vx=nx*10.0,
+                        vy=ny*10.0,
+                        has_sprite=True
+                    )
+                    hitboxes.append(arrow)
+                    self.projectile_hitboxes.append(arrow)
+                
                 self.cool = 60
-        elif has_los and self.cool==0 and dist_to_player < self.vision_range:
+        elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
+            # Start new attack
             self.tele_t = 18
             self.tele_text = '!!'
-
-        # Movement logic - strategy will handle patrol/tactical movement
+            self.attacking = False
+            self.arrow_spawned = False
+        
+        # Movement logic
         self.vx = 0
         
-        # Override for close-range retreat (high priority)
-        if has_los and abs(ppos[0]-epos[0])<64:
-            # Back away when player is too close
-            self.vx = -1.2 if ppos[0]>epos[0] else 1.2
+        # Retreat when player too close
+        if has_los and abs(ppos[0] - epos[0]) < 64:
+            self.vx = -1.2 if ppos[0] > epos[0] else 1.2
         
-        # Let movement strategy handle the rest (patrol, approach, etc.)
+        # Let movement strategy handle patrol/tactical movement
         self.handle_movement(level, player)
         self.handle_gravity(level)
         
-        # Update facing direction for idle patrol only
-        # (Combat/investigation facing is handled by update_vision_cone_and_memory)
+        # Update facing based on movement during idle patrol
         alert_level = getattr(self, 'alert_level', 0)
-        
         if alert_level == 0 and abs(self.vx) > 0.1:
-            # Idle patrol - face movement direction
             self.facing = 1 if self.vx > 0 else -1
             self.facing_angle = 0 if self.facing > 0 else math.pi
         
-        # Update animation based on ACTUAL movement (after strategy runs)
-        # Always update animation based on current state - don't block during attack
-        desired_state = AnimationState.RUN if abs(self.vx) > 0.1 else AnimationState.IDLE
-        
-        # During telegraph/attack, force attack animation
-        if self.tele_t > 0:
-            # Currently telegraphing attack - ensure we're in attack state
-            if self.anim_manager.current_state != AnimationState.ATTACK:
-                self.anim_manager.play(AnimationState.ATTACK, force=True)
-        elif self.anim_manager.current_state == AnimationState.ATTACK and self.anim_manager.is_playing:
-            # Attack animation is still playing, let it finish
-            pass
-        else:
-            # Not attacking or attack finished - update based on movement
+        # Animation state logic
+        # Only change animation if not attacking (let attack finish naturally)
+        if not self.attacking:
+            # Choose between idle and run based on movement
+            # Use threshold of 0.8 to only show RUN for actual running, not slow strafing
+            desired_state = AnimationState.RUN if abs(self.vx) > 0.8 else AnimationState.IDLE
             if self.anim_manager.current_state != desired_state:
-                self.anim_manager.play(desired_state)
+                # Force idle animation to play to override priority system
+                # IDLE has lower priority (0) than RUN (5), so it needs force=True to interrupt
+                force_idle = (desired_state == AnimationState.IDLE)
+                self.anim_manager.play(desired_state, force=force_idle)
         
         # Update animation system
         self.anim_manager.update()
         
-        # Clean up old projectile hitboxes
+        # Clean up old arrows
         self.clean_projectile_hitboxes()
-
+        
+        # Update position tracking
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
-
+    
     def get_base_color(self):
-        """Get the base color for Archer enemy."""
         return (200, 200, 80) if not self.combat.is_invincible() else (120, 120, 60)
     
     def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
-        if not self.combat.alive: return
+        if not self.combat.alive:
+            return
         
+        # Draw debug vision cone
         self.draw_debug_vision(surf, camera, show_los)
         
-        # Draw sprite with animation
+        # Draw sprite
         sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
         
-        # Fallback to colored rect if sprite failed
+        # Fallback to colored rect
         if not sprite_drawn:
             base_color = self.get_base_color()
             status_color = self.get_status_effect_color(base_color)
             pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
         
-        # Draw collision box outline in debug mode (F3)
+        # Debug hitbox
         if debug_hitboxes:
             pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
         
-        # Draw projectile sprites (arrows)
+        # Draw arrows
         self.draw_projectile_sprites(surf, camera)
         
-        # Draw status effect indicators
+        # Draw status effects
         self.draw_status_effects(surf, camera)
         
-        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
+        # Draw telegraph
+        if self.tele_t > 0 and self.tele_text:
             from src.core.utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
         
+        # Draw nametag
         self.draw_nametag(surf, camera, show_nametags)
-        
-        # Draw debug vision cone and LOS line
-        self.draw_debug_vision(surf, camera, show_los)
 
 
 class WizardCaster(Enemy):
@@ -1669,13 +1677,17 @@ class Assassin(Enemy):
                     self.vy = -10
                     self.on_ground = False
                     self.jump_cooldown = 30
-            elif alert_level == 1 and getattr(self, 'investigation_point', None):
+            elif alert_level == 1:
                 # Investigating - move toward last known position
-                inv_x, inv_y = self.investigation_point
-                dx_inv = inv_x - epos[0]
-                dy_inv = inv_y - epos[1]
-                if abs(dx_inv) > 20:
-                    self.vx = 2.0 if dx_inv > 0 else -2.0
+                inv_point = getattr(self, 'investigation_point', None)
+                if inv_point is not None and isinstance(inv_point, tuple) and len(inv_point) == 2:
+                    inv_x, inv_y = inv_point
+                    dx_inv = inv_x - epos[0]
+                    dy_inv = inv_y - epos[1]
+                    if abs(dx_inv) > 20:
+                        self.vx = 2.0 if dx_inv > 0 else -2.0
+                    else:
+                        self.vx = 0
                 else:
                     self.vx = 0
             else:

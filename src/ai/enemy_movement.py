@@ -373,11 +373,11 @@ class RangedTacticalStrategy(MovementStrategy):
                 if abs(dx) > 20:
                     desired_vx = (1 if dx > 0 else -1) * 0.8
         elif alert_level == 0:
-            # Idle patrol behavior
+            # Idle patrol behavior with more standing still time
             # Initialize patrol state if needed
             if not hasattr(enemy, 'patrol_direction') or not hasattr(enemy, 'patrol_timer'):
-                enemy.patrol_direction = random.choice([-1, 0, 1])
-                enemy.patrol_timer = random.randint(30, 90)
+                enemy.patrol_direction = random.choice([-1, 0, 0, 0, 1])  # 3/5 chance to start idle
+                enemy.patrol_timer = random.randint(60, 150)  # Longer patrol cycles
                 enemy.patrol_blocked = False
             
             # Check if we were blocked last frame (ledge detection)
@@ -399,8 +399,9 @@ class RangedTacticalStrategy(MovementStrategy):
                 # Normal patrol
                 enemy.patrol_timer -= 1
                 if enemy.patrol_timer <= 0:
-                    enemy.patrol_direction = random.choice([-1, 0, 1])
-                    enemy.patrol_timer = random.randint(30, 90)
+                    # 60% chance to stand still, 40% chance to move
+                    enemy.patrol_direction = random.choice([-1, 0, 0, 0, 0, 0, 1])
+                    enemy.patrol_timer = random.randint(60, 150)  # Longer intervals
                 
                 if enemy.patrol_direction != 0:
                     desired_vx = enemy.patrol_direction * 1.2  # Must be >= 1.0 for int() to work
