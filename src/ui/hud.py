@@ -159,6 +159,30 @@ def draw_hud(game, screen: pygame.Surface) -> None:
         if time_crystal_active:
             active_mods.append(('⏱', (150, 150, 255), "Time Distorted"))
         
+        # Ranger skill timers
+        if getattr(game.player, 'cls', '') == 'Ranger':
+            if getattr(game.player, 'triple_timer', 0) > 0:
+                secs = max(0, int(game.player.triple_timer / FPS))
+                active_mods.append(('⇶', (255, 180, 80), f"Triple Shot {secs}s"))
+            if getattr(game.player, 'sniper_ready', False):
+                active_mods.append(('◎', (255, 60, 60), "Sniper Ready"))
+            if getattr(game.player, 'speed_timer', 0) > 0:
+                secs = max(0, int(game.player.speed_timer / FPS))
+                active_mods.append(('⚡', (100, 255, 200), f"Speed +1.0 {secs}s"))
+        
+        # Knight skill timers
+        if getattr(game.player, 'cls', '') == 'Knight':
+            combat = getattr(game.player, 'combat', None)
+            if combat:
+                if getattr(combat, 'shield_timer', 0) > 0:
+                    secs = max(0, int(combat.shield_timer / FPS))
+                    hits_left = getattr(combat, 'shield_hits_left', 0)
+                    active_mods.append(('🛡', (100, 200, 255), f"Shield [{hits_left}] {secs}s"))
+                if getattr(combat, 'power_timer', 0) > 0:
+                    secs = max(0, int(combat.power_timer / FPS))
+                    atk_bonus = getattr(combat, 'atk_bonus', 0)
+                    active_mods.append(('⚔', (255, 100, 100), f"Power +{atk_bonus} {secs}s"))
+        
         if active_mods:
             mod_y = y
             for icon, color, text in active_mods:

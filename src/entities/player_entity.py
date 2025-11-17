@@ -911,6 +911,14 @@ class Player:
                             if charged and self.sniper_ready:
                                 dmg = int(base * self.sniper_mult)
                                 self.sniper_ready = False
+                                # Visual feedback: Show sniper damage multiplier
+                                from .entity_common import floating, DamageNumber
+                                floating.append(DamageNumber(
+                                    self.rect.centerx,
+                                    self.rect.top - 10,
+                                    f"×{self.sniper_mult}!",
+                                    (255, 60, 60)
+                                ))
                             speed = 14
                             # Triple shot consumes 1.5x mana (already deducted above with adjusted cost)
                             triple_mana_cost = mana_cost * 1.5
@@ -925,6 +933,14 @@ class Player:
                             if charged and self.sniper_ready:
                                 dmg = int(dmg * self.sniper_mult)
                                 self.sniper_ready = False
+                                # Visual feedback: Show sniper damage multiplier
+                                from .entity_common import floating, DamageNumber
+                                floating.append(DamageNumber(
+                                    self.rect.centerx,
+                                    self.rect.top - 10,
+                                    f"×{self.sniper_mult}!",
+                                    (255, 60, 60)
+                                ))
                             # Speed scales with charge
                             speed = 10 + int(4 * charge_pct)  # 10 to 14
                             self.fire_arrow(dmg, speed, camera, pierce=charged)
@@ -1275,12 +1291,33 @@ class Player:
             if idx == 1 and self.skill_cd1 == 0:
                 if self.combat.activate_shield():
                     self.skill_cd1 = self.skill_cd1_max = int(15 * FPS * skill_cdr)
+                    # Visual feedback: Floating text
+                    floating.append(DamageNumber(
+                        self.rect.centerx,
+                        self.rect.top - 20,
+                        "SHIELD UP!",
+                        (100, 200, 255)
+                    ))
             elif idx == 2 and self.skill_cd2 == 0:
                 if self.combat.activate_power_buff():
                     self.skill_cd2 = self.skill_cd2_max = int(25 * FPS * skill_cdr)
+                    # Visual feedback: Floating text
+                    floating.append(DamageNumber(
+                        self.rect.centerx,
+                        self.rect.top - 20,
+                        "POWER SURGE!",
+                        (255, 100, 100)
+                    ))
             elif idx == 3 and self.skill_cd3 == 0:
                 # Charge/Dash Attack: Use frame event system for proper animation sync
                 self.skill_cd3 = self.skill_cd3_max = int(6 * FPS * skill_cdr)
+                # Visual feedback: Floating text
+                floating.append(DamageNumber(
+                    self.rect.centerx,
+                    self.rect.top - 20,
+                    "CHARGE!",
+                    (255, 200, 80)
+                ))
                 
                 # Play dash attack animation - hitbox will spawn on frame 3 automatically!
                 if self.anim_manager:
@@ -1291,12 +1328,33 @@ class Player:
             if idx == 1 and self.skill_cd1 == 0:
                 self.triple_timer = 7 * FPS
                 self.skill_cd1 = self.skill_cd1_max = int(20 * FPS * skill_cdr)
+                # Visual feedback: Floating text
+                floating.append(DamageNumber(
+                    self.rect.centerx,
+                    self.rect.top - 20,
+                    "TRIPLE SHOT!",
+                    (255, 180, 80)
+                ))
             elif idx == 2 and self.skill_cd2 == 0:
                 self.sniper_ready = True
                 self.skill_cd2 = self.skill_cd2_max = int(10 * FPS * skill_cdr)
+                # Visual feedback: Floating text
+                floating.append(DamageNumber(
+                    self.rect.centerx,
+                    self.rect.top - 20,
+                    "SNIPER READY!",
+                    (255, 80, 80)
+                ))
             elif idx == 3 and self.skill_cd3 == 0:
                 self.speed_timer = 7 * FPS
                 self.skill_cd3 = self.skill_cd3_max = int(15 * FPS * skill_cdr)
+                # Visual feedback: Floating text
+                floating.append(DamageNumber(
+                    self.rect.centerx,
+                    self.rect.top - 20,
+                    "SPEED BOOST!",
+                    (100, 255, 200)
+                ))
 
     def teleport_to_mouse(self, level, camera):
         """Teleport the player toward the mouse world position up to teleport_distance,
@@ -1800,9 +1858,13 @@ class Player:
         if self.cls == 'Ranger' and self.alive:
             self._draw_ranger_crosshair(surf, camera)
         
-        # Draw Wizard skill selection indicator
-        if self.cls == 'Wizard' and self.alive and self.selected_skill:
-            self._draw_wizard_skill_indicator(surf, camera)
+        # Draw Wizard crosshair and skill selection indicator
+        if self.cls == 'Wizard' and self.alive:
+            if self.selected_skill:
+                self._draw_wizard_skill_indicator(surf, camera)
+            else:
+                # Draw normal crosshair when no skill is selected
+                self._draw_wizard_crosshair(surf, camera)
         
         # Draw debug overlays
         self._draw_debug_wall_jump(surf)
@@ -1828,10 +1890,15 @@ class Player:
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=4)
 
     def _draw_ranger_crosshair(self, surf, camera):
-        """Draw crosshair for Ranger class"""
+        """Draw crosshair for Ranger class with skill-based variations"""
         mx, my = pygame.mouse.get_pos()
         
-        # Determine crosshair color based on charging state
+        # Check active skill states
+        sniper_active = getattr(self, 'sniper_ready', False)
+        triple_active = getattr(self, 'triple_timer', 0) > 0
+        speed_active = getattr(self, 'speed_timer', 0) > 0
+        
+        # Determine crosshair color and style based on active skills
         if getattr(self, 'charging', False):
             charge_progress = min(1.0, self.charge_time / self.charge_threshold)
             # Gradient from yellow to red as charge increases
@@ -1839,23 +1906,82 @@ class Player:
             g = int(255 * (1.0 - charge_progress * 0.5))
             b = int(50)
             crosshair_color = (r, g, b)
+            crosshair_size = 8
+        elif sniper_active:
+            # SNIPER MODE: Red precision crosshair with scope lines
+            crosshair_color = (255, 60, 60)
+            crosshair_size = 12
+            # Draw scope lines (longer, thinner)
+            pygame.draw.line(surf, crosshair_color,
+                            (mx - crosshair_size - 8, my),
+                            (mx - crosshair_size, my), 1)
+            pygame.draw.line(surf, crosshair_color,
+                            (mx + crosshair_size, my),
+                            (mx + crosshair_size + 8, my), 1)
+            pygame.draw.line(surf, crosshair_color,
+                            (mx, my - crosshair_size - 8),
+                            (mx, my - crosshair_size), 1)
+            pygame.draw.line(surf, crosshair_color,
+                            (mx, my + crosshair_size),
+                            (mx, my + crosshair_size + 8), 1)
+            # Draw precision circle
+            pygame.draw.circle(surf, crosshair_color, (mx, my), 6, 1)
+            pygame.draw.circle(surf, crosshair_color, (mx, my), 2, 1)
+            # Add "SNIPER" text above crosshair
+            try:
+                font = pygame.font.Font(None, 18)
+                text_surf = font.render("SNIPER", True, (255, 60, 60))
+                text_rect = text_surf.get_rect(center=(mx, my - 25))
+                surf.blit(text_surf, text_rect)
+            except:
+                pass
+        elif triple_active:
+            # TRIPLE SHOT MODE: Orange multi-target crosshair
+            crosshair_color = (255, 180, 80)
+            crosshair_size = 8
+            # Draw 3 crosshairs with slight offset (showing 3-arrow pattern)
+            import math
+            for offset_angle in [-8, 0, 8]:  # degrees
+                angle_rad = math.radians(offset_angle)
+                offset_x = int(math.sin(angle_rad) * 15)
+                offset_y = int(-math.cos(angle_rad) * 15)
+                cx, cy = mx + offset_x, my + offset_y
+                # Small crosshair at each position
+                pygame.draw.line(surf, crosshair_color,
+                                (cx - 4, cy), (cx + 4, cy), 1)
+                pygame.draw.line(surf, crosshair_color,
+                                (cx, cy - 4), (cx, cy + 4), 1)
+            # Central crosshair
+            pygame.draw.circle(surf, crosshair_color, (mx, my), 3, 1)
+        elif speed_active:
+            # SPEED BOOST MODE: Green dynamic crosshair with motion lines
+            crosshair_color = (100, 255, 200)
+            crosshair_size = 8
+            # Add motion blur effect (trailing lines)
+            pygame.draw.line(surf, (100, 255, 200, 128),
+                            (mx - crosshair_size - 4, my),
+                            (mx - crosshair_size, my), 1)
+            pygame.draw.line(surf, (100, 255, 200, 128),
+                            (mx, my - crosshair_size - 4),
+                            (mx, my - crosshair_size), 1)
         else:
-            crosshair_color = (100, 200, 255)  # Light blue when not charging
+            # DEFAULT: Light blue standard crosshair
+            crosshair_color = (100, 200, 255)
+            crosshair_size = 8
         
-        # Draw crosshair at mouse position
-        crosshair_size = 8
-        
-        # Horizontal line
-        pygame.draw.line(surf, crosshair_color,
-                        (mx - crosshair_size, my),
-                        (mx + crosshair_size, my), 2)
-        # Vertical line
-        pygame.draw.line(surf, crosshair_color,
-                        (mx, my - crosshair_size),
-                        (mx, my + crosshair_size), 2)
-        
-        # Draw a circle at the center
-        pygame.draw.circle(surf, crosshair_color, (mx, my), 3, 1)
+        # Draw standard crosshair (unless sniper, which draws custom)
+        if not sniper_active:
+            # Horizontal line
+            pygame.draw.line(surf, crosshair_color,
+                            (mx - crosshair_size, my),
+                            (mx + crosshair_size, my), 2)
+            # Vertical line
+            pygame.draw.line(surf, crosshair_color,
+                            (mx, my - crosshair_size),
+                            (mx, my + crosshair_size), 2)
+            
+            # Draw center circle
+            pygame.draw.circle(surf, crosshair_color, (mx, my), 3, 1)
     
     def _draw_wizard_skill_indicator(self, surf, camera):
         """Draw visual indicator when Wizard has a skill selected"""
@@ -1898,6 +2024,48 @@ class Player:
             surf.blit(text_surf, text_rect)
         except:
             pass  # Fail silently if font rendering fails
+    
+    def _draw_wizard_crosshair(self, surf, camera):
+        """Draw normal crosshair for Wizard when no skill is selected"""
+        mx, my = pygame.mouse.get_pos()
+        
+        # Purple/arcane themed crosshair for Wizard
+        crosshair_color = (180, 120, 255)
+        crosshair_size = 8
+        
+        # Draw magical crosshair with a slight glow effect
+        # Outer glow (dimmer, larger)
+        glow_color = (140, 80, 200)
+        pygame.draw.line(surf, glow_color,
+                        (mx - crosshair_size - 2, my),
+                        (mx + crosshair_size + 2, my), 1)
+        pygame.draw.line(surf, glow_color,
+                        (mx, my - crosshair_size - 2),
+                        (mx, my + crosshair_size + 2), 1)
+        
+        # Main crosshair
+        pygame.draw.line(surf, crosshair_color,
+                        (mx - crosshair_size, my),
+                        (mx + crosshair_size, my), 2)
+        pygame.draw.line(surf, crosshair_color,
+                        (mx, my - crosshair_size),
+                        (mx, my + crosshair_size), 2)
+        
+        # Center dot
+        pygame.draw.circle(surf, crosshair_color, (mx, my), 2, 0)
+        
+        # Add small corner markers for magical aesthetic
+        corner_offset = 12
+        corner_size = 3
+        for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+            cx = mx + dx * corner_offset
+            cy = my + dy * corner_offset
+            pygame.draw.line(surf, crosshair_color,
+                           (cx - corner_size * dx, cy),
+                           (cx, cy), 1)
+            pygame.draw.line(surf, crosshair_color,
+                           (cx, cy - corner_size * dy),
+                           (cx, cy), 1)
     
     def _draw_debug_wall_jump(self, surf):
         """DEBUG: Draw wall jump state indicators (remove in production)"""
