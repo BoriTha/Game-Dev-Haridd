@@ -117,6 +117,7 @@ class Inventory:
         self.consumable_slots = []
         self.armament_scroll_offset = 0
         self.consumable_scroll_offset = 0
+        self.stats_scroll_offset = 0  # Add scroll for stats display
         self.consumable_storage: dict[str, int] = {}
         
         # Initialize inventory-related attributes
@@ -245,6 +246,11 @@ class Inventory:
             self.armament_scroll_offset = max(0, min(max_scroll, self.armament_scroll_offset + delta))
         else:
             self.consumable_scroll_offset = max(0, min(max_scroll, self.consumable_scroll_offset + delta))
+    
+    def scroll_stats(self, delta):
+        """Scroll the player stats display by delta pixels."""
+        # Just increment/decrement, clamping happens in draw
+        self.stats_scroll_offset += delta
 
     def _find_gear_slot_with_key(self, key):
         for idx, slot_key in enumerate(self.gear_slots):
@@ -907,6 +913,208 @@ class Inventory:
         
 
 
+    def _build_player_stats_display(self):
+        """Build comprehensive player stats display with modifiers shown in color."""
+        player = self.game.player
+        base = getattr(player, '_base_stats', {})
+        stats_lines = []
+        
+        # HP with max HP modifier
+        current_hp = player.hp
+        max_hp = getattr(player.combat, 'max_hp', 0) if hasattr(player, 'combat') else 0
+        base_max_hp = base.get('max_hp', max_hp)
+        hp_mod = max_hp - base_max_hp
+        if hp_mod != 0:
+            mod_text = f" {'+' if hp_mod > 0 else ''}{int(hp_mod)}"
+            mod_color = (100, 255, 100) if hp_mod > 0 else (255, 100, 100)
+            stats_lines.append((f"HP: {current_hp}/{int(max_hp)}", (255, 150, 150), mod_text, mod_color))
+        else:
+            stats_lines.append((f"HP: {current_hp}/{int(max_hp)}", (255, 150, 150)))
+        
+        # Attack with damage modifier
+        attack = getattr(player, 'attack_damage', 0)
+        atk_bonus = getattr(player.combat, 'atk_bonus', 0) if hasattr(player, 'combat') else 0
+        base_attack = base.get('attack_damage', attack - atk_bonus)
+        total_atk_mod = attack - base_attack
+        if total_atk_mod != 0:
+            mod_text = f" {'+' if total_atk_mod > 0 else ''}{int(total_atk_mod)}"
+            mod_color = (100, 255, 100) if total_atk_mod > 0 else (255, 100, 100)
+            stats_lines.append((f"Attack: {int(attack)}", (255, 200, 100), mod_text, mod_color))
+        else:
+            stats_lines.append((f"Attack: {int(attack)}", (255, 200, 100)))
+        
+        # Mana
+        if hasattr(player, 'mana'):
+            current_mana = player.mana
+            max_mana = player.max_mana
+            base_max_mana = base.get('max_mana', max_mana)
+            mana_mod = max_mana - base_max_mana
+            if mana_mod != 0:
+                mod_text = f" {'+' if mana_mod > 0 else ''}{mana_mod:.0f}"
+                mod_color = (100, 255, 255) if mana_mod > 0 else (255, 100, 100)
+                stats_lines.append((f"Mana: {current_mana:.0f}/{max_mana:.0f}", (100, 150, 255), mod_text, mod_color))
+            else:
+                stats_lines.append((f"Mana: {current_mana:.0f}/{max_mana:.0f}", (100, 150, 255)))
+        
+        # Stamina
+        if hasattr(player, 'stamina'):
+            current_stamina = player.stamina
+            max_stamina = player.max_stamina
+            base_max_stamina = base.get('max_stamina', max_stamina)
+            stamina_mod = max_stamina - base_max_stamina
+            if stamina_mod != 0:
+                mod_text = f" {'+' if stamina_mod > 0 else ''}{stamina_mod:.1f}"
+                mod_color = (100, 255, 100) if stamina_mod > 0 else (255, 100, 100)
+                stats_lines.append((f"Stamina: {current_stamina:.1f}/{max_stamina:.1f}", (150, 255, 150), mod_text, mod_color))
+            else:
+                stats_lines.append((f"Stamina: {current_stamina:.1f}/{max_stamina:.1f}", (150, 255, 150)))
+        
+        # Speed
+        speed = player.player_speed
+        base_speed = base.get('player_speed', speed)
+        speed_mod = speed - base_speed
+        if speed_mod != 0:
+            mod_text = f" {'+' if speed_mod > 0 else ''}{speed_mod:.1f}"
+            mod_color = (100, 255, 255) if speed_mod > 0 else (255, 100, 100)
+            stats_lines.append((f"Speed: {speed:.1f}", (200, 200, 255), mod_text, mod_color))
+        else:
+            stats_lines.append((f"Speed: {speed:.1f}", (200, 200, 255)))
+        
+        # Lifesteal (melee) - special effect, not a base attribute
+        if hasattr(player, 'combat'):
+            ls_pct = getattr(player.combat, 'lifesteal_pct', 0.0)
+            if ls_pct > 0.0:
+                stats_lines.append((f"+Lifesteal: {ls_pct*100:.1f}%", (160, 220, 180)))
+            
+            # Spell Lifesteal - special effect
+            spell_ls = getattr(player.combat, 'spell_lifesteal_pct', getattr(player.combat, 'spell_lifesteal', 0.0))
+            if spell_ls > 0.0:
+                stats_lines.append((f"+Spell Lifesteal: {spell_ls*100:.1f}%", (120, 180, 255)))
+        
+        # Additional stats from items (multipliers, special effects)
+        # Attack Speed - special effect
+        attack_speed_mult = getattr(player, 'attack_speed_mult', 1.0)
+        if attack_speed_mult != 1.0:
+            bonus_pct = (attack_speed_mult - 1.0) * 100
+            color = (100, 255, 100) if bonus_pct > 0 else (255, 100, 100)
+            stats_lines.append((f"+Attack Speed: {'+' if bonus_pct > 0 else ''}{bonus_pct:.0f}%", color))
+        
+        # Skill Cooldown Reduction - special effect
+        skill_cdr_mult = getattr(player, 'skill_cooldown_mult', 1.0)
+        if skill_cdr_mult != 1.0:
+            cdr_pct = (1.0 - skill_cdr_mult) * 100
+            color = (150, 200, 255)
+            stats_lines.append((f"+CDR: {cdr_pct:.0f}%", color))
+        
+        # Skill Damage - special effect
+        skill_dmg_mult = getattr(player, 'skill_damage_mult', 1.0)
+        if skill_dmg_mult != 1.0:
+            bonus_pct = (skill_dmg_mult - 1.0) * 100
+            color = (200, 150, 255)
+            stats_lines.append((f"+Skill Dmg: {'+' if bonus_pct > 0 else ''}{bonus_pct:.0f}%", color))
+        
+        # Dash Stamina Cost - special effect
+        dash_stamina_mult = getattr(player, 'dash_stamina_mult', 1.0)
+        if dash_stamina_mult != 1.0:
+            reduction_pct = (1.0 - dash_stamina_mult) * 100
+            color = (100, 255, 200)
+            stats_lines.append((f"+Dash Cost: {'-' if reduction_pct > 0 else '+'}{abs(reduction_pct):.0f}%", color))
+        
+        # Extra Dash/Jump Charges - special effects
+        extra_dash = getattr(player, 'extra_dash_charges', 0)
+        if extra_dash > 0:
+            stats_lines.append((f"+Dash Charges: {extra_dash}", (100, 255, 200)))
+        
+        extra_jumps = getattr(player, 'extra_jump_charges', 0)
+        if extra_jumps > 0:
+            stats_lines.append((f"+Air Jumps: {extra_jumps}", (200, 220, 255)))
+        
+        # Critical Hit - special effect
+        crit_chance = getattr(player, 'crit_chance', 0.0)
+        if crit_chance > 0:
+            stats_lines.append((f"+Crit Chance: {crit_chance*100:.1f}%", (255, 200, 100)))
+        
+        # Critical Damage Multiplier - special effect
+        crit_mult = getattr(player, 'crit_multiplier', 0.0)
+        if crit_mult > 0 and crit_mult != 2.0:  # Only show if not default 2.0x
+            stats_lines.append((f"+Crit Damage: {crit_mult:.1f}x", (255, 180, 80)))
+        
+        # Dodge Chance - special effect
+        dodge_chance = getattr(player, 'dodge_chance', 0.0)
+        if dodge_chance > 0:
+            stats_lines.append((f"+Dodge: {dodge_chance*100:.1f}%", (180, 220, 255)))
+        
+        # Check equipped items for on-hit effects
+        # Poison from equipped items
+        poison_stacks = 0
+        for gear_key in self.gear_slots:
+            if gear_key:
+                item = self.armament_catalog.get(gear_key)
+                if item and hasattr(item, 'modifiers'):
+                    poison_stacks += item.modifiers.get('on_hit_poison_stacks', 0)
+        if poison_stacks > 0:
+            stats_lines.append((f"+Poison: {poison_stacks} stacks", (150, 255, 120)))
+        
+        # Burn from equipped items
+        burn_dps = 0
+        burn_duration = 0
+        burn_always = False
+        for gear_key in self.gear_slots:
+            if gear_key:
+                item = self.armament_catalog.get(gear_key)
+                if item and hasattr(item, 'modifiers'):
+                    item_burn_dps = item.modifiers.get('on_hit_burn_dps', 0)
+                    if item_burn_dps > 0:
+                        burn_dps = max(burn_dps, item_burn_dps)  # Use highest DPS
+                        burn_duration = max(burn_duration, item.modifiers.get('on_hit_burn_duration', 0))
+                        if item.modifiers.get('on_hit_burn_always', False):
+                            burn_always = True
+        if burn_dps > 0:
+            burn_text = f"+Burn: {burn_dps}/s for {burn_duration:.0f}s"
+            if burn_always:
+                burn_text += " (always)"
+            stats_lines.append((burn_text, (255, 150, 80)))
+        
+        # Bleed from equipped items
+        bleed_dmg = 0
+        bleed_duration = 0
+        for gear_key in self.gear_slots:
+            if gear_key:
+                item = self.armament_catalog.get(gear_key)
+                if item and hasattr(item, 'modifiers'):
+                    item_bleed_dur = item.modifiers.get('on_hit_bleed_duration', 0)
+                    if item_bleed_dur > 0:
+                        bleed_dmg = max(bleed_dmg, item.modifiers.get('on_hit_bleed_dps', 0))
+                        bleed_duration = max(bleed_duration, item_bleed_dur)
+        if bleed_dmg > 0:
+            stats_lines.append((f"+Bleed: {bleed_dmg}/s for {bleed_duration:.0f}s", (200, 80, 80)))
+        
+        # Freeze from equipped items
+        freeze_chance = 0
+        freeze_duration = 0
+        for gear_key in self.gear_slots:
+            if gear_key:
+                item = self.armament_catalog.get(gear_key)
+                if item and hasattr(item, 'modifiers'):
+                    item_freeze_chance = item.modifiers.get('on_hit_freeze_chance', 0)
+                    if item_freeze_chance > 0:
+                        freeze_chance += item_freeze_chance  # Stack chances
+                        freeze_duration = max(freeze_duration, item.modifiers.get('on_hit_freeze_duration', 0))
+        if freeze_chance > 0:
+            stats_lines.append((f"+Freeze: {freeze_chance*100:.0f}% for {freeze_duration:.1f}s", (150, 200, 255)))
+        
+        # Double Attack from equipped items
+        double_attack_chance = 0
+        for gear_key in self.gear_slots:
+            if gear_key:
+                item = self.armament_catalog.get(gear_key)
+                if item and hasattr(item, 'modifiers'):
+                    double_attack_chance += item.modifiers.get('double_attack', 0)
+        if double_attack_chance > 0:
+            stats_lines.append((f"+Double Attack: {double_attack_chance*100:.0f}%", (255, 220, 120)))
+        
+        return stats_lines
+
     def draw_inventory_overlay(self):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
@@ -934,55 +1142,124 @@ class Inventory:
         self.inventory_regions = []
         selection = self.inventory_selection
 
-        draw_text(self.game.screen, "Inventory", (panel_rect.x + 32, panel_rect.y + 20), (240,220,190), size=30, bold=True)
+        # Draw "Inventory" title in its own header box
+        header_box_height = 50
+        header_box_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 15, panel_rect.width - 40, header_box_height)
+        pygame.draw.rect(self.game.screen, (40, 35, 55), header_box_rect, border_radius=8)
+        pygame.draw.rect(self.game.screen, (210, 200, 170), header_box_rect, width=2, border_radius=8)
+        draw_text(self.game.screen, "Inventory", (header_box_rect.x + 15, header_box_rect.y + 10), (240,220,190), size=30, bold=True)
+        
         footer_font = get_font(18)
         footer_surface = footer_font.render("Press I or Esc to close", True, (180,180,195))
         footer_rect = footer_surface.get_rect(midbottom=(panel_rect.centerx, panel_rect.bottom - 8))
         self.game.screen.blit(footer_surface, footer_rect)
 
-        # Define main panes
+        # Define main panes - adjust Y to start below header
         left_pane_width = 280
         right_pane_width = panel_w - left_pane_width - 60 # 60 for spacing
-        left_pane_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 70, left_pane_width, panel_h - 100)
-        right_pane_rect = pygame.Rect(left_pane_rect.right + 20, panel_rect.y + 70, right_pane_width, panel_h - 100)
+        left_pane_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 75, left_pane_width, panel_h - 105)
+        right_pane_rect = pygame.Rect(left_pane_rect.right + 20, panel_rect.y + 75, right_pane_width, panel_h - 105)
 
         # --- Left Pane: Player Info ---
         pygame.draw.rect(self.game.screen, (25, 25, 35), left_pane_rect, border_radius=10) # Outline for left pane
         pygame.draw.rect(self.game.screen, (100, 100, 120), left_pane_rect, width=1, border_radius=10)
 
-        model_frame = pygame.Rect(left_pane_rect.x + 20, left_pane_rect.y + 20, left_pane_width - 40, 180)
+        model_frame = pygame.Rect(left_pane_rect.x + 20, left_pane_rect.y + 20, left_pane_width - 40, 150)
         pygame.draw.rect(self.game.screen, (32, 36, 52), model_frame, border_radius=16)
         pygame.draw.rect(self.game.screen, (160, 180, 220), model_frame, width=1, border_radius=16)
         
-        model_rect = pygame.Rect(0, 0, self.game.player.rect.width * 4, self.game.player.rect.height * 4)
+        model_rect = pygame.Rect(0, 0, self.game.player.rect.width * 3.5, self.game.player.rect.height * 3.5)
         model_rect.center = model_frame.center
         pygame.draw.rect(self.game.screen, (120, 200, 235), model_rect, border_radius=12)
         
-        draw_text(self.game.screen, self.game.player.cls, (model_frame.centerx - 40, model_frame.bottom - 30), (210,210,225), size=22, bold=True)
+        draw_text(self.game.screen, self.game.player.cls, (model_frame.centerx - 40, model_frame.bottom - 25), (210,210,225), size=20, bold=True)
 
-        stats_y = model_frame.bottom + 25  # Reduced spacing from 30 to 25
-        status_lines = [
-            (f"HP: {self.game.player.hp}/{self.game.player.max_hp}", (255, 150, 150)),
-            (f"Attack: {getattr(self.game.player, 'attack_damage', '?')}", (255, 200, 100)),
-        ]
-        if hasattr(self.game.player, 'mana') and hasattr(self.game.player, 'max_mana'):
-            status_lines.append((f"Mana: {self.game.player.mana:.1f}/{self.game.player.max_mana:.1f}", (100, 150, 255)))
-        if hasattr(self.game.player, 'stamina') and hasattr(self.game.player, 'max_stamina'):
-            status_lines.append((f"Stamina: {self.game.player.stamina:.1f}/{self.game.player.max_stamina:.1f}", (150, 255, 150)))
+        # Stats section - draw background box for entire stats area
+        stats_section_y = model_frame.bottom + 10
+        stats_section_height = left_pane_rect.bottom - stats_section_y - 10
+        stats_section_rect = pygame.Rect(left_pane_rect.x + 10, stats_section_y, left_pane_rect.width - 20, stats_section_height)
         
-        status_lines.append((f"Speed: {self.game.player.player_speed:.1f}", (200, 200, 255)))
-        # Show lifesteal percentages if present (>0)
-        ls_pct = getattr(self.game.player.combat, 'lifesteal_pct', 0.0) if hasattr(self.game.player, 'combat') else 0.0
-        spell_ls = getattr(self.game.player.combat, 'spell_lifesteal_pct', getattr(self.game.player.combat, 'spell_lifesteal', 0.0)) if hasattr(self.game.player, 'combat') else 0.0
-        if ls_pct and ls_pct > 0.0:
-            status_lines.append((f"Lifesteal: {ls_pct*100:.1f}%", (160, 220, 180)))
-        if spell_ls and spell_ls > 0.0:
-            status_lines.append((f"Spell Lifesteal: {spell_ls*100:.1f}%", (120, 180, 255)))
+        # Draw stats section background
+        pygame.draw.rect(self.game.screen, (32, 36, 52), stats_section_rect, border_radius=8)
+        pygame.draw.rect(self.game.screen, (80, 80, 100), stats_section_rect, width=1, border_radius=8)
         
-        status_spacing = 20  # Reduced spacing from 24 to 20
+        # Player Stats Header - matching Armory Stock style
+        stats_header_height = 30
+        stats_header_rect = pygame.Rect(stats_section_rect.x + 4, stats_section_rect.y + 4, stats_section_rect.width - 8, stats_header_height)
+        pygame.draw.rect(self.game.screen, (25, 25, 35), stats_header_rect, border_radius=6)
+        pygame.draw.rect(self.game.screen, (100, 100, 120), stats_header_rect, width=1, border_radius=6)
         
-        for i, (line, color) in enumerate(status_lines):
-            draw_text(self.game.screen, line, (left_pane_rect.x + 20, stats_y + i * status_spacing), color, size=18)
+        header_font = get_font(14, bold=True)
+        header_text = header_font.render("Player Stats", True, (205, 200, 215))
+        self.game.screen.blit(header_text, (stats_header_rect.x + 10, stats_header_rect.y + 7))
+        
+        # Stats area starts below header with proper spacing
+        stats_y = stats_header_rect.bottom + 12  # Reduced padding from 18 to 12
+        status_lines = self._build_player_stats_display()
+        
+        status_spacing = 22  # Line height - increased for better readability
+        
+        # Define scrollable stats area - use remaining space in the section box
+        stats_area_y = stats_y
+        stats_area_height = stats_section_rect.bottom - stats_area_y - 10
+        stats_area_rect = pygame.Rect(stats_section_rect.x + 10, stats_y, stats_section_rect.width - 20, stats_area_height)
+        self.stats_area_rect = stats_area_rect  # Store for mouse wheel handling
+        
+        # Calculate total content height
+        total_stats_height = len(status_lines) * status_spacing
+        
+        # Clamp scroll offset
+        max_scroll = max(0, total_stats_height - stats_area_height)
+        self.stats_scroll_offset = max(0, min(self.stats_scroll_offset, max_scroll))
+        
+        # Set clipping for stats area - add some padding at top to avoid harsh clipping
+        old_clip = self.game.screen.get_clip()
+        clip_rect = pygame.Rect(stats_section_rect.x, stats_area_y - 5, stats_section_rect.width, stats_area_height + 5)
+        self.game.screen.set_clip(clip_rect)
+        
+        # Draw stats with scroll offset
+        for i, item in enumerate(status_lines):
+            y_pos = stats_area_y + (i * status_spacing) - self.stats_scroll_offset
+            # Only draw if visible in clipped area
+            if y_pos + status_spacing >= stats_area_y and y_pos <= stats_area_rect.bottom:
+                # Handle both old format (text, color) and new format (text, color, mod_text, mod_color)
+                text_x = stats_area_rect.x + 8  # Good padding from stats area edge
+                
+                if len(item) == 4:
+                    line, color, mod_text, mod_color = item
+                    # Draw the base stat
+                    draw_text(self.game.screen, line, (text_x, y_pos), color, size=16)
+                    # Draw the modifier next to it
+                    if mod_text:
+                        try:
+                            font = get_font(16)
+                            main_surface = font.render(line, True, color)
+                            main_width = main_surface.get_width()
+                            draw_text(self.game.screen, mod_text, (text_x + main_width + 5, y_pos), mod_color, size=16)
+                        except:
+                            # Fallback
+                            draw_text(self.game.screen, mod_text, (text_x + len(line) * 9 + 5, y_pos), mod_color, size=16)
+                else:
+                    line, color = item
+                    draw_text(self.game.screen, line, (text_x, y_pos), color, size=16)
+        
+        # Restore clip
+        self.game.screen.set_clip(old_clip)
+        
+        # Draw scrollbar only if needed
+        if total_stats_height > stats_area_height:
+            scrollbar_x = stats_area_rect.right - 10
+            scrollbar_y = stats_area_rect.y  
+            scrollbar_h = stats_area_height
+            
+            # Track
+            pygame.draw.rect(self.game.screen, (40, 40, 50), (scrollbar_x, scrollbar_y, 8, scrollbar_h), border_radius=4)
+            
+            # Thumb
+            scroll_ratio = self.stats_scroll_offset / max(1, max_scroll)
+            thumb_h = max(20, int((stats_area_height / total_stats_height) * scrollbar_h))
+            thumb_y = scrollbar_y + int(scroll_ratio * (scrollbar_h - thumb_h))
+            pygame.draw.rect(self.game.screen, (180, 180, 200), (scrollbar_x + 1, thumb_y, 6, thumb_h), border_radius=3)
 
         # --- Right Pane: Equipped Slots and Stock ---
         pygame.draw.rect(self.game.screen, (25, 25, 35), right_pane_rect, border_radius=10) # Outline for right pane

@@ -49,32 +49,49 @@ class InputHandler:
                         except Exception:
                             logger.exception("shop wheel scroll failed")
                         continue
-                    # Inventory wheel scroll (stock panel)
+                    # Inventory wheel scroll (check stats area first, then stock panel)
                     elif getattr(game, 'inventory', None) and getattr(game.inventory, 'inventory_open', False):
                         try:
-                            if ev.y > 0:
-                                game.inventory._scroll_stock(-50)
-                            elif ev.y < 0:
-                                game.inventory._scroll_stock(50)
+                            mouse_pos = pygame.mouse.get_pos()
+                            stats_area = getattr(game.inventory, 'stats_area_rect', None)
+                            # If mouse is over stats area, scroll stats
+                            if stats_area and stats_area.collidepoint(mouse_pos):
+                                if ev.y > 0:
+                                    game.inventory.scroll_stats(-18)  # Scroll up (one line)
+                                elif ev.y < 0:
+                                    game.inventory.scroll_stats(18)   # Scroll down (one line)
+                            else:
+                                # Otherwise scroll stock panel
+                                if ev.y > 0:
+                                    game.inventory._scroll_stock(-50)
+                                elif ev.y < 0:
+                                    game.inventory._scroll_stock(50)
                         except Exception:
                             logger.exception("inventory wheel scroll failed")
                         continue
 
                 # Mouse button handling (legacy wheel + left click)
                 elif ev.type == pygame.MOUSEBUTTONDOWN:
-                    # Legacy wheel scroll for inventory stock panel (fallback for older pygame)
+                    # Legacy wheel scroll for inventory (fallback for older pygame)
                     if getattr(game, 'inventory', None) and getattr(game.inventory, 'inventory_open', False):
-                        if ev.button == 4:
+                        if ev.button == 4 or ev.button == 5:
                             try:
-                                game.inventory._scroll_stock(-50)
+                                mouse_pos = getattr(ev, 'pos', None) or pygame.mouse.get_pos()
+                                stats_area = getattr(game.inventory, 'stats_area_rect', None)
+                                # If mouse is over stats area, scroll stats
+                                if stats_area and stats_area.collidepoint(mouse_pos):
+                                    if ev.button == 4:
+                                        game.inventory.scroll_stats(-18)  # Scroll up
+                                    else:
+                                        game.inventory.scroll_stats(18)   # Scroll down
+                                else:
+                                    # Otherwise scroll stock panel
+                                    if ev.button == 4:
+                                        game.inventory._scroll_stock(-50)
+                                    else:
+                                        game.inventory._scroll_stock(50)
                             except Exception:
-                                logger.exception("inventory _scroll_stock failed")
-                            continue
-                        elif ev.button == 5:
-                            try:
-                                game.inventory._scroll_stock(50)
-                            except Exception:
-                                logger.exception("inventory _scroll_stock failed")
+                                logger.exception("inventory scroll failed")
                             continue
                     # Legacy wheel scroll for shop (fallback for older pygame)
                     elif getattr(game, 'shop', None) and getattr(game.shop, 'shop_open', False):
@@ -187,7 +204,14 @@ class InputHandler:
 
                     # Escape handling: close inventory/shop or open pause menu
                     if ev.key == pygame.K_ESCAPE:
-                        if getattr(game, 'shop', None) and getattr(game.shop, 'shop_open', False):
+                        # Check inventory first, then shop, then pause menu
+                        if getattr(game, 'inventory', None) and getattr(game.inventory, 'inventory_open', False):
+                            try:
+                                game.inventory.inventory_open = False
+                                logger.info("Inventory closed via ESC")
+                            except Exception:
+                                logger.exception("inventory close failed")
+                        elif getattr(game, 'shop', None) and getattr(game.shop, 'shop_open', False):
                             try:
                                 game.shop.close_shop()
                             except Exception:

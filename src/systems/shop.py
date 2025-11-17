@@ -1458,6 +1458,248 @@ class Shop:
             thumb_h = max(20, int((grid_height / total_height) * scrollbar_h))
             thumb_y = scrollbar_y + int(scroll_ratio * (scrollbar_h - thumb_h))
             pygame.draw.rect(screen, (150, 150, 170), (scrollbar_x + 1, thumb_y, 4, thumb_h), border_radius=2)
+    def _build_player_stats_display(self) -> List[Tuple[str, tuple]]:
+        """Build comprehensive player stats display with modifiers shown in color."""
+        player = self.game.player
+        base = getattr(player, '_base_stats', {})
+        stats_lines = []
+        
+        # HP with max HP modifier
+        current_hp = player.hp
+        max_hp = getattr(player.combat, 'max_hp', 0) if hasattr(player, 'combat') else 0
+        base_max_hp = base.get('max_hp', max_hp)
+        hp_mod = max_hp - base_max_hp
+        if hp_mod != 0:
+            mod_text = f" {'+' if hp_mod > 0 else ''}{int(hp_mod)}"
+            mod_color = (100, 255, 100) if hp_mod > 0 else (255, 100, 100)
+            stats_lines.append((f"HP: {current_hp}/{int(max_hp)}", (255, 150, 150), mod_text, mod_color))
+        else:
+            stats_lines.append((f"HP: {current_hp}/{int(max_hp)}", (255, 150, 150), None, None))
+        
+        # Attack with damage modifier
+        attack = getattr(player, 'attack_damage', 0)
+        atk_bonus = getattr(player.combat, 'atk_bonus', 0) if hasattr(player, 'combat') else 0
+        base_attack = base.get('attack_damage', attack - atk_bonus)
+        total_atk_mod = attack - base_attack
+        if total_atk_mod != 0:
+            mod_text = f" {'+' if total_atk_mod > 0 else ''}{int(total_atk_mod)}"
+            mod_color = (100, 255, 100) if total_atk_mod > 0 else (255, 100, 100)
+            stats_lines.append((f"Attack: {int(attack)}", (255, 200, 100), mod_text, mod_color))
+        else:
+            stats_lines.append((f"Attack: {int(attack)}", (255, 200, 100), None, None))
+        
+        # Mana
+        if hasattr(player, 'mana'):
+            current_mana = player.mana
+            max_mana = player.max_mana
+            base_max_mana = base.get('max_mana', max_mana)
+            mana_mod = max_mana - base_max_mana
+            if mana_mod != 0:
+                mod_text = f" {'+' if mana_mod > 0 else ''}{mana_mod:.0f}"
+                mod_color = (100, 255, 255) if mana_mod > 0 else (255, 100, 100)
+                stats_lines.append((f"Mana: {current_mana:.0f}/{max_mana:.0f}", (100, 150, 255), mod_text, mod_color))
+            else:
+                stats_lines.append((f"Mana: {current_mana:.0f}/{max_mana:.0f}", (100, 150, 255), None, None))
+        
+        # Stamina
+        if hasattr(player, 'stamina'):
+            current_stamina = player.stamina
+            max_stamina = player.max_stamina
+            base_max_stamina = base.get('max_stamina', max_stamina)
+            stamina_mod = max_stamina - base_max_stamina
+            if stamina_mod != 0:
+                mod_text = f" {'+' if stamina_mod > 0 else ''}{stamina_mod:.1f}"
+                mod_color = (100, 255, 100) if stamina_mod > 0 else (255, 100, 100)
+                stats_lines.append((f"Stamina: {current_stamina:.1f}/{max_stamina:.1f}", (150, 255, 150), mod_text, mod_color))
+            else:
+                stats_lines.append((f"Stamina: {current_stamina:.1f}/{max_stamina:.1f}", (150, 255, 150), None, None))
+        
+        # Speed
+        speed = player.player_speed
+        base_speed = base.get('player_speed', speed)
+        speed_mod = speed - base_speed
+        if speed_mod != 0:
+            mod_text = f" {'+' if speed_mod > 0 else ''}{speed_mod:.1f}"
+            mod_color = (100, 255, 255) if speed_mod > 0 else (255, 100, 100)
+            stats_lines.append((f"Speed: {speed:.1f}", (200, 200, 255), mod_text, mod_color))
+        else:
+            stats_lines.append((f"Speed: {speed:.1f}", (200, 200, 255), None, None))
+        
+        # Lifesteal (melee) - special effect, not a base attribute
+        if hasattr(player, 'combat'):
+            ls_pct = getattr(player.combat, 'lifesteal_pct', 0.0)
+            if ls_pct > 0.0:
+                stats_lines.append((f"+Lifesteal: {ls_pct*100:.1f}%", (160, 220, 180), None, None))
+            
+            # Spell Lifesteal - special effect
+            spell_ls = getattr(player.combat, 'spell_lifesteal_pct', getattr(player.combat, 'spell_lifesteal', 0.0))
+            if spell_ls > 0.0:
+                stats_lines.append((f"+Spell Lifesteal: {spell_ls*100:.1f}%", (120, 180, 255), None, None))
+        
+        # Additional stats from items (multipliers, special effects)
+        # Attack Speed - special effect
+        attack_speed_mult = getattr(player, 'attack_speed_mult', 1.0)
+        if attack_speed_mult != 1.0:
+            bonus_pct = (attack_speed_mult - 1.0) * 100
+            color = (100, 255, 100) if bonus_pct > 0 else (255, 100, 100)
+            stats_lines.append((f"+Attack Speed: {'+' if bonus_pct > 0 else ''}{bonus_pct:.0f}%", color, None, None))
+        
+        # Skill Cooldown Reduction - special effect
+        skill_cdr_mult = getattr(player, 'skill_cooldown_mult', 1.0)
+        if skill_cdr_mult != 1.0:
+            cdr_pct = (1.0 - skill_cdr_mult) * 100
+            color = (150, 200, 255)
+            stats_lines.append((f"+CDR: {cdr_pct:.0f}%", color, None, None))
+        
+        # Skill Damage - special effect
+        skill_dmg_mult = getattr(player, 'skill_damage_mult', 1.0)
+        if skill_dmg_mult != 1.0:
+            bonus_pct = (skill_dmg_mult - 1.0) * 100
+            color = (200, 150, 255)
+            stats_lines.append((f"+Skill Dmg: {'+' if bonus_pct > 0 else ''}{bonus_pct:.0f}%", color, None, None))
+        
+        # Dash Stamina Cost - special effect
+        dash_stamina_mult = getattr(player, 'dash_stamina_mult', 1.0)
+        if dash_stamina_mult != 1.0:
+            reduction_pct = (1.0 - dash_stamina_mult) * 100
+            color = (100, 255, 200)
+            stats_lines.append((f"+Dash Cost: {'-' if reduction_pct > 0 else '+'}{abs(reduction_pct):.0f}%", color, None, None))
+        
+        # Extra Dash Charges - special effect
+        extra_dash = getattr(player, 'extra_dash_charges', 0)
+        if extra_dash > 0:
+            stats_lines.append((f"+Dash Charges: {extra_dash}", (100, 255, 200), None, None))
+        
+        # Extra Jump Charges - special effect
+        extra_jumps = getattr(player, 'extra_jump_charges', 0)
+        if extra_jumps > 0:
+            stats_lines.append((f"+Air Jumps: {extra_jumps}", (200, 220, 255), None, None))
+        
+        # Mana/Stamina Regen
+        if hasattr(player, '_mana_regen'):
+            mana_regen = player._mana_regen * FPS  # Convert to per-second
+            base_mana_regen = base.get('mana_regen', 0.0) * FPS
+            if mana_regen > 0:
+                regen_mod = mana_regen - base_mana_regen
+                if regen_mod != 0:
+                    mod_text = f" {'+' if regen_mod > 0 else ''}{regen_mod:.1f}/s"
+                    mod_color = (100, 255, 255) if regen_mod > 0 else (255, 100, 100)
+                    stats_lines.append((f"Mana Regen: {mana_regen:.1f}/s", (150, 200, 255), mod_text, mod_color))
+                else:
+                    stats_lines.append((f"Mana Regen: {mana_regen:.1f}/s", (150, 200, 255), None, None))
+        
+        if hasattr(player, '_stamina_regen'):
+            stamina_regen = player._stamina_regen * FPS  # Convert to per-second
+            base_stamina_regen = base.get('stamina_regen', 0.0) * FPS
+            if stamina_regen > 0:
+                regen_mod = stamina_regen - base_stamina_regen
+                if regen_mod != 0:
+                    mod_text = f" {'+' if regen_mod > 0 else ''}{regen_mod:.1f}/s"
+                    mod_color = (100, 255, 100) if regen_mod > 0 else (255, 100, 100)
+                    stats_lines.append((f"Stamina Regen: {stamina_regen:.1f}/s", (180, 255, 180), mod_text, mod_color))
+                else:
+                    stats_lines.append((f"Stamina Regen: {stamina_regen:.1f}/s", (180, 255, 180), None, None))
+        
+        # Critical Hit - special effect
+        crit_chance = getattr(player, 'crit_chance', 0.0)
+        if crit_chance > 0:
+            stats_lines.append((f"+Crit Chance: {crit_chance*100:.1f}%", (255, 200, 100), None, None))
+        
+        # Critical Damage Multiplier - special effect
+        crit_mult = getattr(player, 'crit_multiplier', 0.0)
+        if crit_mult > 0 and crit_mult != 2.0:  # Only show if not default 2.0x
+            stats_lines.append((f"+Crit Damage: {crit_mult:.1f}x", (255, 180, 80), None, None))
+        
+        # Dodge Chance - special effect
+        dodge_chance = getattr(player, 'dodge_chance', 0.0)
+        if dodge_chance > 0:
+            stats_lines.append((f"+Dodge: {dodge_chance*100:.1f}%", (180, 220, 255), None, None))
+        
+        # Check equipped items for on-hit effects (get inventory from game)
+        inventory = getattr(self.game, 'inventory', None)
+        if inventory:
+            # Poison from equipped items
+            poison_stacks = 0
+            for gear_key in inventory.gear_slots:
+                if gear_key:
+                    item = inventory.armament_catalog.get(gear_key)
+                    if item and hasattr(item, 'modifiers'):
+                        poison_stacks += item.modifiers.get('on_hit_poison_stacks', 0)
+            if poison_stacks > 0:
+                stats_lines.append((f"+Poison: {poison_stacks} stacks", (150, 255, 120), None, None))
+            
+            # Burn from equipped items
+            burn_dps = 0
+            burn_duration = 0
+            burn_always = False
+            for gear_key in inventory.gear_slots:
+                if gear_key:
+                    item = inventory.armament_catalog.get(gear_key)
+                    if item and hasattr(item, 'modifiers'):
+                        item_burn_dps = item.modifiers.get('on_hit_burn_dps', 0)
+                        if item_burn_dps > 0:
+                            burn_dps = max(burn_dps, item_burn_dps)
+                            burn_duration = max(burn_duration, item.modifiers.get('on_hit_burn_duration', 0))
+                            if item.modifiers.get('on_hit_burn_always', False):
+                                burn_always = True
+            if burn_dps > 0:
+                burn_text = f"+Burn: {burn_dps}/s for {burn_duration:.0f}s"
+                if burn_always:
+                    burn_text += " (always)"
+                stats_lines.append((burn_text, (255, 150, 80), None, None))
+            
+            # Bleed from equipped items
+            bleed_dmg = 0
+            bleed_duration = 0
+            for gear_key in inventory.gear_slots:
+                if gear_key:
+                    item = inventory.armament_catalog.get(gear_key)
+                    if item and hasattr(item, 'modifiers'):
+                        item_bleed_dur = item.modifiers.get('on_hit_bleed_duration', 0)
+                        if item_bleed_dur > 0:
+                            bleed_dmg = max(bleed_dmg, item.modifiers.get('on_hit_bleed_dps', 0))
+                            bleed_duration = max(bleed_duration, item_bleed_dur)
+            if bleed_dmg > 0:
+                stats_lines.append((f"+Bleed: {bleed_dmg}/s for {bleed_duration:.0f}s", (200, 80, 80), None, None))
+            
+            # Freeze from equipped items
+            freeze_chance = 0
+            freeze_duration = 0
+            for gear_key in inventory.gear_slots:
+                if gear_key:
+                    item = inventory.armament_catalog.get(gear_key)
+                    if item and hasattr(item, 'modifiers'):
+                        item_freeze_chance = item.modifiers.get('on_hit_freeze_chance', 0)
+                        if item_freeze_chance > 0:
+                            freeze_chance += item_freeze_chance
+                            freeze_duration = max(freeze_duration, item.modifiers.get('on_hit_freeze_duration', 0))
+            if freeze_chance > 0:
+                stats_lines.append((f"+Freeze: {freeze_chance*100:.0f}% for {freeze_duration:.1f}s", (150, 200, 255), None, None))
+            
+            # Double Attack from equipped items
+            double_attack_chance = 0
+            for gear_key in inventory.gear_slots:
+                if gear_key:
+                    item = inventory.armament_catalog.get(gear_key)
+                    if item and hasattr(item, 'modifiers'):
+                        double_attack_chance += item.modifiers.get('double_attack', 0)
+            if double_attack_chance > 0:
+                stats_lines.append((f"+Double Attack: {double_attack_chance*100:.0f}%", (255, 220, 120), None, None))
+        
+        # Format stats_lines into the expected format (text, color) tuples
+        # We'll handle modifier rendering separately
+        formatted_lines = []
+        for item in stats_lines:
+            if len(item) == 4:
+                text, color, mod_text, mod_color = item
+                if mod_text:
+                    formatted_lines.append((text, color, mod_text, mod_color))
+                else:
+                    formatted_lines.append((text, color))
+            else:
+                formatted_lines.append((item[0], item[1]))
+        
+        return formatted_lines
     
     def _draw_player_info_column(self, screen, rect):
         """Draw right column with player status or inventory stock view"""
@@ -1508,18 +1750,8 @@ class Shop:
         stats_font = get_font(14)  # Reduced from 16 to 14
         line_height = 22  # Reduced from 24 to 22
         
-        stats_lines = [
-            (f"HP: {self.game.player.hp}/{self.game.player.max_hp}", (255, 150, 150)),
-            (f"Attack: {getattr(self.game.player, 'attack_damage', '?')}", (255, 200, 100)),
-        ]
-        
-        if hasattr(self.game.player, 'mana'):
-            stats_lines.append((f"Mana: {self.game.player.mana:.0f}/{self.game.player.max_mana:.0f}", (100, 150, 255)))
-        
-        if hasattr(self.game.player, 'stamina'):
-            stats_lines.append((f"Stamina: {self.game.player.stamina:.0f}/{self.game.player.max_stamina:.0f}", (150, 255, 150)))
-        
-        stats_lines.append((f"Speed: {self.game.player.player_speed:.1f}", (200, 200, 255)))
+        # Build comprehensive stats with modifiers
+        stats_lines = self._build_player_stats_display()
         # Coins removed - now displayed in dedicated coin box under shop items
         
         # Calculate total content height
@@ -1537,12 +1769,31 @@ class Shop:
         screen.set_clip(stats_area_rect)
         
         # Draw stats with scroll offset
-        for i, (text, color) in enumerate(stats_lines):
+        for i, item in enumerate(stats_lines):
             stat_y = stats_area_rect.y + (i * line_height) - self.player_info_scroll_offset
             # Only draw if visible in the clipped area
             if stat_y + line_height >= stats_area_rect.y and stat_y <= stats_area_rect.bottom:
-                stat_text = stats_font.render(text, True, color)
-                screen.blit(stat_text, (stats_area_rect.x + 5, stat_y))
+                # Handle both old format (text, color) and new format (text, color, mod_text, mod_color)
+                if len(item) == 4:
+                    text, color, mod_text, mod_color = item
+                    # Draw main stat
+                    stat_text = stats_font.render(text, True, color)
+                    screen.blit(stat_text, (stats_area_rect.x + 5, stat_y))
+                    # Draw modifier
+                    if mod_text:
+                        mod_surf = stats_font.render(mod_text, True, mod_color)
+                        mod_x = stats_area_rect.x + 5 + stat_text.get_width() + 3
+                        screen.blit(mod_surf, (mod_x, stat_y))
+                elif len(item) == 2:
+                    text, color = item
+                    stat_text = stats_font.render(text, True, color)
+                    screen.blit(stat_text, (stats_area_rect.x + 5, stat_y))
+                else:
+                    # Fallback for unexpected format
+                    text = str(item[0]) if item else ""
+                    color = item[1] if len(item) > 1 else (200, 200, 200)
+                    stat_text = stats_font.render(text, True, color)
+                    screen.blit(stat_text, (stats_area_rect.x + 5, stat_y))
         
         # Restore clip
         screen.set_clip(old_clip)
