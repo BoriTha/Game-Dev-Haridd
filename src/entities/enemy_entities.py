@@ -947,11 +947,11 @@ class Enemy:
 
 
 class Bug(Enemy):
-    """Basic ground enemy with simple patrol behavior."""
+    """Basic ground enemy with simple patrol behavior (Spider)."""
     def __init__(self, x, ground_y):
         combat_config = {
-            'max_hp': 30,
-            'money_drop': (5, 15)
+            'max_hp': 16,
+            'money_drop': (10, 25)
         }
         super().__init__(x, ground_y, width=32, height=32, combat_config=combat_config,
                          vision_range=200, cone_half_angle=math.pi/6, turn_rate=0.05)
@@ -1182,8 +1182,8 @@ class Frog(Enemy):
     """Dashing enemy with a telegraphed lunge toward the player."""
     def __init__(self, x, ground_y):
         combat_config = {
-            'max_hp': 18,
-            'money_drop': (10, 20) # Example money drop
+            'max_hp': 8,
+            'money_drop': (5, 15)
         }
         super().__init__(x, ground_y, width=28, height=22, combat_config=combat_config,
                         vision_range=220, cone_half_angle=math.pi/12, turn_rate=0.08)
@@ -1729,7 +1729,7 @@ class WizardCaster(Enemy):
     """Casts fast magic bolts with '!!' telegraph."""
     def __init__(self, x, ground_y):
         combat_config = {
-            'max_hp': 14,
+            'max_hp': 10,
             'money_drop': (15, 30)
         }
         super().__init__(x, ground_y, width=40, height=56, combat_config=combat_config,
@@ -2147,7 +2147,7 @@ class Assassin(Enemy):
     """Semi-invisible melee dash enemy."""
     def __init__(self, x, ground_y):
         combat_config = {
-            'max_hp': 20,
+            'max_hp': 18,
             'money_drop': (20, 35)
         }
         super().__init__(x, ground_y, width=40, height=56, combat_config=combat_config,
@@ -2528,7 +2528,7 @@ class Bee(Enemy):
     """Hybrid shooter/dasher with two-phase attack cycle: charge (1s) then cooldown (1s)."""
     def __init__(self, x, ground_y):
         combat_config = {
-            'max_hp': 12,
+            'max_hp': 14,
             'money_drop': (10, 25)
         }
         super().__init__(x, ground_y, width=32, height=32, combat_config=combat_config,
@@ -3089,7 +3089,7 @@ class KnightMonster(Enemy):
     def __init__(self, x: int, ground_y: int):
         # Combat configuration
         combat_config = {
-            'max_hp': 28,
+            'max_hp': 30,
             'default_ifr': 8,
             'money_drop': (20, 40)
         }
