@@ -1743,8 +1743,15 @@ class WizardCaster(Enemy):
         self.action = None  # 'bolt' | 'missile' | 'fireball'
         self.base_speed = 0.8
         self.can_jump = False
-        self.gravity_affected = False  # Wizards float
+        self.gravity_affected = True  # Wizards walk on ground by default
         self.attacking = False
+        
+        # Floating ability system (7.5 sec duration, 10 sec cooldown)
+        self.floating_active = False
+        self.floating_timer = 0
+        self.floating_duration = int(7.5 * 60)  # 7.5 seconds at 60 FPS = 450 frames
+        self.floating_cooldown_timer = 0
+        self.floating_cooldown = 10 * 60  # 10 seconds at 60 FPS = 600 frames
         
         # Charge attack systems for each spell type (60 FPS = 1 second)
         self.bolt_charge = ChargeAttackSystem(
@@ -1893,12 +1900,12 @@ class WizardCaster(Enemy):
         )
     
     def _get_terrain_traits(self):
-        """Wizard can float over most terrain"""
-        return ['ground', 'floating']
+        """Wizard can walk on ground and temporarily float"""
+        return ['ground']
     
     def _set_movement_strategy(self):
-        """Set movement strategy for WizardCaster"""
-        self.movement_strategy = MovementStrategyFactory.create_strategy('floating')
+        """Set movement strategy for WizardCaster - uses ground patrol by default"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
 
     def tick(self, level, player):
         if not self.combat.alive:
@@ -1913,6 +1920,29 @@ class WizardCaster(Enemy):
         dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
         epos = (self.rect.centerx, self.rect.centery)
+        
+        # Handle floating ability system
+        if self.floating_cooldown_timer > 0:
+            self.floating_cooldown_timer -= 1
+        
+        if self.floating_active:
+            # Floating is active
+            self.floating_timer -= 1
+            if self.floating_timer <= 0:
+                # Floating duration expired, return to ground
+                self.floating_active = False
+                self.gravity_affected = True
+                self.floating_cooldown_timer = self.floating_cooldown
+        else:
+            # Not floating - check if we can activate floating
+            # Activate floating when player is detected and cooldown is ready
+            if has_los and dist_to_player < self.vision_range and self.floating_cooldown_timer == 0:
+                # Start floating
+                self.floating_active = True
+                self.floating_timer = self.floating_duration
+                self.gravity_affected = False
+                # Small upward boost when starting to float
+                self.vy = -2.0
         
         # Animation state machine
         from src.entities.animation_system import AnimationState
@@ -2023,7 +2053,16 @@ class WizardCaster(Enemy):
                         self.tele_text = '!!'
         
         from ..ai.enemy_movement import clamp_enemy_to_level
-        self.handle_movement(level, player)
+        
+        # Handle movement based on floating state
+        if self.floating_active:
+            # Use floating movement when ability is active
+            self._handle_floating_movement(level, player, ppos, epos, has_los, dist_to_player)
+        else:
+            # Use normal ground movement
+            self.handle_movement(level, player)
+            self.handle_gravity(level)
+        
         clamp_enemy_to_level(self, level, respect_solids=True)
         
         # Update facing direction based on player position
@@ -2052,6 +2091,71 @@ class WizardCaster(Enemy):
 
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.centery)
+    
+    def _handle_floating_movement(self, level, player, ppos, epos, has_los, dist_to_player):
+        """Handle floating movement when the floating ability is active."""
+        # Get optimal floating height
+        target_height = self._get_optimal_float_height(level)
+        current_height = self.rect.centery
+        
+        # Vertical adjustment (hover toward target height)
+        if abs(current_height - target_height) > 5:
+            self.vy = 1.0 if current_height < target_height else -1.0
+        else:
+            self.vy = 0.0
+        
+        # Horizontal movement based on player position
+        if has_los and dist_to_player < self.vision_range:
+            if dist_to_player < 150:
+                # Too close, drift away from player
+                dx = epos[0] - ppos[0]
+                self.vx = 1.4 if dx > 0 else -1.4
+            elif dist_to_player > 260:
+                # Too far, drift toward player
+                dx = ppos[0] - epos[0]
+                self.vx = 1.0 if dx > 0 else -1.0
+            else:
+                # In optimal range, gentle oscillation
+                self.vx = math.sin(pygame.time.get_ticks() * 0.001) * 0.9
+        else:
+            # Idle hover
+            self.vx = math.sin(pygame.time.get_ticks() * 0.0008) * 1.2
+        
+        # Apply movement
+        old_rect = self.rect.copy()
+        self.rect.x += int(self.vx)
+        self.rect.y += int(self.vy)
+        
+        # Handle solid collisions while floating
+        for solid in level.solids:
+            if self.rect.colliderect(solid):
+                # Horizontal collision
+                if old_rect.right <= solid.left:
+                    self.rect.right = solid.left
+                    self.vx = -abs(self.vx) * 0.5
+                elif old_rect.left >= solid.right:
+                    self.rect.left = solid.right
+                    self.vx = abs(self.vx) * 0.5
+                
+                # Vertical collision
+                if old_rect.bottom <= solid.top:
+                    self.rect.bottom = solid.top
+                    self.vy = -abs(self.vy) * 0.3
+                elif old_rect.top >= solid.bottom:
+                    self.rect.top = solid.bottom
+                    self.vy = abs(self.vy) * 0.3
+    
+    def _get_optimal_float_height(self, level):
+        """Get optimal floating height: ~50px above nearest ground below."""
+        ground_y = None
+        for solid in level.solids:
+            if solid.left <= self.rect.centerx <= solid.right and solid.top >= self.rect.bottom:
+                if ground_y is None or solid.top < ground_y:
+                    ground_y = solid.top
+        if ground_y is None:
+            # No ground below, use current height
+            return self.rect.centery
+        return ground_y - 50
 
     def get_base_color(self):
         """Get the base color for WizardCaster enemy."""
@@ -2084,6 +2188,24 @@ class WizardCaster(Enemy):
         
         # Draw status effects
         self.draw_status_effects(surf, camera)
+        
+        # Draw floating ability indicator
+        if self.floating_active or self.floating_cooldown_timer > 0:
+            from src.core.utils import draw_text
+            center_pos = camera.to_screen((self.rect.centerx, self.rect.top - 30))
+            
+            if self.floating_active:
+                # Show floating duration timer
+                time_left = self.floating_timer / 60.0  # Convert frames to seconds
+                draw_text(surf, f"FLOAT: {time_left:.1f}s", 
+                         (center_pos[0] - 35, center_pos[1]), 
+                         (100, 200, 255), size=11, bold=True)
+            elif self.floating_cooldown_timer > 0:
+                # Show cooldown timer
+                cooldown_left = self.floating_cooldown_timer / 60.0
+                draw_text(surf, f"CD: {cooldown_left:.1f}s", 
+                         (center_pos[0] - 25, center_pos[1]), 
+                         (150, 150, 150), size=10, bold=True)
         
         # Draw telegraph during charge phase
         if self.current_charge_system and self.current_charge_system.is_charging() and self.tele_text:
