@@ -243,8 +243,8 @@ class LegacyLevel:
                 world_y = y * TILE
                 rect = pygame.Rect(world_x, world_y, TILE, TILE)
 
-                # Skip regular enemies in boss rooms
-                if boss_present and entity_type != 'enemy_boss':
+                # Skip regular enemies in boss rooms (but allow doors and boss)
+                if boss_present and entity_type != 'enemy_boss' and entity_type != 'door':
                     continue
 
                 if entity_type == 'enemy':
