@@ -14,6 +14,7 @@ venv/
 # Build outputs
 build/
 dist/
+build-scripts/
 
 # OS/editor
 .DS_Store
@@ -26,4 +27,4 @@ Thumbs.db
 .pytest_cache/
 .claude
 AGENTS.md
-generated_levels.json
+generated_levels.json.
