@@ -3,7 +3,7 @@
     "use_pcg": false,
     "seed_mode": "fixed",
     "seed": 1398485361,
-    "selected_class": "Knight",
+    "selected_class": "Wizard",
     "num_levels": 3,
     "rooms_per_level": 6,
     "room_width": 50,
