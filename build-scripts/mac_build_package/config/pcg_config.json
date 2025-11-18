@@ -1,0 +1,26 @@
+{
+  "pcg_config": {
+    "use_pcg": false,
+    "seed_mode": "fixed",
+    "seed": 1398485361,
+    "selected_class": "Knight",
+    "num_levels": 3,
+    "rooms_per_level": 6,
+    "room_width": 50,
+    "room_height": 50,
+    "air_tile_id": 0,
+    "wall_tile_id": 1,
+    "add_doors": true,
+    "door_entrance_tile_id": 2,
+    "door_exit_tile_id": 3,
+    "door_exit_1_tile_id": 4,
+    "door_exit_2_tile_id": 5,
+    "initial_fill_walls": true,
+    "quadrant_radius": 10,
+    "ca_smoothing_iterations": 3,
+    "ca_wall_neighbor_threshold": 5,
+    "ca_include_diagonals": true,
+    "post_ca_dilation_iterations": 1,
+    "post_ca_dilation_radius": 1
+  }
+}

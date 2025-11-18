@@ -1,0 +1,15 @@
+# PyInstaller build outputs
+dist/
+build/
+*.spec.bak
+
+# Distribution packages
+distributions/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
