@@ -21,6 +21,11 @@ class TileRenderer:
         self.level_surface_cache: Dict[str, pygame.Surface] = {}
         self.cached_camera_offset: Tuple[float, float] = (0, 0)
         self.cached_zoom: float = 1.0
+        
+        # Chunk-based rendering cache for large PCG rooms
+        self.chunk_size = 16  # 16x16 tile chunks
+        self.chunk_cache: Dict[str, Optional[pygame.Surface]] = {}  # key: "room_code_cx_cy_zoom"
+        self.max_chunk_cache_size = 100  # Limit memory usage
 
     def render_tile(self, surface: pygame.Surface, tile_type: TileType,
                    x: int, y: int, camera_offset: Tuple[float, float] = (0, 0),
@@ -232,6 +237,7 @@ class TileRenderer:
         visible_rect: Optional[pygame.Rect] = None,
         time_delta: float = 0,
         zoom: float = 1.0,
+        room_code: Optional[str] = None,
     ):
         """
         Render all visible tiles in the grid for the given camera and zoom.
@@ -239,6 +245,7 @@ class TileRenderer:
 
         camera_offset: (camera_x, camera_y) in WORLD coordinates.
         zoom: current zoom factor.
+        room_code: Optional room identifier for chunk caching.
         """
         if not tile_grid:
             return
@@ -283,7 +290,32 @@ class TileRenderer:
                 zoom, screen_w, screen_h, world_left, world_top, world_right, world_bottom, start_tx, end_tx, start_ty, end_ty
             )
 
-        # Optimization: Only render non-air tiles to reduce draw calls
+        # Use chunk-based rendering if room_code is provided (for PCG levels)
+        if room_code:
+            self._render_tile_grid_chunked(
+                surface, tile_grid, start_tx, end_tx, start_ty, end_ty,
+                camera_offset, time_delta, zoom, room_code
+            )
+        else:
+            # Fallback to traditional tile-by-tile rendering
+            self._render_tile_grid_traditional(
+                surface, tile_grid, start_tx, end_tx, start_ty, end_ty,
+                camera_offset, time_delta, zoom
+            )
+
+    def _render_tile_grid_traditional(
+        self,
+        surface: pygame.Surface,
+        tile_grid: List[List[int]],
+        start_tx: int,
+        end_tx: int,
+        start_ty: int,
+        end_ty: int,
+        camera_offset: Tuple[float, float],
+        time_delta: float,
+        zoom: float,
+    ):
+        """Traditional tile-by-tile rendering (no caching)."""
         for ty in range(start_ty, end_ty):
             row = tile_grid[ty]
             for tx in range(start_tx, end_tx):
@@ -310,6 +342,133 @@ class TileRenderer:
                     time_delta=time_delta,
                     zoom=zoom,
                 )
+
+    def _render_tile_grid_chunked(
+        self,
+        surface: pygame.Surface,
+        tile_grid: List[List[int]],
+        start_tx: int,
+        end_tx: int,
+        start_ty: int,
+        end_ty: int,
+        camera_offset: Tuple[float, float],
+        time_delta: float,
+        zoom: float,
+        room_code: str,
+    ):
+        """Chunk-based rendering with caching for better performance."""
+        # Calculate which chunks are visible
+        start_chunk_x = start_tx // self.chunk_size
+        end_chunk_x = (end_tx + self.chunk_size - 1) // self.chunk_size
+        start_chunk_y = start_ty // self.chunk_size
+        end_chunk_y = (end_ty + self.chunk_size - 1) // self.chunk_size
+
+        # Render each visible chunk
+        for chunk_y in range(start_chunk_y, end_chunk_y):
+            for chunk_x in range(start_chunk_x, end_chunk_x):
+                self._render_chunk(
+                    surface, tile_grid, chunk_x, chunk_y,
+                    camera_offset, time_delta, zoom, room_code
+                )
+
+    def _render_chunk(
+        self,
+        surface: pygame.Surface,
+        tile_grid: List[List[int]],
+        chunk_x: int,
+        chunk_y: int,
+        camera_offset: Tuple[float, float],
+        time_delta: float,
+        zoom: float,
+        room_code: str,
+    ):
+        """Render a single chunk with caching."""
+        # Round zoom to reduce cache variations
+        zoom_key = round(zoom, 1)
+        cache_key = f"{room_code}_{chunk_x}_{chunk_y}_{zoom_key}"
+
+        # Check if chunk is already cached
+        if cache_key in self.chunk_cache:
+            chunk_surface = self.chunk_cache[cache_key]
+        else:
+            # Generate chunk surface
+            chunk_surface = self._generate_chunk_surface(
+                tile_grid, chunk_x, chunk_y, zoom
+            )
+            
+            # Cache it
+            self.chunk_cache[cache_key] = chunk_surface
+            
+            # Limit cache size
+            if len(self.chunk_cache) > self.max_chunk_cache_size:
+                # Remove oldest entries (simple FIFO)
+                keys_to_remove = list(self.chunk_cache.keys())[:10]
+                for key in keys_to_remove:
+                    del self.chunk_cache[key]
+
+        # Blit the cached chunk to screen
+        if chunk_surface:
+            world_x = chunk_x * self.chunk_size * self.tile_size
+            world_y = chunk_y * self.chunk_size * self.tile_size
+            screen_x = int((world_x - camera_offset[0]) * zoom)
+            screen_y = int((world_y - camera_offset[1]) * zoom)
+            surface.blit(chunk_surface, (screen_x, screen_y))
+
+    def _generate_chunk_surface(
+        self,
+        tile_grid: List[List[int]],
+        chunk_x: int,
+        chunk_y: int,
+        zoom: float,
+    ) -> Optional[pygame.Surface]:
+        """Generate a pre-rendered surface for a chunk."""
+        map_height = len(tile_grid)
+        map_width = len(tile_grid[0]) if map_height > 0 else 0
+
+        # Calculate tile bounds for this chunk
+        start_tx = chunk_x * self.chunk_size
+        end_tx = min(start_tx + self.chunk_size, map_width)
+        start_ty = chunk_y * self.chunk_size
+        end_ty = min(start_ty + self.chunk_size, map_height)
+
+        if start_tx >= map_width or start_ty >= map_height:
+            return None
+
+        # Create surface for chunk
+        chunk_pixel_size = int(self.chunk_size * self.tile_size * zoom)
+        chunk_surface = pygame.Surface(
+            (chunk_pixel_size, chunk_pixel_size),
+            pygame.SRCALPHA
+        )
+
+        # Render all tiles in chunk to surface
+        for ty in range(start_ty, end_ty):
+            row = tile_grid[ty]
+            for tx in range(start_tx, end_tx):
+                tile_value = row[tx]
+                if tile_value <= 0:
+                    continue
+
+                try:
+                    tile_type = TileType(tile_value)
+                    if tile_type == TileType.AIR:
+                        continue
+
+                    tile_data = tile_registry.get_tile(tile_type)
+                    if not tile_data:
+                        continue
+
+                    # Get tile surface
+                    tile_surface = self._get_tile_surface_for_zoom(tile_data, 0, zoom)
+                    if tile_surface:
+                        # Position within chunk
+                        local_x = (tx - start_tx) * int(self.tile_size * zoom)
+                        local_y = (ty - start_ty) * int(self.tile_size * zoom)
+                        chunk_surface.blit(tile_surface, (local_x, local_y))
+                except (ValueError, KeyError):
+                    continue
+
+        return chunk_surface
 
     def render_debug_grid(self, surface: pygame.Surface, tile_grid: List[List[int]],
                          camera_offset: Tuple[float, float] = (0, 0),
@@ -353,6 +512,38 @@ class TileRenderer:
         self.animation_cache.clear()
         self.animation_timers.clear()
         self.level_surface_cache.clear()
+        self.chunk_cache.clear()
+    
+    def clear_chunk_cache_for_room(self, room_code: str):
+        """Clear chunk cache for a specific room."""
+        keys_to_remove = [k for k in self.chunk_cache.keys() if k.startswith(f"{room_code}_")]
+        for key in keys_to_remove:
+            del self.chunk_cache[key]
+    
+    def preload_room_chunks(self, tile_grid: List[List[int]], room_code: str, zoom: float = 1.0):
+        """Preload all chunks for a room (call during loading screen)."""
+        if not tile_grid:
+            return
+        
+        map_height = len(tile_grid)
+        map_width = len(tile_grid[0]) if map_height > 0 else 0
+        
+        max_chunk_x = (map_width + self.chunk_size - 1) // self.chunk_size
+        max_chunk_y = (map_height + self.chunk_size - 1) // self.chunk_size
+        
+        # Generate all chunks
+        for chunk_y in range(max_chunk_y):
+            for chunk_x in range(max_chunk_x):
+                zoom_key = round(zoom, 1)
+                cache_key = f"{room_code}_{chunk_x}_{chunk_y}_{zoom_key}"
+                
+                if cache_key not in self.chunk_cache:
+                    chunk_surface = self._generate_chunk_surface(
+                        tile_grid, chunk_x, chunk_y, zoom
+                    )
+                    # Only cache if generation succeeded
+                    if chunk_surface:
+                        self.chunk_cache[cache_key] = chunk_surface
 
     def preload_tiles(self):
         """Preload all tile surfaces for different zoom levels."""

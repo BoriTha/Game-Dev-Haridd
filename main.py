@@ -497,7 +497,7 @@ class Game:
                 
                 renderer = TileRenderer(tile_size=TILE)
                 
-                # Use the canonical render_tile_grid method
+                # Use the canonical render_tile_grid method with room_code for chunk caching
                 renderer.render_tile_grid(
                     surface=screen,
                     tile_grid=self.tile_grid,
@@ -505,6 +505,7 @@ class Game:
                     visible_rect=screen.get_rect(),
                     time_delta=dt,
                     zoom=camera.zoom,
+                    room_code=self.room_code,
                 )
         
         lvl = PCGLevel()
@@ -659,6 +660,19 @@ class Game:
         except Exception:
             logger.exception("Failed to sync DoorSystem after PCG level load")
         
+        # Preload chunk cache for this room at current zoom levels
+        try:
+            from src.tiles.tile_renderer import TileRenderer
+            from config import TILE
+            renderer = TileRenderer(tile_size=TILE)
+            
+            # Preload for common zoom levels
+            for zoom in [1.0, 1.2, 1.5]:
+                renderer.preload_room_chunks(lvl.tile_grid, lvl.room_code, zoom)
+            
+            logger.info(f"Preloaded chunk cache for room {lvl.room_code}")
+        except Exception as e:
+            logger.warning(f"Failed to preload chunks for room {lvl.room_code}: {e}")
 
 
         if not initial:
@@ -669,6 +683,13 @@ class Game:
                 self.camera.update(getattr(self, 'player').rect, 0)
             except Exception:
                 pass
+        
+        # Predictively preload adjacent rooms in background
+        if not initial:
+            try:
+                self._preload_adjacent_rooms(lvl.level_id, lvl.room_code)
+            except Exception as e:
+                logger.debug(f"Failed to preload adjacent rooms: {e}")
         
 
 
@@ -708,6 +729,40 @@ class Game:
         # Trigger shop for legacy levels after every room transition
         if not self.use_pcg:
             self._trigger_shop_after_level_transition()
+    
+    def _preload_adjacent_rooms(self, current_level_id: int, current_room_code: str):
+        """Preload chunk cache for adjacent rooms to reduce lag when transitioning."""
+        try:
+            from src.level.level_loader import level_loader
+            from src.tiles.tile_renderer import TileRenderer
+            from config import TILE
+            
+            # Get current room metadata to find exits
+            room = level_loader.get_room(current_level_id, current_room_code)
+            if not room or not hasattr(room, 'door_exits') or room.door_exits is None:
+                return
+            
+            renderer = TileRenderer(tile_size=TILE)
+            
+            # Preload each adjacent room
+            for exit_data in room.door_exits.values():
+                if isinstance(exit_data, dict):
+                    target_level = exit_data.get('level_id')
+                    target_code = exit_data.get('room_code')
+                    
+                    if target_level and target_code and isinstance(target_level, int) and isinstance(target_code, str):
+                        adjacent_room = level_loader.get_room(target_level, target_code)
+                        if adjacent_room and hasattr(adjacent_room, 'tiles'):
+                            # Preload chunks for this adjacent room
+                            for zoom in [1.0, 1.2, 1.5]:
+                                renderer.preload_room_chunks(
+                                    adjacent_room.tiles, 
+                                    target_code, 
+                                    zoom
+                                )
+                            logger.debug(f"Preloaded adjacent room {target_code}")
+        except Exception as e:
+            logger.debug(f"Could not preload adjacent rooms: {e}")
 
     def update(self, dt=1.0/FPS):
         self.player.input(self.level, self.camera)

@@ -1,6 +1,6 @@
 {
   "pcg_config": {
-    "use_pcg": false,
+    "use_pcg": true,
     "seed_mode": "fixed",
     "seed": 1398485361,
     "selected_class": "Ranger",
