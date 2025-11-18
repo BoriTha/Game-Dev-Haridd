@@ -1933,6 +1933,12 @@ class WizardCaster(Enemy):
                 self.floating_active = False
                 self.gravity_affected = True
                 self.floating_cooldown_timer = self.floating_cooldown
+                # Reset velocities to prevent jittering when landing
+                self.vx = 0
+                self.vy = 0
+                self.on_ground = False
+                # Give a few frames to settle on ground before resuming movement (about 0.1 seconds)
+                self._landing_frames = 6
         else:
             # Not floating - check if we can activate floating
             # Activate floating when player is detected and cooldown is ready
@@ -2060,7 +2066,19 @@ class WizardCaster(Enemy):
             self._handle_floating_movement(level, player, ppos, epos, has_los, dist_to_player)
         else:
             # Use normal ground movement
-            self.handle_movement(level, player)
+            # If we just stopped floating, wait a few frames to settle before moving
+            if hasattr(self, '_landing_frames'):
+                self._landing_frames -= 1
+                if self._landing_frames > 0:
+                    # During landing, only apply gravity, no horizontal movement
+                    self.vx = 0
+                else:
+                    # Landing complete, resume normal movement
+                    delattr(self, '_landing_frames')
+                    self.handle_movement(level, player)
+            else:
+                # Normal ground movement
+                self.handle_movement(level, player)
             self.handle_gravity(level)
         
         clamp_enemy_to_level(self, level, respect_solids=True)
@@ -2109,17 +2127,20 @@ class WizardCaster(Enemy):
             if dist_to_player < 150:
                 # Too close, drift away from player
                 dx = epos[0] - ppos[0]
-                self.vx = 1.4 if dx > 0 else -1.4
+                target_vx = 1.2 if dx > 0 else -1.2
             elif dist_to_player > 260:
                 # Too far, drift toward player
                 dx = ppos[0] - epos[0]
-                self.vx = 1.0 if dx > 0 else -1.0
+                target_vx = 0.8 if dx > 0 else -0.8
             else:
                 # In optimal range, gentle oscillation
-                self.vx = math.sin(pygame.time.get_ticks() * 0.001) * 0.9
+                target_vx = math.sin(pygame.time.get_ticks() * 0.001) * 0.6
         else:
-            # Idle hover
-            self.vx = math.sin(pygame.time.get_ticks() * 0.0008) * 1.2
+            # Idle hover with slower oscillation
+            target_vx = math.sin(pygame.time.get_ticks() * 0.0005) * 0.8
+        
+        # Smooth velocity transition to prevent jittering
+        self.vx = self.vx * 0.7 + target_vx * 0.3
         
         # Apply movement
         old_rect = self.rect.copy()
@@ -2189,24 +2210,6 @@ class WizardCaster(Enemy):
         # Draw status effects
         self.draw_status_effects(surf, camera)
         
-        # Draw floating ability indicator
-        if self.floating_active or self.floating_cooldown_timer > 0:
-            from src.core.utils import draw_text
-            center_pos = camera.to_screen((self.rect.centerx, self.rect.top - 30))
-            
-            if self.floating_active:
-                # Show floating duration timer
-                time_left = self.floating_timer / 60.0  # Convert frames to seconds
-                draw_text(surf, f"FLOAT: {time_left:.1f}s", 
-                         (center_pos[0] - 35, center_pos[1]), 
-                         (100, 200, 255), size=11, bold=True)
-            elif self.floating_cooldown_timer > 0:
-                # Show cooldown timer
-                cooldown_left = self.floating_cooldown_timer / 60.0
-                draw_text(surf, f"CD: {cooldown_left:.1f}s", 
-                         (center_pos[0] - 25, center_pos[1]), 
-                         (150, 150, 150), size=10, bold=True)
-        
         # Draw telegraph during charge phase
         if self.current_charge_system and self.current_charge_system.is_charging() and self.tele_text:
             from src.core.utils import draw_text, resource_path
@@ -2260,6 +2263,54 @@ class WizardCaster(Enemy):
             # Draw frame count / max frames
             timer_text = f"{current_time}/{max_time}"
             draw_text(surf, timer_text, (center_screen[0] - 15, center_screen[1] + 22), (200, 200, 200), size=10)
+        
+        # Draw floating ability debug info (F3)
+        if debug_hitboxes and (self.floating_active or self.floating_cooldown_timer > 0):
+            from src.core.utils import draw_text
+            
+            # Position for floating debug info (below spell debug info if both present)
+            float_y_offset = -60 if (self.current_charge_system and (self.current_charge_system.is_charging() or self.current_charge_system.is_cooldown())) else -45
+            center_screen = camera.to_screen((self.rect.centerx, self.rect.top + float_y_offset))
+            
+            if self.floating_active:
+                # Show floating duration timer
+                phase_text = "FLOATING"
+                phase_color = (100, 200, 255)  # Cyan for floating
+                bar_color = (120, 220, 255)
+                max_time = self.floating_duration
+                current_time = self.floating_timer
+            else:  # cooldown
+                # Show cooldown timer
+                phase_text = "FLOAT CD"
+                phase_color = (150, 150, 150)  # Gray for cooldown
+                bar_color = (170, 170, 170)
+                max_time = self.floating_cooldown
+                current_time = self.floating_cooldown_timer
+            
+            # Draw phase text
+            draw_text(surf, phase_text, (center_screen[0] - 25, center_screen[1]), phase_color, size=11, bold=True)
+            
+            # Draw timer bar (50px wide, 6px tall)
+            bar_width = 50
+            bar_height = 6
+            bar_x = center_screen[0] - bar_width // 2
+            bar_y = center_screen[1] + 14
+            
+            # Background (dark gray)
+            pygame.draw.rect(surf, (40, 40, 40), (bar_x, bar_y, bar_width, bar_height))
+            
+            # Fill based on timer progress
+            progress = min(1.0, current_time / max_time)
+            fill_width = int(bar_width * progress)
+            pygame.draw.rect(surf, bar_color, (bar_x, bar_y, fill_width, bar_height))
+            
+            # Border
+            pygame.draw.rect(surf, (200, 200, 200), (bar_x, bar_y, bar_width, bar_height), 1)
+            
+            # Draw time remaining in seconds
+            time_remaining = current_time / 60.0
+            timer_text = f"{time_remaining:.1f}s"
+            draw_text(surf, timer_text, (center_screen[0] - 12, center_screen[1] + 22), (200, 200, 200), size=10)
         
         # Draw nametag
         self.draw_nametag(surf, camera, show_nametags)
